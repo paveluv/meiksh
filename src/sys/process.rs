@@ -903,6 +903,32 @@ mod tests {
     }
 
     #[test]
+    fn spawn_child_no_pipe_stdout() {
+        use test_support::run_trace;
+        run_trace(
+            trace_entries![
+                fork() -> pid(100), child: [
+                    execvp(_, _) -> int(-1),
+                ],
+            ],
+            || {
+                let handle = spawn_child(
+                    b"echo",
+                    &[b"echo" as &[u8], b"hello"],
+                    None,
+                    &[],
+                    None,
+                    false,
+                    None,
+                )
+                .expect("spawn");
+                assert_eq!(handle.pid, 100);
+                assert_eq!(handle.stdout_fd, None);
+            },
+        );
+    }
+
+    #[test]
     fn trace_getcwd_erange_and_pipe_err() {
         test_support::run_trace(
             trace_entries![

@@ -1647,6 +1647,57 @@ mod tests {
     }
 
     #[test]
+    fn continue_job_no_pgid_sends_sigcont_to_each_child() {
+        run_trace(
+            trace_entries![
+                kill(int(2001), int(sys::SIGCONT)) -> 0,
+                kill(int(2002), int(sys::SIGCONT)) -> 0,
+            ],
+            || {
+                let mut shell = test_shell();
+                let id = shell.register_background_job(
+                    b"multi"[..].into(),
+                    None,
+                    vec![fake_handle(2001), fake_handle(2002)],
+                );
+                let idx = shell.jobs.iter().position(|j| j.id == id).unwrap();
+                shell.jobs[idx].state = JobState::Stopped(sys::SIGTSTP);
+                shell.continue_job(id, false).expect("continue no pgid");
+                assert!(matches!(shell.jobs[0].state, JobState::Running));
+            },
+        );
+    }
+
+    #[test]
+    fn previous_job_id_with_two_stopped_jobs() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            shell.jobs.push(Job {
+                id: 1,
+                command: b"sleep 10"[..].into(),
+                pgid: None,
+                last_pid: None,
+                last_status: None,
+                children: Vec::new(),
+                state: JobState::Stopped(sys::SIGTSTP),
+                saved_termios: None,
+            });
+            shell.jobs.push(Job {
+                id: 2,
+                command: b"sleep 20"[..].into(),
+                pgid: None,
+                last_pid: None,
+                last_status: None,
+                children: Vec::new(),
+                state: JobState::Stopped(sys::SIGTSTP),
+                saved_termios: None,
+            });
+            assert_eq!(shell.current_job_id(), Some(2));
+            assert_eq!(shell.previous_job_id(), Some(1));
+        });
+    }
+
+    #[test]
     fn find_job_by_prefix_and_substring() {
         assert_no_syscalls(|| {
             let mut shell = test_shell();

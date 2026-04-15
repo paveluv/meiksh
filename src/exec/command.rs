@@ -659,6 +659,62 @@ mod tests {
     }
 
     #[test]
+    fn subshell_program_error() {
+        run_trace(
+            trace_entries![
+                fork() -> pid(100), child: [
+                    write(fd(2), bytes(b"meiksh: line 1: bad: parameter null or not set\n")) -> auto,
+                ],
+                waitpid(100, _) -> status(1),
+            ],
+            || {
+                let mut shell = test_shell();
+                let subshell_program = parse_test("( ${bad:?} )").expect("parse");
+                let status = execute_program(&mut shell, &subshell_program).expect("execute");
+                assert_eq!(status, 1);
+            },
+        );
+    }
+
+    #[test]
+    fn subshell_wait_errors() {
+        run_trace(
+            trace_entries![
+                fork() -> pid(100), child: [],
+                waitpid(100, _) -> int(0),
+                waitpid(100, _) -> err(libc::EINTR),
+                waitpid(100, _) -> err(libc::ECHILD),
+                write(fd(2), bytes(b"meiksh: line 1: No child processes\n")) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                let subshell_program = parse_test("( true )").expect("parse");
+                let err = execute_program(&mut shell, &subshell_program).unwrap_err();
+                assert_eq!(err.exit_status(), 1);
+            },
+        );
+    }
+
+    #[test]
+    fn compound_command_redirection_error() {
+        run_trace(
+            trace_entries![
+                fcntl(int(1), _, _) -> int(10),
+                open(_, _, _) -> err(libc::EACCES),
+                dup2(fd(10), fd(1)) -> fd(1),
+                close(fd(10)) -> 0,
+                write(fd(2), bytes(b"meiksh: line 1: Permission denied\n")) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                let program = parse_test("{ true; } > /forbidden").expect("parse");
+                let status = execute_program(&mut shell, &program).expect("execute");
+                assert_eq!(status, 1);
+            },
+        );
+    }
+
+    #[test]
     fn function_def_registers_and_calls() {
         assert_no_syscalls(|| {
             let mut shell = test_shell();

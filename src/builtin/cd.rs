@@ -355,4 +355,75 @@ mod tests {
             assert_eq!(canonicalize_logical_path(b"/../.."), b"/");
         });
     }
+
+    #[test]
+    fn cd_physical_no_dash_e_getcwd_fails_uses_curpath() {
+        run_trace(
+            trace_entries![
+                getcwd() -> cwd("/home"),
+                realpath(any, any) -> realpath("/home"),
+                realpath(any, any) -> realpath("/home"),
+                chdir(str(b"/tmp")) -> 0,
+                getcwd() -> err(libc::ENOENT),
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.env.insert(b"PWD".to_vec(), b"/home".to_vec());
+                let outcome = invoke(
+                    &mut shell,
+                    &[b"cd".to_vec(), b"-P".to_vec(), b"/tmp".to_vec()],
+                )
+                .expect("cd -P getcwd fail");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+                assert_eq!(shell.get_var(b"PWD"), Some(b"/tmp" as &[u8]));
+            },
+        );
+    }
+
+    #[test]
+    fn cd_logical_curpath_pwd_ends_with_slash() {
+        run_trace(
+            trace_entries![
+                getcwd() -> cwd("/"),
+                realpath(any, any) -> realpath("/"),
+                realpath(any, any) -> realpath("/"),
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.env.insert(b"PWD".to_vec(), b"/".to_vec());
+                let result = cd_logical_curpath(&shell, b"tmp").expect("curpath");
+                assert_eq!(result, b"/tmp");
+            },
+        );
+    }
+
+    #[test]
+    fn cd_home_when_set() {
+        run_trace(
+            trace_entries![
+                getcwd() -> cwd("/old"),
+                realpath(any, any) -> realpath("/old"),
+                realpath(any, any) -> realpath("/old"),
+                chdir(str(b"/home/user")) -> 0,
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.env.insert(b"PWD".to_vec(), b"/old".to_vec());
+                shell.env.insert(b"HOME".to_vec(), b"/home/user".to_vec());
+                let outcome = invoke(&mut shell, &[b"cd".to_vec()]).expect("cd home");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+                assert_eq!(shell.get_var(b"PWD"), Some(b"/home/user" as &[u8]));
+            },
+        );
+    }
+
+    #[test]
+    fn resolve_cd_target_no_cdpath() {
+        assert_no_syscalls(|| {
+            let shell = test_shell();
+            let (resolved, _, print) = resolve_cd_target(&shell, b"subdir", false);
+            assert_eq!(resolved, b"subdir");
+            assert!(!print);
+        });
+    }
 }

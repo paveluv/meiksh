@@ -255,6 +255,31 @@ pub(super) fn trim_read_ifs_whitespace(chars: &[(u8, bool)], ifs_ws: &[u8]) -> V
 mod tests {
     use super::*;
     use crate::builtin::test_support::*;
+    use crate::sys::test_support::{ArgMatcher, TraceResult, t};
+    use crate::trace_entries;
+
+    fn byte_reads(fd: i32, input: &[u8]) -> Vec<crate::sys::test_support::TraceEntry> {
+        input
+            .iter()
+            .map(|&b| {
+                t(
+                    "read",
+                    vec![ArgMatcher::Fd(fd), ArgMatcher::Any],
+                    TraceResult::Bytes(vec![b]),
+                )
+            })
+            .collect()
+    }
+
+    fn byte_reads_then_eof(fd: i32, input: &[u8]) -> Vec<crate::sys::test_support::TraceEntry> {
+        let mut out = byte_reads(fd, input);
+        out.push(t(
+            "read",
+            vec![ArgMatcher::Fd(fd), ArgMatcher::Any],
+            TraceResult::Int(0),
+        ));
+        out
+    }
 
     #[test]
     fn read_options_and_assignments_parsing() {
@@ -382,6 +407,249 @@ mod tests {
             push_read_piece(&mut pieces, &mut current, false);
             assert_eq!(pieces.len(), 1);
             assert_eq!(pieces[0].0, b"hello world");
+        });
+    }
+
+    #[test]
+    fn push_read_piece_different_quotedness_creates_new_entry() {
+        assert_no_syscalls(|| {
+            let mut pieces = vec![(b"unquoted".to_vec(), false)];
+            let mut current = b"quoted".to_vec();
+            push_read_piece(&mut pieces, &mut current, true);
+            assert_eq!(pieces.len(), 2);
+            assert_eq!(pieces[0], (b"unquoted".to_vec(), false));
+            assert_eq!(pieces[1], (b"quoted".to_vec(), true));
+        });
+    }
+
+    #[test]
+    fn read_with_input_invalid_option_returns_diag() {
+        let msg = diag(b"read: invalid usage");
+        run_trace(
+            trace_entries![
+                write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                let result = read_with_input(&mut shell, &[b"read".to_vec(), b"-z".to_vec()], 42);
+                assert!(matches!(result, Ok(BuiltinOutcome::Status(2))));
+            },
+        );
+    }
+
+    #[test]
+    fn read_with_input_read_error_returns_diag() {
+        let eio_str = crate::sys::SysError::Errno(libc::EIO).strerror();
+        let mut diag_body = b"read: ".to_vec();
+        diag_body.extend_from_slice(&eio_str);
+        let msg = diag(&diag_body);
+        let reads = vec![t(
+            "read",
+            vec![ArgMatcher::Fd(42), ArgMatcher::Any],
+            TraceResult::Err(libc::EIO),
+        )];
+        run_trace(
+            trace_entries![
+                ..reads,
+                write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                let result = read_with_input(&mut shell, &[b"read".to_vec(), b"VAR".to_vec()], 42);
+                assert!(matches!(result, Ok(BuiltinOutcome::Status(2))));
+            },
+        );
+    }
+
+    #[test]
+    fn read_with_input_readonly_var_returns_diag() {
+        let msg = diag(b"read: readonly variable: DEST");
+        let reads = byte_reads(42, b"hello\n");
+        run_trace(
+            trace_entries![
+                ..reads,
+                write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.mark_readonly(b"DEST");
+                let result = read_with_input(&mut shell, &[b"read".to_vec(), b"DEST".to_vec()], 42);
+                assert!(matches!(result, Ok(BuiltinOutcome::Status(2))));
+            },
+        );
+    }
+
+    #[test]
+    fn read_logical_line_backslash_at_eof() {
+        let reads = byte_reads_then_eof(42, b"trail\\");
+        run_trace(trace_entries![..reads], || {
+            let shell = test_shell();
+            let options = ReadOptions {
+                raw: false,
+                delimiter: b'\n',
+            };
+            let (pieces, hit_delim) = read_logical_line(&shell, options, 42).expect("read");
+            assert!(!hit_delim);
+            let text: Vec<u8> = pieces.iter().flat_map(|(p, _)| p.iter().copied()).collect();
+            assert_eq!(text, b"trail\\");
+        });
+    }
+
+    #[test]
+    fn read_logical_line_backslash_newline_continues() {
+        let reads = byte_reads(42, b"first\\\nsecond\n");
+        run_trace(trace_entries![..reads], || {
+            let shell = test_shell();
+            let options = ReadOptions {
+                raw: false,
+                delimiter: b'\n',
+            };
+            let (pieces, hit_delim) = read_logical_line(&shell, options, 42).expect("read");
+            assert!(hit_delim);
+            let text: Vec<u8> = pieces.iter().flat_map(|(p, _)| p.iter().copied()).collect();
+            assert_eq!(text, b"firstsecond");
+        });
+    }
+
+    #[test]
+    fn read_logical_line_backslash_other_quotes_char() {
+        let reads = byte_reads(42, b"a\\bc\n");
+        run_trace(trace_entries![..reads], || {
+            let shell = test_shell();
+            let options = ReadOptions {
+                raw: false,
+                delimiter: b'\n',
+            };
+            let (pieces, hit_delim) = read_logical_line(&shell, options, 42).expect("read");
+            assert!(hit_delim);
+            let text: Vec<u8> = pieces.iter().flat_map(|(p, _)| p.iter().copied()).collect();
+            assert_eq!(text, b"abc");
+            let has_quoted = pieces.iter().any(|(_, q)| *q);
+            assert!(has_quoted, "backslash-escaped char should be quoted");
+        });
+    }
+
+    #[test]
+    fn read_logical_line_backslash_eof_after_escape() {
+        let mut reads = byte_reads(42, b"x\\");
+        reads.push(t(
+            "read",
+            vec![ArgMatcher::Fd(42), ArgMatcher::Any],
+            TraceResult::Bytes(vec![b'\\']),
+        ));
+        reads.push(t(
+            "read",
+            vec![ArgMatcher::Fd(42), ArgMatcher::Any],
+            TraceResult::Int(0),
+        ));
+        run_trace(trace_entries![..reads], || {
+            let shell = test_shell();
+            let options = ReadOptions {
+                raw: false,
+                delimiter: b'\n',
+            };
+            let (pieces, hit_delim) = read_logical_line(&shell, options, 42).expect("read");
+            assert!(!hit_delim);
+            let text: Vec<u8> = pieces.iter().flat_map(|(p, _)| p.iter().copied()).collect();
+            assert_eq!(text, b"x\\");
+        });
+    }
+
+    #[test]
+    fn read_logical_line_raw_mode_preserves_backslash() {
+        let reads = byte_reads(42, b"a\\b\n");
+        run_trace(trace_entries![..reads], || {
+            let shell = test_shell();
+            let options = ReadOptions {
+                raw: true,
+                delimiter: b'\n',
+            };
+            let (pieces, hit_delim) = read_logical_line(&shell, options, 42).expect("read");
+            assert!(hit_delim);
+            let text: Vec<u8> = pieces.iter().flat_map(|(p, _)| p.iter().copied()).collect();
+            assert_eq!(text, b"a\\b");
+        });
+    }
+
+    #[test]
+    fn read_with_input_default_reply_variable() {
+        let reads = byte_reads(42, b"hello\n");
+        run_trace(trace_entries![..reads], || {
+            let mut shell = test_shell();
+            let result = read_with_input(&mut shell, &[b"read".to_vec()], 42);
+            assert!(matches!(result, Ok(BuiltinOutcome::Status(0))));
+            assert_eq!(shell.get_var(b"REPLY"), Some(b"hello".as_slice()));
+        });
+    }
+
+    #[test]
+    fn read_with_input_eof_returns_status_1() {
+        let reads = byte_reads_then_eof(42, b"partial");
+        run_trace(trace_entries![..reads], || {
+            let mut shell = test_shell();
+            let result = read_with_input(&mut shell, &[b"read".to_vec(), b"VAR".to_vec()], 42);
+            assert!(matches!(result, Ok(BuiltinOutcome::Status(1))));
+            assert_eq!(shell.get_var(b"VAR"), Some(b"partial".as_slice()));
+        });
+    }
+
+    #[test]
+    fn read_with_input_splits_into_multiple_vars() {
+        let reads = byte_reads(42, b"alpha beta gamma\n");
+        run_trace(trace_entries![..reads], || {
+            let mut shell = test_shell();
+            let result = read_with_input(
+                &mut shell,
+                &[b"read".to_vec(), b"A".to_vec(), b"B".to_vec()],
+                42,
+            );
+            assert!(matches!(result, Ok(BuiltinOutcome::Status(0))));
+            assert_eq!(shell.get_var(b"A"), Some(b"alpha".as_slice()));
+            assert_eq!(shell.get_var(b"B"), Some(b"beta gamma".as_slice()));
+        });
+    }
+
+    #[test]
+    fn read_logical_line_backslash_newline_interactive_shows_ps2() {
+        let before = byte_reads(42, b"first\\\n");
+        let after = byte_reads(42, b"second\n");
+        run_trace(
+            trace_entries![
+                ..before,
+                write(fd(crate::sys::STDERR_FILENO), bytes(b"> ")) -> auto,
+                ..after,
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.interactive = true;
+                let options = ReadOptions {
+                    raw: false,
+                    delimiter: b'\n',
+                };
+                let (pieces, hit_delim) = read_logical_line(&shell, options, 42).expect("read");
+                assert!(hit_delim);
+                let text: Vec<u8> = pieces.iter().flat_map(|(p, _)| p.iter().copied()).collect();
+                assert_eq!(text, b"firstsecond");
+            },
+        );
+    }
+
+    #[test]
+    fn read_logical_line_quoted_to_unquoted_transition() {
+        let reads = byte_reads(42, b"\\ab\n");
+        run_trace(trace_entries![..reads], || {
+            let shell = test_shell();
+            let options = ReadOptions {
+                raw: false,
+                delimiter: b'\n',
+            };
+            let (pieces, hit_delim) = read_logical_line(&shell, options, 42).expect("read");
+            assert!(hit_delim);
+            assert!(pieces.len() >= 2, "should have quoted and unquoted pieces");
+            let (_, first_quoted) = &pieces[0];
+            let (_, second_quoted) = &pieces[1];
+            assert!(*first_quoted);
+            assert!(!*second_quoted);
         });
     }
 }

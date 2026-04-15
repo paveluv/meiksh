@@ -321,6 +321,13 @@ mod tests {
     use crate::builtin::test_support::*;
     use crate::trace_entries;
 
+    fn fake_handle(pid: sys::Pid) -> sys::ChildHandle {
+        sys::ChildHandle {
+            pid,
+            stdout_fd: None,
+        }
+    }
+
     #[test]
     fn jobs_stopped_job_output() {
         run_trace(
@@ -612,6 +619,567 @@ mod tests {
                 let mut shell = test_shell();
                 let outcome = invoke(&mut shell, &[b"bg".to_vec()]).expect("bg");
                 assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+            },
+        );
+    }
+
+    #[test]
+    fn jobs_reaped_done_zero_status() {
+        run_trace(
+            trace_entries![
+                waitpid(1001, _) -> status(0),
+                write(fd(crate::sys::STDOUT_FILENO), bytes(b"[1]   Done\tsleep 10\n")) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.jobs.push(crate::shell::Job {
+                    id: 1,
+                    command: b"sleep 10"[..].into(),
+                    pgid: Some(1001),
+                    last_pid: Some(1001),
+                    last_status: None,
+                    children: vec![fake_handle(1001)],
+                    state: crate::shell::JobState::Running,
+                    saved_termios: None,
+                });
+                let outcome = invoke(&mut shell, &[b"jobs".to_vec()]).expect("jobs");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    #[test]
+    fn jobs_reaped_done_nonzero_status() {
+        run_trace(
+            trace_entries![
+                waitpid(1002, _) -> status(42),
+                write(fd(crate::sys::STDOUT_FILENO), bytes(b"[1]   Done(42)\texit 42\n")) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.jobs.push(crate::shell::Job {
+                    id: 1,
+                    command: b"exit 42"[..].into(),
+                    pgid: Some(1002),
+                    last_pid: Some(1002),
+                    last_status: None,
+                    children: vec![fake_handle(1002)],
+                    state: crate::shell::JobState::Running,
+                    saved_termios: None,
+                });
+                let outcome = invoke(&mut shell, &[b"jobs".to_vec()]).expect("jobs");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    #[test]
+    fn jobs_reaped_signaled() {
+        run_trace(
+            trace_entries![
+                waitpid(1003, _) -> signaled_sig(sys::SIGTERM),
+                write(
+                    fd(crate::sys::STDOUT_FILENO),
+                    bytes(b"[1]   Terminated (SIGTERM)\tkilled\n"),
+                ) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.jobs.push(crate::shell::Job {
+                    id: 1,
+                    command: b"killed"[..].into(),
+                    pgid: Some(1003),
+                    last_pid: Some(1003),
+                    last_status: None,
+                    children: vec![fake_handle(1003)],
+                    state: crate::shell::JobState::Running,
+                    saved_termios: None,
+                });
+                let outcome = invoke(&mut shell, &[b"jobs".to_vec()]).expect("jobs");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    #[test]
+    fn jobs_running_pid_only_mode() {
+        run_trace(
+            trace_entries![
+                waitpid(555, _) -> pid(0),
+                write(fd(crate::sys::STDOUT_FILENO), bytes(b"555\n")) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.jobs.push(crate::shell::Job {
+                    id: 1,
+                    command: b"sleep 60"[..].into(),
+                    pgid: Some(555),
+                    last_pid: Some(555),
+                    last_status: None,
+                    children: vec![fake_handle(555)],
+                    state: crate::shell::JobState::Running,
+                    saved_termios: None,
+                });
+                let outcome =
+                    invoke(&mut shell, &[b"jobs".to_vec(), b"-p".to_vec()]).expect("jobs -p");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    #[test]
+    fn jobs_running_long_mode() {
+        run_trace(
+            trace_entries![
+                waitpid(777, _) -> pid(0),
+                write(
+                    fd(crate::sys::STDOUT_FILENO),
+                    bytes(b"[1] + 777 Running sleep 99\n"),
+                ) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.jobs.push(crate::shell::Job {
+                    id: 1,
+                    command: b"sleep 99"[..].into(),
+                    pgid: Some(777),
+                    last_pid: Some(777),
+                    last_status: None,
+                    children: vec![fake_handle(777)],
+                    state: crate::shell::JobState::Running,
+                    saved_termios: None,
+                });
+                let outcome =
+                    invoke(&mut shell, &[b"jobs".to_vec(), b"-l".to_vec()]).expect("jobs -l");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    #[test]
+    fn jobs_running_normal_mode() {
+        run_trace(
+            trace_entries![
+                waitpid(777, _) -> pid(0),
+                write(
+                    fd(crate::sys::STDOUT_FILENO),
+                    bytes(b"[1] + Running sleep 99\n"),
+                ) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.jobs.push(crate::shell::Job {
+                    id: 1,
+                    command: b"sleep 99"[..].into(),
+                    pgid: Some(777),
+                    last_pid: Some(777),
+                    last_status: None,
+                    children: vec![fake_handle(777)],
+                    state: crate::shell::JobState::Running,
+                    saved_termios: None,
+                });
+                let outcome = invoke(&mut shell, &[b"jobs".to_vec()]).expect("jobs");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    #[test]
+    fn jobs_reaped_skips_unselected() {
+        run_trace(
+            trace_entries![
+                waitpid(2001, _) -> status(0),
+                waitpid(2002, _) -> status(0),
+                write(fd(crate::sys::STDOUT_FILENO), bytes(b"[2]   Done\techo b\n")) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.jobs.push(crate::shell::Job {
+                    id: 1,
+                    command: b"echo a"[..].into(),
+                    pgid: Some(2001),
+                    last_pid: Some(2001),
+                    last_status: None,
+                    children: vec![fake_handle(2001)],
+                    state: crate::shell::JobState::Running,
+                    saved_termios: None,
+                });
+                shell.jobs.push(crate::shell::Job {
+                    id: 2,
+                    command: b"echo b"[..].into(),
+                    pgid: Some(2002),
+                    last_pid: Some(2002),
+                    last_status: None,
+                    children: vec![fake_handle(2002)],
+                    state: crate::shell::JobState::Running,
+                    saved_termios: None,
+                });
+                let outcome =
+                    invoke(&mut shell, &[b"jobs".to_vec(), b"%2".to_vec()]).expect("jobs %2");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    #[test]
+    fn parse_jobs_operands_valid_id() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            shell.jobs.push(crate::shell::Job {
+                id: 1,
+                command: b"sleep"[..].into(),
+                pgid: Some(100),
+                last_pid: Some(100),
+                last_status: None,
+                children: vec![],
+                state: crate::shell::JobState::Running,
+                saved_termios: None,
+            });
+            let result = parse_jobs_operands(&[b"%1".to_vec()], &shell);
+            assert_eq!(result, Ok(Some(vec![1])));
+        });
+    }
+
+    #[test]
+    fn parse_jobs_options_bare_dash_stops() {
+        assert_no_syscalls(|| {
+            let (mode, idx) =
+                parse_jobs_options(&[b"jobs".to_vec(), b"-".to_vec()]).expect("bare dash");
+            assert_eq!(mode, JobsMode::Normal);
+            assert_eq!(idx, 1);
+        });
+    }
+
+    #[test]
+    fn resolve_job_id_bare_operand_without_percent() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            shell.jobs.push(crate::shell::Job {
+                id: 3,
+                command: b"sleep"[..].into(),
+                pgid: Some(100),
+                last_pid: Some(100),
+                last_status: None,
+                children: vec![],
+                state: crate::shell::JobState::Running,
+                saved_termios: None,
+            });
+            assert_eq!(resolve_job_id(&shell, Some(b"3")), Some(3));
+            assert_eq!(resolve_job_id(&shell, Some(b"99")), None);
+        });
+    }
+
+    #[test]
+    fn resolve_job_id_substring_search() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            shell.jobs.push(crate::shell::Job {
+                id: 1,
+                command: b"sleep 999"[..].into(),
+                pgid: Some(100),
+                last_pid: Some(100),
+                last_status: None,
+                children: vec![],
+                state: crate::shell::JobState::Running,
+                saved_termios: None,
+            });
+            assert_eq!(resolve_job_id(&shell, Some(b"%?999")), Some(1));
+            assert_eq!(resolve_job_id(&shell, Some(b"%?zzz")), None);
+        });
+    }
+
+    #[test]
+    fn fg_with_valid_job() {
+        run_trace(
+            trace_entries![
+                write(fd(crate::sys::STDOUT_FILENO), bytes(b"sleep 10\n")) -> auto,
+                kill(int(-500), int(sys::SIGCONT)) -> 0,
+                waitpid(int(500), _, int(sys::WUNTRACED)) -> status(0),
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.options.monitor = true;
+                shell.jobs.push(crate::shell::Job {
+                    id: 1,
+                    command: b"sleep 10"[..].into(),
+                    pgid: Some(500),
+                    last_pid: Some(500),
+                    last_status: None,
+                    children: vec![fake_handle(500)],
+                    state: crate::shell::JobState::Stopped(sys::SIGTSTP),
+                    saved_termios: None,
+                });
+                let outcome = invoke(&mut shell, &[b"fg".to_vec(), b"%1".to_vec()]).expect("fg %1");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    #[test]
+    fn bg_with_valid_job() {
+        run_trace(
+            trace_entries![
+                kill(int(-600), int(sys::SIGCONT)) -> 0,
+                write(fd(crate::sys::STDOUT_FILENO), bytes(b"[1] sleep 20\n")) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.options.monitor = true;
+                shell.jobs.push(crate::shell::Job {
+                    id: 1,
+                    command: b"sleep 20"[..].into(),
+                    pgid: Some(600),
+                    last_pid: Some(600),
+                    last_status: None,
+                    children: vec![fake_handle(600)],
+                    state: crate::shell::JobState::Stopped(sys::SIGTSTP),
+                    saved_termios: None,
+                });
+                let outcome = invoke(&mut shell, &[b"bg".to_vec(), b"%1".to_vec()]).expect("bg %1");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    #[test]
+    fn wait_with_job_operand() {
+        run_trace(
+            trace_entries![
+                waitpid(int(700), _, int(sys::WUNTRACED)) -> status(5),
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.jobs.push(crate::shell::Job {
+                    id: 1,
+                    command: b"exit 5"[..].into(),
+                    pgid: Some(700),
+                    last_pid: Some(700),
+                    last_status: None,
+                    children: vec![fake_handle(700)],
+                    state: crate::shell::JobState::Running,
+                    saved_termios: None,
+                });
+                let outcome =
+                    invoke(&mut shell, &[b"wait".to_vec(), b"%1".to_vec()]).expect("wait %1");
+                assert!(matches!(outcome, BuiltinOutcome::Status(5)));
+            },
+        );
+    }
+
+    #[test]
+    fn job_display_pid_fallbacks() {
+        assert_no_syscalls(|| {
+            let job_with_pgid = crate::shell::Job {
+                id: 1,
+                command: b"cmd"[..].into(),
+                pgid: Some(100),
+                last_pid: Some(200),
+                last_status: None,
+                children: vec![],
+                state: crate::shell::JobState::Running,
+                saved_termios: None,
+            };
+            assert_eq!(job_display_pid(&job_with_pgid), Some(100));
+
+            let job_with_children = crate::shell::Job {
+                id: 2,
+                command: b"cmd"[..].into(),
+                pgid: None,
+                last_pid: Some(300),
+                last_status: None,
+                children: vec![fake_handle(250)],
+                state: crate::shell::JobState::Running,
+                saved_termios: None,
+            };
+            assert_eq!(job_display_pid(&job_with_children), Some(250));
+
+            let job_with_last_pid = crate::shell::Job {
+                id: 3,
+                command: b"cmd"[..].into(),
+                pgid: None,
+                last_pid: Some(400),
+                last_status: None,
+                children: vec![],
+                state: crate::shell::JobState::Running,
+                saved_termios: None,
+            };
+            assert_eq!(job_display_pid(&job_with_last_pid), Some(400));
+
+            let job_no_pid = crate::shell::Job {
+                id: 4,
+                command: b"cmd"[..].into(),
+                pgid: None,
+                last_pid: None,
+                last_status: None,
+                children: vec![],
+                state: crate::shell::JobState::Running,
+                saved_termios: None,
+            };
+            assert_eq!(job_display_pid(&job_no_pid), None);
+        });
+    }
+
+    #[test]
+    fn format_job_state_stopped() {
+        assert_no_syscalls(|| {
+            let job = crate::shell::Job {
+                id: 1,
+                command: b"vim"[..].into(),
+                pgid: Some(999),
+                last_pid: Some(999),
+                last_status: None,
+                children: vec![],
+                state: crate::shell::JobState::Stopped(sys::SIGTSTP),
+                saved_termios: None,
+            };
+            let (state, pid) = format_job_state(&job);
+            assert_eq!(state, b"Stopped (SIGTSTP)");
+            assert_eq!(pid, b"999");
+        });
+    }
+
+    #[test]
+    fn jobs_pid_only_skips_reaped() {
+        run_trace(
+            trace_entries![
+                waitpid(3001, _) -> status(0),
+                waitpid(444, _) -> pid(0),
+                write(fd(crate::sys::STDOUT_FILENO), bytes(b"444\n")) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.jobs.push(crate::shell::Job {
+                    id: 1,
+                    command: b"done"[..].into(),
+                    pgid: Some(3001),
+                    last_pid: Some(3001),
+                    last_status: None,
+                    children: vec![fake_handle(3001)],
+                    state: crate::shell::JobState::Running,
+                    saved_termios: None,
+                });
+                shell.jobs.push(crate::shell::Job {
+                    id: 2,
+                    command: b"running"[..].into(),
+                    pgid: Some(444),
+                    last_pid: Some(444),
+                    last_status: None,
+                    children: vec![fake_handle(444)],
+                    state: crate::shell::JobState::Running,
+                    saved_termios: None,
+                });
+                let outcome =
+                    invoke(&mut shell, &[b"jobs".to_vec(), b"-p".to_vec()]).expect("jobs -p");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    #[test]
+    fn parse_jobs_operands_error_via_invoke() {
+        run_trace(
+            trace_entries![
+                write(
+                    fd(crate::sys::STDERR_FILENO),
+                    bytes(b"meiksh: jobs: invalid job id: %nosuch\n"),
+                ) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                let outcome = invoke(&mut shell, &[b"jobs".to_vec(), b"%nosuch".to_vec()])
+                    .expect("jobs %nosuch");
+                assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+            },
+        );
+    }
+
+    #[test]
+    fn resolve_job_id_prefix_search() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            shell.jobs.push(crate::shell::Job {
+                id: 1,
+                command: b"sleep 10"[..].into(),
+                pgid: Some(100),
+                last_pid: Some(100),
+                last_status: None,
+                children: vec![],
+                state: crate::shell::JobState::Running,
+                saved_termios: None,
+            });
+            assert_eq!(resolve_job_id(&shell, Some(b"%sleep")), Some(1));
+            assert_eq!(resolve_job_id(&shell, Some(b"sleep")), Some(1));
+        });
+    }
+
+    #[test]
+    fn jobs_reaped_stopped_is_silent() {
+        run_trace(
+            trace_entries![
+                waitpid(300, _) -> stopped_sig(crate::sys::SIGTSTP),
+                waitpid(300, _) -> pid(0),
+                write(fd(1), bytes(b"[1] + Stopped (SIGTSTP) stopped-cmd\n")) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.jobs.push(crate::shell::Job {
+                    id: 1,
+                    command: b"stopped-cmd"[..].into(),
+                    pgid: Some(300),
+                    last_pid: Some(300),
+                    last_status: None,
+                    children: vec![crate::sys::ChildHandle {
+                        pid: 300,
+                        stdout_fd: None,
+                    }],
+                    state: crate::shell::JobState::Running,
+                    saved_termios: None,
+                });
+                let outcome = invoke(&mut shell, &[b"jobs".to_vec()]).expect("jobs");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    #[test]
+    fn jobs_skips_unselected_running_jobs() {
+        run_trace(
+            trace_entries![
+                waitpid(100, _) -> pid(0),
+                waitpid(200, _) -> pid(0),
+                write(fd(1), bytes(b"[1] - Running sleep 1\n")) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.jobs.push(crate::shell::Job {
+                    id: 1,
+                    command: b"sleep 1"[..].into(),
+                    pgid: Some(100),
+                    last_pid: Some(100),
+                    last_status: None,
+                    children: vec![crate::sys::ChildHandle {
+                        pid: 100,
+                        stdout_fd: None,
+                    }],
+                    state: crate::shell::JobState::Running,
+                    saved_termios: None,
+                });
+                shell.jobs.push(crate::shell::Job {
+                    id: 2,
+                    command: b"sleep 2"[..].into(),
+                    pgid: Some(200),
+                    last_pid: Some(200),
+                    last_status: None,
+                    children: vec![crate::sys::ChildHandle {
+                        pid: 200,
+                        stdout_fd: None,
+                    }],
+                    state: crate::shell::JobState::Running,
+                    saved_termios: None,
+                });
+                let outcome =
+                    invoke(&mut shell, &[b"jobs".to_vec(), b"%1".to_vec()]).expect("jobs %1");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
             },
         );
     }

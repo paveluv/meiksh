@@ -265,4 +265,99 @@ mod tests {
             assert_eq!(expand_assignment_tilde(&shell, b"~/bin"), b"~/bin");
         });
     }
+
+    #[test]
+    fn expand_assignment_tilde_username() {
+        use crate::sys::test_support::{ArgMatcher, TraceResult, t};
+        run_trace(
+            trace_entries![
+                ..vec![t(
+                    "getpwnam",
+                    vec![ArgMatcher::Str(b"bob".to_vec())],
+                    TraceResult::StrVal(b"/home/bob".to_vec()),
+                )]
+            ],
+            || {
+                let shell = test_shell();
+                assert_eq!(
+                    expand_assignment_tilde(&shell, b"~bob/docs"),
+                    b"/home/bob/docs"
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn export_dash_p_with_operands_errors() {
+        let msg = diag(b"export: -p does not accept operands");
+        run_trace(
+            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto],
+            || {
+                let mut shell = test_shell();
+                let error = invoke(
+                    &mut shell,
+                    &[b"export".to_vec(), b"-p".to_vec(), b"FOO".to_vec()],
+                )
+                .expect_err("export -p with operands");
+                assert_eq!(error.exit_status(), 1);
+            },
+        );
+    }
+
+    #[test]
+    fn export_invalid_option_errors() {
+        let msg = diag(b"export: invalid option: -z");
+        run_trace(
+            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto],
+            || {
+                let mut shell = test_shell();
+                let error = invoke(&mut shell, &[b"export".to_vec(), b"-z".to_vec()])
+                    .expect_err("export -z");
+                assert_eq!(error.exit_status(), 1);
+            },
+        );
+    }
+
+    #[test]
+    fn readonly_invalid_option_errors() {
+        let msg = diag(b"readonly: invalid option: -x");
+        run_trace(
+            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto],
+            || {
+                let mut shell = test_shell();
+                let error = invoke(&mut shell, &[b"readonly".to_vec(), b"-x".to_vec()])
+                    .expect_err("readonly -x");
+                assert_eq!(error.exit_status(), 1);
+            },
+        );
+    }
+
+    #[test]
+    fn unset_double_dash_stops_option_parsing() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            shell.set_var(b"-v", b"val".to_vec()).unwrap();
+            let outcome = invoke(
+                &mut shell,
+                &[b"unset".to_vec(), b"--".to_vec(), b"-v".to_vec()],
+            )
+            .expect("unset --");
+            assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            assert_eq!(shell.get_var(b"-v"), None);
+        });
+    }
+
+    #[test]
+    fn unset_invalid_option_errors() {
+        let msg = diag(b"unset: invalid option: -z");
+        run_trace(
+            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto],
+            || {
+                let mut shell = test_shell();
+                let error =
+                    invoke(&mut shell, &[b"unset".to_vec(), b"-z".to_vec()]).expect_err("unset -z");
+                assert_eq!(error.exit_status(), 1);
+            },
+        );
+    }
 }

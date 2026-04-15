@@ -2386,6 +2386,17 @@ mod tests {
         }
 
         #[test]
+        fn vi_command_numbered_G_empty_history() {
+            assert_no_syscalls(|| {
+                let history: Vec<Box<[u8]>> = vec![];
+                let mut state = ViState::new(0x7f, history.len());
+                state.process_byte(0x1b, &history);
+                feed_bytes(&mut state, b"2G", &history);
+                assert_eq!(state.line, b"");
+            });
+        }
+
+        #[test]
         fn vi_command_v_returns_run_editor_action() {
             run_trace(
                 trace_entries![
@@ -3924,6 +3935,7 @@ mod tests {
                 write(fd(STDOUT_FILENO), bytes(b"\r\n")) -> auto,
                 tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
                 open(_, _, _) -> err(libc::ENOENT),
+                unlink(_) -> 0,
                 write(fd(STDOUT_FILENO), bytes(b"\r\x1b[K")) -> auto,
                 read(fd(STDIN_FILENO), _) -> bytes([b'\r']),
                 write(fd(STDOUT_FILENO), bytes(b"\r\n")) -> auto,
@@ -3958,6 +3970,7 @@ mod tests {
                 read(fd(11), _) -> bytes(b"\n"),
                 read(fd(11), _) -> 0,
                 close(fd(11)) -> 0,
+                unlink(_) -> 0,
                 write(fd(STDOUT_FILENO), bytes(b"\r\x1b[K")) -> auto,
                 read(fd(STDIN_FILENO), _) -> bytes([b'\r']),
                 write(fd(STDOUT_FILENO), bytes(b"\r\n")) -> auto,
@@ -3992,6 +4005,7 @@ mod tests {
                 read(fd(11), _) -> bytes(b"edited\n"),
                 read(fd(11), _) -> 0,
                 close(fd(11)) -> 0,
+                unlink(_) -> 0,
                 write(fd(STDOUT_FILENO), bytes(b"\r\n")) -> auto,
                 tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
             ],

@@ -1396,6 +1396,25 @@ mod tests {
     }
 
     #[test]
+    fn run_builtin_assignment_error() {
+        run_trace(
+            trace_entries![
+                write(fd(2), bytes(b"meiksh: x: readonly variable\n")) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.mark_readonly(b"x");
+                let result =
+                    shell.run_builtin(&[b"eval".to_vec()], &[(b"x".to_vec(), b"2".to_vec())]);
+                match result {
+                    Err(crate::shell::error::ShellError::Status(1)) => (),
+                    _ => panic!("Expected Err(Status(1))"),
+                }
+            },
+        );
+    }
+
+    #[test]
     fn syntax_check_only_skips_execution() {
         assert_no_syscalls(|| {
             let mut shell = test_shell();

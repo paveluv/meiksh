@@ -53,7 +53,7 @@ mod tests {
 
     #[test]
     fn intern_returns_same_content() {
-        let arena = ByteArena::new();
+        let arena = ByteArena::default();
         let s = arena.intern_vec(b"hello".to_vec());
         assert_eq!(s, b"hello");
     }

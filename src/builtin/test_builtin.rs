@@ -161,8 +161,7 @@ pub(super) fn test_integer_binary(left: &[u8], op: &[u8], right: &[u8]) -> Optio
         b"-gt" => l > r,
         b"-ge" => l >= r,
         b"-lt" => l < r,
-        b"-le" => l <= r,
-        _ => unreachable!(),
+        _ => l <= r,
     };
     Some(Ok(result))
 }
@@ -497,19 +496,31 @@ mod tests {
 
     #[test]
     fn test_unary_symlink() {
-        assert_no_syscalls(|| {
-            let mut shell = test_shell();
-            let outcome = invoke(
-                &mut shell,
-                &[
-                    b"test".to_vec(),
-                    b"-h".to_vec(),
-                    b"/nonexistent_xyzzy".to_vec(),
-                ],
-            )
-            .expect("test -h");
-            assert!(matches!(outcome, BuiltinOutcome::Status(1)));
-        });
+        run_trace(
+            trace_entries![
+                ..vec![crate::sys::test_support::t(
+                    "lstat",
+                    vec![
+                        crate::sys::test_support::ArgMatcher::Str(b"/nonexistent_xyzzy".to_vec()),
+                        crate::sys::test_support::ArgMatcher::Any
+                    ],
+                    crate::sys::test_support::TraceResult::Err(libc::ENOENT),
+                )]
+            ],
+            || {
+                let mut shell = test_shell();
+                let outcome = invoke(
+                    &mut shell,
+                    &[
+                        b"test".to_vec(),
+                        b"-h".to_vec(),
+                        b"/nonexistent_xyzzy".to_vec(),
+                    ],
+                )
+                .expect("test -h");
+                assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+            },
+        );
     }
 
     #[test]
@@ -673,6 +684,197 @@ mod tests {
                 )
                 .expect("test -ot");
                 assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+            },
+        );
+    }
+
+    #[test]
+    fn test_single_nonempty_arg_is_true() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let outcome =
+                invoke(&mut shell, &[b"test".to_vec(), b"hello".to_vec()]).expect("test hello");
+            assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+        });
+    }
+
+    #[test]
+    fn test_single_empty_arg_is_false() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let outcome = invoke(&mut shell, &[b"test".to_vec(), b"".to_vec()]).expect("test ''");
+            assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+        });
+    }
+
+    #[test]
+    fn test_four_args_negated_true_becomes_false() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let outcome = invoke(
+                &mut shell,
+                &[
+                    b"test".to_vec(),
+                    b"!".to_vec(),
+                    b"abc".to_vec(),
+                    b"=".to_vec(),
+                    b"abc".to_vec(),
+                ],
+            )
+            .expect("test ! abc = abc");
+            assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+        });
+    }
+
+    #[test]
+    fn test_six_args_too_many() {
+        let msg = diag(b"test: too many arguments");
+        run_trace(
+            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto],
+            || {
+                let mut shell = test_shell();
+                let outcome = invoke(
+                    &mut shell,
+                    &[
+                        b"test".to_vec(),
+                        b"a".to_vec(),
+                        b"b".to_vec(),
+                        b"c".to_vec(),
+                        b"d".to_vec(),
+                        b"e".to_vec(),
+                    ],
+                )
+                .expect("test a b c d e");
+                assert!(matches!(outcome, BuiltinOutcome::Status(2)));
+            },
+        );
+    }
+
+    #[test]
+    fn test_bang_empty_operand_is_true() {
+        assert_no_syscalls(|| {
+            let shell = test_shell();
+            let result = test_two_args(&shell, b"!", b"");
+            assert_eq!(result, Ok(true));
+        });
+    }
+
+    #[test]
+    fn test_bang_nonempty_operand_is_false() {
+        assert_no_syscalls(|| {
+            let shell = test_shell();
+            let result = test_two_args(&shell, b"!", b"hello");
+            assert_eq!(result, Ok(false));
+        });
+    }
+
+    #[test]
+    fn test_string_not_equal_operator() {
+        assert_no_syscalls(|| {
+            let shell = test_shell();
+            let result = test_three_args(&shell, b"abc", b"!=", b"def");
+            assert_eq!(result, Ok(true));
+
+            let result = test_three_args(&shell, b"abc", b"!=", b"abc");
+            assert_eq!(result, Ok(false));
+        });
+    }
+
+    #[test]
+    fn test_unary_z_empty_string() {
+        assert_no_syscalls(|| {
+            let shell = test_shell();
+            let result = test_unary(&shell, b"-z", b"");
+            assert_eq!(result, Ok(true));
+        });
+    }
+
+    #[test]
+    fn test_unary_z_nonempty_string() {
+        assert_no_syscalls(|| {
+            let shell = test_shell();
+            let result = test_unary(&shell, b"-z", b"x");
+            assert_eq!(result, Ok(false));
+        });
+    }
+
+    #[test]
+    fn test_unary_block_special() {
+        run_trace(trace_entries![stat(any, any) -> err(libc::ENOENT)], || {
+            let shell = test_shell();
+            let result = test_unary(&shell, b"-b", b"/dev/sda");
+            assert_eq!(result, Ok(false));
+        });
+    }
+
+    #[test]
+    fn test_unary_char_special() {
+        run_trace(trace_entries![stat(any, any) -> err(libc::ENOENT)], || {
+            let shell = test_shell();
+            let result = test_unary(&shell, b"-c", b"/dev/null");
+            assert_eq!(result, Ok(false));
+        });
+    }
+
+    #[test]
+    fn test_unary_directory() {
+        run_trace(trace_entries![stat(any, any) -> stat_dir], || {
+            let shell = test_shell();
+            let result = test_unary(&shell, b"-d", b"/tmp");
+            assert_eq!(result, Ok(true));
+        });
+    }
+
+    #[test]
+    fn test_unary_directory_not_found() {
+        run_trace(trace_entries![stat(any, any) -> err(libc::ENOENT)], || {
+            let shell = test_shell();
+            let result = test_unary(&shell, b"-d", b"/nosuch");
+            assert_eq!(result, Ok(false));
+        });
+    }
+
+    #[test]
+    fn test_unary_tty_negative_fd() {
+        let msg = diag(b"test: -1: not a valid fd");
+        run_trace(
+            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto],
+            || {
+                let mut shell = test_shell();
+                let outcome = invoke(
+                    &mut shell,
+                    &[b"test".to_vec(), b"-t".to_vec(), b"-1".to_vec()],
+                )
+                .expect("test -t -1");
+                assert!(matches!(outcome, BuiltinOutcome::Status(2)));
+            },
+        );
+    }
+
+    #[test]
+    fn test_file_binary_nt_both_missing() {
+        run_trace(
+            trace_entries![
+                stat(any, any) -> err(libc::ENOENT),
+                stat(any, any) -> err(libc::ENOENT),
+            ],
+            || {
+                let result = test_file_binary(b"/no1", b"-nt", b"/no2");
+                assert_eq!(result, Some(Ok(false)));
+            },
+        );
+    }
+
+    #[test]
+    fn test_file_binary_nt_first_missing_second_exists() {
+        run_trace(
+            trace_entries![
+                stat(any, any) -> err(libc::ENOENT),
+                stat(any, any) -> stat_file(0o644),
+            ],
+            || {
+                let result = test_file_binary(b"/no", b"-nt", b"/exists");
+                assert_eq!(result, Some(Ok(false)));
             },
         );
     }

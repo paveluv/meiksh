@@ -233,6 +233,40 @@ mod tests {
     }
 
     #[test]
+    fn set_dash_dash_sets_positional() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let outcome = invoke(
+                &mut shell,
+                &[
+                    b"set".to_vec(),
+                    b"--".to_vec(),
+                    b"a".to_vec(),
+                    b"b".to_vec(),
+                    b"c".to_vec(),
+                ],
+            )
+            .expect("set --");
+            assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            assert_eq!(
+                shell.positional,
+                vec![b"a".to_vec(), b"b".to_vec(), b"c".to_vec()]
+            );
+        });
+    }
+
+    #[test]
+    fn shift_success_drains_positional() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            shell.positional = vec![b"a".to_vec(), b"b".to_vec(), b"c".to_vec()];
+            let outcome = invoke(&mut shell, &[b"shift".to_vec(), b"2".to_vec()]).expect("shift 2");
+            assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            assert_eq!(shell.positional, vec![b"c".to_vec()]);
+        });
+    }
+
+    #[test]
     fn set_plus_o_no_name_lists_reinput() {
         run_trace(
             trace_entries![

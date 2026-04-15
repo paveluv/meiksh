@@ -25,9 +25,6 @@ impl expand::Context for Shell {
             b'0' => Some(Cow::Borrowed(&self.shell_name)),
             digit if digit.is_ascii_digit() => {
                 let index = (digit - b'0') as usize;
-                if index == 0 {
-                    return None;
-                }
                 self.positional
                     .get(index.saturating_sub(1))
                     .map(|v| Cow::Borrowed(v.as_slice()))

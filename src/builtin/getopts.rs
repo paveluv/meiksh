@@ -185,4 +185,51 @@ mod tests {
             },
         );
     }
+
+    #[test]
+    fn getopts_optind_past_params() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            shell.env.insert(b"OPTIND".to_vec(), b"5".to_vec());
+            let outcome = invoke(
+                &mut shell,
+                &[
+                    b"getopts".to_vec(),
+                    b"ab:".to_vec(),
+                    b"opt".to_vec(),
+                    b"-a".to_vec(),
+                ],
+            )
+            .expect("getopts past end");
+            assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+            assert_eq!(shell.get_var(b"opt"), Some(b"?" as &[u8]));
+            assert_eq!(shell.get_var(b"OPTIND"), Some(b"2" as &[u8]));
+        });
+    }
+
+    #[test]
+    fn getopts_optind_past_params_readonly_optind() {
+        let msg = diag(b"getopts: readonly variable: OPTIND");
+        run_trace(
+            trace_entries![
+                write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.env.insert(b"OPTIND".to_vec(), b"5".to_vec());
+                shell.readonly.insert(b"OPTIND".to_vec());
+                let outcome = invoke(
+                    &mut shell,
+                    &[
+                        b"getopts".to_vec(),
+                        b"ab:".to_vec(),
+                        b"opt".to_vec(),
+                        b"-a".to_vec(),
+                    ],
+                )
+                .expect("getopts readonly optind");
+                assert!(matches!(outcome, BuiltinOutcome::Status(2)));
+            },
+        );
+    }
 }

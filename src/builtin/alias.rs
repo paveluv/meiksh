@@ -263,4 +263,32 @@ mod tests {
             },
         );
     }
+
+    #[test]
+    fn unalias_invalid_option() {
+        let msg = diag(b"unalias: invalid option: -x");
+        run_trace(
+            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,],
+            || {
+                let mut shell = test_shell();
+                let error = invoke(&mut shell, &[b"unalias".to_vec(), b"-x".to_vec()])
+                    .expect_err("unalias -x");
+                assert_eq!(error.exit_status(), 1);
+            },
+        );
+    }
+
+    #[test]
+    fn unalias_dash_dash_no_name() {
+        let msg = diag(b"unalias: name required");
+        run_trace(
+            trace_entries![write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,],
+            || {
+                let mut shell = test_shell();
+                let error = invoke(&mut shell, &[b"unalias".to_vec(), b"--".to_vec()])
+                    .expect_err("unalias --");
+                assert_eq!(error.exit_status(), 1);
+            },
+        );
+    }
 }

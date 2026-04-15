@@ -163,7 +163,6 @@ pub(super) fn apply_child_fd_actions(actions: &[ChildFdAction]) -> sys::SysResul
     Ok(())
 }
 
-#[allow(dead_code)]
 pub(super) fn apply_child_setup(
     actions: &[ChildFdAction],
     process_group: ProcessGroupPlan,
@@ -865,6 +864,152 @@ mod tests {
             || {
                 let err = open_for_write_noclobber(b"/exists.txt").expect_err("should fail");
                 assert_eq!(err.errno(), Some(sys::EEXIST));
+            },
+        );
+    }
+    #[test]
+    fn apply_shell_redirections_multiple_same_fd() {
+        run_trace(
+            trace_entries![
+                fcntl(int(1), _, _) -> int(10), // save
+                open(str("a"), _, _) -> fd(11),
+                dup2(fd(11), fd(1)) -> fd(1),
+                close(fd(11)) -> 0,
+                // second save skips fcntl
+                open(str("b"), _, _) -> fd(12),
+                dup2(fd(12), fd(1)) -> fd(1),
+                close(fd(12)) -> 0,
+                // restore
+                dup2(fd(10), fd(1)) -> fd(1),
+                close(fd(10)) -> 0,
+            ],
+            || {
+                let expanded1 = ExpandedRedirection {
+                    kind: RedirectionKind::Write,
+                    fd: 1,
+                    target: b"a",
+                    here_doc_body: None,
+                    line: 1,
+                };
+                let expanded2 = ExpandedRedirection {
+                    kind: RedirectionKind::Write,
+                    fd: 1,
+                    target: b"b",
+                    here_doc_body: None,
+                    line: 1,
+                };
+                let _guard = apply_shell_redirections(&[expanded1, expanded2], false).unwrap();
+            },
+        );
+    }
+
+    #[test]
+    fn apply_shell_redirection_read() {
+        run_trace(
+            trace_entries![
+                open(str("a"), _, _) -> fd(10),
+                dup2(fd(10), fd(0)) -> fd(0),
+                close(fd(10)) -> 0,
+            ],
+            || {
+                let expanded = ExpandedRedirection {
+                    kind: RedirectionKind::Read,
+                    fd: 0,
+                    target: b"a",
+                    here_doc_body: None,
+                    line: 1,
+                };
+                apply_shell_redirection(&expanded, false).unwrap();
+            },
+        );
+    }
+    #[test]
+    fn apply_shell_redirection_readwrite() {
+        run_trace(
+            trace_entries![
+                open(str("file.txt"), _, _) -> fd(10),
+                dup2(fd(10), fd(3)) -> fd(3),
+                close(fd(10)) -> 0,
+            ],
+            || {
+                let expanded = ExpandedRedirection {
+                    kind: RedirectionKind::ReadWrite,
+                    fd: 3,
+                    target: b"file.txt",
+                    here_doc_body: None,
+                    line: 1,
+                };
+                apply_shell_redirection(&expanded, false).unwrap();
+            },
+        );
+    }
+
+    #[test]
+    fn apply_shell_redirections_dup_error() {
+        run_trace(
+            trace_entries![
+                fcntl(int(1), _, _) -> err(libc::EMFILE),
+            ],
+            || {
+                let expanded = ExpandedRedirection {
+                    kind: RedirectionKind::Write,
+                    fd: 1,
+                    target: b"file.txt",
+                    here_doc_body: None,
+                    line: 1,
+                };
+                let err = apply_shell_redirections(&[expanded], false).unwrap_err();
+                assert_eq!(err.errno(), Some(libc::EMFILE));
+            },
+        );
+    }
+
+    #[test]
+    fn close_shell_fd_other_error() {
+        run_trace(
+            trace_entries![
+                close(fd(3)) -> err(libc::EIO),
+            ],
+            || {
+                let err = close_shell_fd(3).unwrap_err();
+                assert_eq!(err.errno(), Some(libc::EIO));
+            },
+        );
+    }
+    #[test]
+    fn apply_child_setup_test() {
+        run_trace(
+            trace_entries![
+                setpgid(0, 0) -> 0,
+            ],
+            || {
+                let plan = ProcessGroupPlan::NewGroup;
+                apply_child_setup(&[], plan).unwrap();
+            },
+        );
+        run_trace(
+            trace_entries![
+                setpgid(0, 100) -> 0,
+            ],
+            || {
+                let plan = ProcessGroupPlan::Join(100);
+                apply_child_setup(&[], plan).unwrap();
+            },
+        );
+        assert_no_syscalls(|| {
+            let plan = ProcessGroupPlan::None;
+            apply_child_setup(&[], plan).unwrap();
+        });
+    }
+
+    #[test]
+    fn close_shell_fd_ebadf_ok() {
+        run_trace(
+            trace_entries![
+                close(fd(3)) -> err(libc::EBADF),
+            ],
+            || {
+                close_shell_fd(3).unwrap();
             },
         );
     }

@@ -24,9 +24,10 @@ pub(super) fn printf_builtin(
             break;
         }
         arg_idx += consumed;
-        if arg_idx >= args.len() {
-            break;
-        }
+        debug_assert!(
+            arg_idx < args.len(),
+            "printf_format should set stop when args exhausted"
+        );
     }
     Ok(BuiltinOutcome::Status(if had_error { 1 } else { 0 }))
 }
@@ -1354,6 +1355,193 @@ mod tests {
             let mut out = Vec::new();
             printf_format_string(&mut out, b"%-10", b"abc");
             assert_eq!(out, b"abc       ");
+        });
+    }
+
+    #[test]
+    fn printf_loop_breaks_when_args_exhausted() {
+        run_trace(trace_entries![write(fd(1), bytes(b"ab")) -> auto], || {
+            let mut shell = test_shell();
+            let outcome = invoke(
+                &mut shell,
+                &[
+                    b"printf".to_vec(),
+                    b"%s%s".to_vec(),
+                    b"a".to_vec(),
+                    b"b".to_vec(),
+                ],
+            )
+            .expect("printf loop break");
+            assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+        });
+    }
+
+    #[test]
+    fn printf_check_trailing_calls_diagnostic() {
+        assert_no_syscalls(|| {
+            assert!(printf_find_trailing_garbage(b"42abc").is_some());
+            assert!(printf_find_trailing_garbage(b"+42abc").is_some());
+            assert!(printf_find_trailing_garbage(b"-42abc").is_some());
+            assert!(printf_find_trailing_garbage(b"0x1Gz").is_some());
+            assert!(printf_find_trailing_garbage(b"078").is_some());
+
+            assert!(printf_find_trailing_garbage(b"42").is_none());
+            assert!(printf_find_trailing_garbage(b"+42").is_none());
+            assert!(printf_find_trailing_garbage(b"-42").is_none());
+        });
+    }
+
+    #[test]
+    fn printf_check_trailing_diagnostic_message() {
+        let msg = diag(b"printf: \"42abc\": not completely converted");
+        run_trace(
+            trace_entries![
+                write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,
+            ],
+            || {
+                let shell = test_shell();
+                let mut had_error = false;
+                printf_check_trailing(&shell, b"42abc", &mut had_error);
+                assert!(had_error);
+            },
+        );
+    }
+
+    #[test]
+    fn printf_check_trailing_skips_quoted() {
+        assert_no_syscalls(|| {
+            let shell = test_shell();
+            let mut had_error = false;
+            printf_check_trailing(&shell, b"'A", &mut had_error);
+            assert!(!had_error);
+            printf_check_trailing(&shell, b"\"B", &mut had_error);
+            assert!(!had_error);
+        });
+    }
+
+    #[test]
+    fn printf_b_backslash_c_stops_mid_format() {
+        run_trace(trace_entries![write(fd(1), bytes(b"hi")) -> auto], || {
+            let mut shell = test_shell();
+            invoke(
+                &mut shell,
+                &[b"printf".to_vec(), b"%b extra".to_vec(), b"hi\\c".to_vec()],
+            )
+            .expect("printf %b \\c mid-format");
+        });
+    }
+
+    #[test]
+    fn printf_numbered_arg_no_args() {
+        assert_no_syscalls(|| {
+            let shell = test_shell();
+            let (out, consumed, stop, error) = printf_format(&shell, b"%1$s", &[], 0);
+            assert_eq!(out, b"");
+            assert_eq!(consumed, 0);
+            assert!(stop);
+            assert!(!error);
+        });
+    }
+
+    #[test]
+    fn printf_numbered_arg_with_args() {
+        assert_no_syscalls(|| {
+            let shell = test_shell();
+            let args = vec![b"hello".to_vec(), b"world".to_vec()];
+            let (out, consumed, _stop, error) = printf_format(&shell, b"%2$s %1$s", &args, 0);
+            assert_eq!(out, b"world hello");
+            assert_eq!(consumed, 0);
+            assert!(!error);
+        });
+    }
+
+    #[test]
+    fn printf_format_string_no_percent_prefix() {
+        assert_no_syscalls(|| {
+            let mut out = Vec::new();
+            printf_format_string(&mut out, b"6", b"hi");
+            assert_eq!(out, b"    hi");
+        });
+    }
+
+    #[test]
+    fn printf_format_signed_no_percent_prefix() {
+        assert_no_syscalls(|| {
+            let mut out = Vec::new();
+            printf_format_signed(&mut out, b"8ld", 42);
+            assert_eq!(out, b"      42");
+        });
+    }
+
+    #[test]
+    fn printf_format_signed_no_ld_suffix() {
+        assert_no_syscalls(|| {
+            let mut out = Vec::new();
+            printf_format_signed(&mut out, b"%8", 42);
+            assert_eq!(out, b"      42");
+        });
+    }
+
+    #[test]
+    fn printf_format_unsigned_no_percent_prefix() {
+        assert_no_syscalls(|| {
+            let mut out = Vec::new();
+            printf_format_unsigned(&mut out, b"8lu", 42);
+            assert_eq!(out, b"      42");
+        });
+    }
+
+    #[test]
+    fn printf_format_unsigned_no_lu_suffix() {
+        assert_no_syscalls(|| {
+            let mut out = Vec::new();
+            printf_format_unsigned(&mut out, b"%8", 42);
+            assert_eq!(out, b"      42");
+        });
+    }
+
+    #[test]
+    fn printf_format_octal_no_percent_prefix() {
+        assert_no_syscalls(|| {
+            let mut out = Vec::new();
+            printf_format_octal(&mut out, b"8o", 42);
+            assert_eq!(out, b"      52");
+        });
+    }
+
+    #[test]
+    fn printf_format_octal_no_o_suffix() {
+        assert_no_syscalls(|| {
+            let mut out = Vec::new();
+            printf_format_octal(&mut out, b"%8", 42);
+            assert_eq!(out, b"      52");
+        });
+    }
+
+    #[test]
+    fn printf_format_octal_right_padded() {
+        assert_no_syscalls(|| {
+            let mut out = Vec::new();
+            printf_format_octal(&mut out, b"%8o", 42);
+            assert_eq!(out, b"      52");
+        });
+    }
+
+    #[test]
+    fn printf_format_hex_no_percent_prefix() {
+        assert_no_syscalls(|| {
+            let mut out = Vec::new();
+            printf_format_hex(&mut out, b"8x", 42, false);
+            assert_eq!(out, b"      2a");
+        });
+    }
+
+    #[test]
+    fn printf_format_hex_no_suffix() {
+        assert_no_syscalls(|| {
+            let mut out = Vec::new();
+            printf_format_hex(&mut out, b"%8", 42, false);
+            assert_eq!(out, b"      2a");
         });
     }
 }

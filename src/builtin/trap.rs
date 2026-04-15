@@ -540,6 +540,103 @@ mod tests {
     }
 
     #[test]
+    fn trap_dash_dash_with_action_and_condition() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            invoke(
+                &mut shell,
+                &[
+                    b"trap".to_vec(),
+                    b"--".to_vec(),
+                    b"echo goodbye".to_vec(),
+                    b"EXIT".to_vec(),
+                ],
+            )
+            .expect("trap -- 'echo goodbye' EXIT");
+            assert_eq!(
+                shell.trap_actions.get(&TrapCondition::Exit),
+                Some(&TrapAction::Command(b"echo goodbye"[..].into()))
+            );
+        });
+    }
+
+    #[test]
+    fn trap_numeric_reset_invalid_condition() {
+        run_trace(
+            trace_entries![
+                write(fd(2), bytes(b"meiksh: trap: invalid condition: BOGUS\n")) -> auto
+            ],
+            || {
+                let mut shell = test_shell();
+                let result = invoke(
+                    &mut shell,
+                    &[b"trap".to_vec(), b"0".to_vec(), b"BOGUS".to_vec()],
+                )
+                .expect("trap 0 BOGUS");
+                assert!(matches!(result, BuiltinOutcome::Status(1)));
+            },
+        );
+    }
+
+    #[test]
+    fn trap_action_without_condition_errors() {
+        run_trace(
+            trace_entries![
+                write(fd(2), bytes(b"meiksh: trap: condition argument required\n")) -> auto
+            ],
+            || {
+                let mut shell = test_shell();
+                let result = invoke(&mut shell, &[b"trap".to_vec(), b"echo hi".to_vec()])
+                    .expect("trap echo_hi");
+                assert!(matches!(result, BuiltinOutcome::Status(1)));
+            },
+        );
+    }
+
+    #[test]
+    fn trap_dash_p_no_operands_lists_all() {
+        let signals = supported_trap_conditions();
+        let mut writes = Vec::new();
+        for condition in &signals {
+            let line = ByteWriter::new()
+                .bytes(b"trap -- - ")
+                .bytes(&format_trap_condition(*condition))
+                .byte(b'\n')
+                .finish();
+            writes.push(crate::sys::test_support::t(
+                "write",
+                vec![
+                    crate::sys::test_support::ArgMatcher::Fd(1),
+                    crate::sys::test_support::ArgMatcher::Bytes(line),
+                ],
+                crate::sys::test_support::TraceResult::Auto,
+            ));
+        }
+        run_trace(trace_entries![..writes], || {
+            let mut shell = test_shell();
+            invoke(&mut shell, &[b"trap".to_vec(), b"-p".to_vec()]).expect("trap -p");
+        });
+    }
+
+    #[test]
+    fn trap_dash_p_invalid_condition_errors() {
+        run_trace(
+            trace_entries![
+                write(fd(2), bytes(b"meiksh: trap: invalid condition: NOPE\n")) -> auto
+            ],
+            || {
+                let mut shell = test_shell();
+                let result = invoke(
+                    &mut shell,
+                    &[b"trap".to_vec(), b"-p".to_vec(), b"NOPE".to_vec()],
+                )
+                .expect("trap -p NOPE");
+                assert!(matches!(result, BuiltinOutcome::Status(1)));
+            },
+        );
+    }
+
+    #[test]
     fn trap_output_action_variants() {
         assert_no_syscalls(|| {
             let mut shell = test_shell();

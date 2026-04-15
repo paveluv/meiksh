@@ -150,9 +150,6 @@ pub(super) fn parse_kill_signal(shell: &Shell, spec: &[u8]) -> Result<i32, Shell
             return Ok(*sig);
         }
     }
-    if name == b"0" {
-        return Ok(0);
-    }
     let msg = ByteWriter::new()
         .bytes(b"kill: unknown signal: ")
         .bytes(spec)
@@ -370,6 +367,233 @@ mod tests {
         assert_no_syscalls(|| {
             let shell = test_shell();
             assert_eq!(parse_kill_signal(&shell, b"0").unwrap(), 0);
+        });
+    }
+
+    #[test]
+    fn kill_dash_s_with_signal_name_sends_to_pid() {
+        run_trace(
+            trace_entries![
+                kill(int(-42i64), int(sys::SIGTERM as i64)) -> 0,
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.jobs.push(crate::shell::Job {
+                    id: 1,
+                    command: b"sleep"[..].into(),
+                    pgid: Some(42),
+                    last_pid: Some(42),
+                    last_status: None,
+                    children: vec![sys::ChildHandle {
+                        pid: 42,
+                        stdout_fd: None,
+                    }],
+                    state: crate::shell::JobState::Running,
+                    saved_termios: None,
+                });
+                let outcome = invoke(
+                    &mut shell,
+                    &[
+                        b"kill".to_vec(),
+                        b"-s".to_vec(),
+                        b"TERM".to_vec(),
+                        b"42".to_vec(),
+                    ],
+                )
+                .expect("kill -s TERM 42");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    #[test]
+    fn kill_dash_dash_separator() {
+        run_trace(
+            trace_entries![
+                kill(int(99i64), int(sys::SIGTERM as i64)) -> 0,
+            ],
+            || {
+                let mut shell = test_shell();
+                let outcome = invoke(
+                    &mut shell,
+                    &[b"kill".to_vec(), b"--".to_vec(), b"99".to_vec()],
+                )
+                .expect("kill -- 99");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    #[test]
+    fn kill_job_with_pgid_success() {
+        run_trace(
+            trace_entries![
+                kill(int(-100i64), int(sys::SIGTERM as i64)) -> 0,
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.jobs.push(crate::shell::Job {
+                    id: 1,
+                    command: b"sleep"[..].into(),
+                    pgid: Some(100),
+                    last_pid: Some(100),
+                    last_status: None,
+                    children: vec![sys::ChildHandle {
+                        pid: 100,
+                        stdout_fd: None,
+                    }],
+                    state: crate::shell::JobState::Running,
+                    saved_termios: None,
+                });
+                let outcome =
+                    invoke(&mut shell, &[b"kill".to_vec(), b"%1".to_vec()]).expect("kill %1");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    #[test]
+    fn kill_job_send_signal_fails() {
+        let msg = diag(b"kill: (100): No such process");
+        run_trace(
+            trace_entries![
+                kill(int(-100i64), int(sys::SIGTERM as i64)) -> err(libc::ESRCH),
+                write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.jobs.push(crate::shell::Job {
+                    id: 1,
+                    command: b"sleep"[..].into(),
+                    pgid: Some(100),
+                    last_pid: Some(100),
+                    last_status: None,
+                    children: vec![sys::ChildHandle {
+                        pid: 100,
+                        stdout_fd: None,
+                    }],
+                    state: crate::shell::JobState::Running,
+                    saved_termios: None,
+                });
+                let outcome =
+                    invoke(&mut shell, &[b"kill".to_vec(), b"%1".to_vec()]).expect("kill %1 fail");
+                assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+            },
+        );
+    }
+
+    #[test]
+    fn kill_job_sigcont_updates_state() {
+        run_trace(
+            trace_entries![
+                kill(int(-200i64), int(sys::SIGCONT as i64)) -> 0,
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.jobs.push(crate::shell::Job {
+                    id: 1,
+                    command: b"sleep"[..].into(),
+                    pgid: Some(200),
+                    last_pid: Some(200),
+                    last_status: None,
+                    children: vec![sys::ChildHandle {
+                        pid: 200,
+                        stdout_fd: None,
+                    }],
+                    state: crate::shell::JobState::Stopped(0),
+                    saved_termios: None,
+                });
+                let outcome = invoke(
+                    &mut shell,
+                    &[b"kill".to_vec(), b"-CONT".to_vec(), b"%1".to_vec()],
+                )
+                .expect("kill -CONT %1");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+                assert_eq!(shell.jobs[0].state, crate::shell::JobState::Running);
+            },
+        );
+    }
+
+    #[test]
+    fn kill_pid_send_signal_fails() {
+        let msg = diag(b"kill: (999): No such process");
+        run_trace(
+            trace_entries![
+                kill(int(999i64), int(sys::SIGTERM as i64)) -> err(libc::ESRCH),
+                write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                let outcome =
+                    invoke(&mut shell, &[b"kill".to_vec(), b"999".to_vec()]).expect("kill 999");
+                assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+            },
+        );
+    }
+
+    #[test]
+    fn kill_negative_pid_via_separator() {
+        run_trace(
+            trace_entries![
+                kill(int(-42i64), int(sys::SIGTERM as i64)) -> 0,
+            ],
+            || {
+                let mut shell = test_shell();
+                let outcome = invoke(
+                    &mut shell,
+                    &[b"kill".to_vec(), b"--".to_vec(), b"-42".to_vec()],
+                )
+                .expect("kill -- -42");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    #[test]
+    fn kill_job_no_pgid_uses_first_child_pid() {
+        run_trace(
+            trace_entries![
+                kill(int(-300i64), int(sys::SIGTERM as i64)) -> 0,
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.jobs.push(crate::shell::Job {
+                    id: 1,
+                    command: b"cmd"[..].into(),
+                    pgid: None,
+                    last_pid: Some(300),
+                    last_status: None,
+                    children: vec![sys::ChildHandle {
+                        pid: 300,
+                        stdout_fd: None,
+                    }],
+                    state: crate::shell::JobState::Running,
+                    saved_termios: None,
+                });
+                let outcome = invoke(&mut shell, &[b"kill".to_vec(), b"%1".to_vec()])
+                    .expect("kill %1 no pgid");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    #[test]
+    fn kill_job_pid_zero_is_noop() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            shell.jobs.push(crate::shell::Job {
+                id: 1,
+                command: b"empty"[..].into(),
+                pgid: None,
+                last_pid: None,
+                last_status: None,
+                children: vec![],
+                state: crate::shell::JobState::Running,
+                saved_termios: None,
+            });
+            let outcome =
+                invoke(&mut shell, &[b"kill".to_vec(), b"%1".to_vec()]).expect("kill %1 pid zero");
+            assert!(matches!(outcome, BuiltinOutcome::Status(0)));
         });
     }
 }

@@ -199,6 +199,7 @@ pub(super) fn symbolic_permissions_for_class(mask: u16, class_mask: u16, shift: 
 mod tests {
     use super::*;
     use crate::builtin::test_support::*;
+    use crate::trace_entries;
 
     #[test]
     fn umask_parsing_helpers() {
@@ -216,6 +217,210 @@ mod tests {
             assert_eq!(copy_permission_bits(0o754, 0o070, 0o070), 0o050);
             assert_eq!(copy_permission_bits(0o754, 0o007, 0o007), 0o004);
             assert_eq!(copy_permission_bits(0o754, 0o700, 0), 0);
+        });
+    }
+
+    #[test]
+    fn umask_display_octal() {
+        run_trace(
+            trace_entries![
+                umask(_) -> 0o22,
+                umask(_) -> 0o22,
+                write(fd(crate::sys::STDOUT_FILENO), bytes(b"0022\n")) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                let outcome = invoke(&mut shell, &[b"umask".to_vec()]).expect("umask");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    #[test]
+    fn umask_display_symbolic() {
+        run_trace(
+            trace_entries![
+                umask(_) -> 0o22,
+                umask(_) -> 0o22,
+                write(fd(crate::sys::STDOUT_FILENO), bytes(b"u=rwx,g=rx,o=rx\n")) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                let outcome =
+                    invoke(&mut shell, &[b"umask".to_vec(), b"-S".to_vec()]).expect("umask");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    #[test]
+    fn umask_double_dash_separator() {
+        run_trace(
+            trace_entries![
+                umask(_) -> 0o22,
+                umask(_) -> 0o22,
+                umask(_) -> 0o77,
+            ],
+            || {
+                let mut shell = test_shell();
+                let outcome = invoke(
+                    &mut shell,
+                    &[b"umask".to_vec(), b"--".to_vec(), b"077".to_vec()],
+                )
+                .expect("umask");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    #[test]
+    fn umask_invalid_option() {
+        let msg = diag(b"umask: invalid option: -x");
+        run_trace(
+            trace_entries![
+                write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                let outcome =
+                    invoke(&mut shell, &[b"umask".to_vec(), b"-x".to_vec()]).expect("umask");
+                assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+            },
+        );
+    }
+
+    #[test]
+    fn umask_too_many_arguments() {
+        let msg = diag(b"umask: too many arguments");
+        run_trace(
+            trace_entries![
+                umask(_) -> 0o22,
+                umask(_) -> 0o22,
+                write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                let outcome = invoke(
+                    &mut shell,
+                    &[b"umask".to_vec(), b"022".to_vec(), b"033".to_vec()],
+                )
+                .expect("umask");
+                assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+            },
+        );
+    }
+
+    #[test]
+    fn umask_invalid_mask() {
+        let msg = diag(b"umask: invalid mask: abc");
+        run_trace(
+            trace_entries![
+                umask(_) -> 0o22,
+                umask(_) -> 0o22,
+                write(fd(crate::sys::STDERR_FILENO), bytes(&msg)) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                let outcome =
+                    invoke(&mut shell, &[b"umask".to_vec(), b"abc".to_vec()]).expect("umask");
+                assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+            },
+        );
+    }
+
+    #[test]
+    fn umask_set_octal() {
+        run_trace(
+            trace_entries![
+                umask(_) -> 0o22,
+                umask(_) -> 0o22,
+                umask(_) -> 0o77,
+            ],
+            || {
+                let mut shell = test_shell();
+                let outcome =
+                    invoke(&mut shell, &[b"umask".to_vec(), b"077".to_vec()]).expect("umask");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    #[test]
+    fn parse_symbolic_empty_clause_returns_none() {
+        assert_no_syscalls(|| {
+            assert_eq!(parse_symbolic_umask(b"u=rw,", 0o022), None);
+            assert_eq!(parse_symbolic_umask(b",u=rw", 0o022), None);
+        });
+    }
+
+    #[test]
+    fn parse_symbolic_clause_no_operator() {
+        assert_no_syscalls(|| {
+            assert_eq!(parse_symbolic_clause(b"u"), None);
+            assert_eq!(parse_symbolic_clause(b"ugo"), None);
+        });
+    }
+
+    #[test]
+    fn parse_symbolic_clause_invalid_operator() {
+        assert_no_syscalls(|| {
+            assert_eq!(parse_symbolic_clause(b"u!rw"), None);
+            assert_eq!(parse_symbolic_clause(b"g?x"), None);
+        });
+    }
+
+    #[test]
+    fn parse_symbolic_targets_empty_defaults_to_all() {
+        assert_no_syscalls(|| {
+            assert_eq!(parse_symbolic_targets(b""), 0o777);
+        });
+    }
+
+    #[test]
+    fn symbolic_permission_s_is_noop() {
+        assert_no_syscalls(|| {
+            let result = symbolic_permission_bits(b"s", 0o700, 0o755);
+            assert_eq!(result, Some(0));
+        });
+    }
+
+    #[test]
+    fn symbolic_permission_unknown_char_returns_none() {
+        assert_no_syscalls(|| {
+            assert_eq!(symbolic_permission_bits(b"z", 0o700, 0o755), None);
+            assert_eq!(symbolic_permission_bits(b"rz", 0o700, 0o755), None);
+        });
+    }
+
+    #[test]
+    fn symbolic_permission_copy_from_user() {
+        assert_no_syscalls(|| {
+            let result = symbolic_permission_bits(b"u", 0o070, 0o754);
+            assert_eq!(result, Some(0o070));
+        });
+    }
+
+    #[test]
+    fn copy_permission_bits_from_user() {
+        assert_no_syscalls(|| {
+            assert_eq!(copy_permission_bits(0o754, 0o070, 0o700), 0o070);
+            assert_eq!(copy_permission_bits(0o754, 0o007, 0o700), 0o007);
+            assert_eq!(copy_permission_bits(0o754, 0o777, 0o700), 0o777);
+        });
+    }
+
+    #[test]
+    fn symbolic_mask_with_implicit_all_targets() {
+        assert_no_syscalls(|| {
+            let result = parse_umask_mask(b"+x", 0o777);
+            assert_eq!(result, Some(0o666));
+        });
+    }
+
+    #[test]
+    fn symbolic_mask_invalid_perm_char() {
+        assert_no_syscalls(|| {
+            assert_eq!(parse_umask_mask(b"u=z", 0o022), None);
         });
     }
 }

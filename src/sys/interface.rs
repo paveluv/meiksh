@@ -32,6 +32,7 @@ pub(crate) struct SystemInterface {
     pub(crate) open: fn(*const c_char, c_int, mode_t) -> c_int,
     pub(crate) write: fn(c_int, &[u8]) -> isize,
     pub(crate) stat: fn(*const c_char, *mut libc::stat) -> c_int,
+    pub(crate) lstat: fn(*const c_char, *mut libc::stat) -> c_int,
     pub(crate) fstat: fn(c_int, *mut libc::stat) -> c_int,
     pub(crate) access: fn(*const c_char, c_int) -> c_int,
     pub(crate) chdir: fn(*const c_char) -> c_int,
@@ -40,6 +41,7 @@ pub(crate) struct SystemInterface {
     pub(crate) readdir: fn(*mut libc::DIR) -> *mut libc::dirent,
     pub(crate) closedir: fn(*mut libc::DIR) -> c_int,
     pub(crate) realpath: fn(*const c_char, *mut c_char) -> *mut c_char,
+    pub(crate) unlink: fn(*const c_char) -> c_int,
     // Process
     pub(crate) fork: fn() -> Pid,
     pub(crate) exit_process: fn(c_int),
@@ -93,6 +95,7 @@ pub(crate) fn default_interface() -> SystemInterface {
         open: |path, flags, mode| unsafe { libc::open(path, flags, mode as c_int) },
         write: |fd, data| unsafe { libc::write(fd, data.as_ptr().cast(), data.len()) },
         stat: |path, buf| unsafe { libc::stat(path, buf) },
+        lstat: |path, buf| unsafe { libc::lstat(path, buf) },
         fstat: |fd, buf| unsafe { libc::fstat(fd, buf) },
         access: |path, mode| unsafe { libc::access(path, mode) },
         chdir: |path| unsafe { libc::chdir(path) },
@@ -101,6 +104,7 @@ pub(crate) fn default_interface() -> SystemInterface {
         readdir: |dirp| unsafe { libc::readdir(dirp) },
         closedir: |dirp| unsafe { libc::closedir(dirp) },
         realpath: |path, resolved| unsafe { libc::realpath(path, resolved) },
+        unlink: |path| unsafe { libc::unlink(path) },
         fork: || unsafe { libc::fork() },
         exit_process: |status| {
             #[cfg(coverage)]
@@ -433,6 +437,13 @@ mod tests {
             )))
             .is_err()
         );
+        assert!(
+            catch_unwind(AssertUnwindSafe(|| (tbl.lstat)(
+                std::ptr::null(),
+                std::ptr::null_mut()
+            )))
+            .is_err()
+        );
         assert!(catch_unwind(AssertUnwindSafe(|| (tbl.fstat)(0, std::ptr::null_mut()))).is_err());
         assert!(catch_unwind(AssertUnwindSafe(|| (tbl.access)(std::ptr::null(), 0))).is_err());
         assert!(catch_unwind(AssertUnwindSafe(|| (tbl.chdir)(std::ptr::null()))).is_err());
@@ -447,6 +458,7 @@ mod tests {
             )))
             .is_err()
         );
+        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.unlink)(std::ptr::null()))).is_err());
         assert!(catch_unwind(AssertUnwindSafe(|| (tbl.fork)())).is_err());
         assert!(catch_unwind(AssertUnwindSafe(|| (tbl.exit_process)(0))).is_err());
         assert!(catch_unwind(AssertUnwindSafe(|| (tbl.setenv)(b"k", b"v"))).is_err());
@@ -466,6 +478,26 @@ mod tests {
         assert!(catch_unwind(AssertUnwindSafe(|| (tbl.getpwnam)(b"nobody"))).is_err());
         assert!(catch_unwind(AssertUnwindSafe(|| (tbl.monotonic_clock_ns)())).is_err());
         assert!(catch_unwind(AssertUnwindSafe(|| (tbl.setup_locale)())).is_err());
+    }
+
+    #[test]
+    fn default_interface_env_errors() {
+        let tbl = default_interface();
+        // EINVAL cases: empty key, or key containing =
+        assert!((tbl.setenv)(b"", b"val").is_err());
+        assert!((tbl.setenv)(b"k=v", b"val").is_err());
+        assert!((tbl.unsetenv)(b"").is_err());
+        assert!((tbl.unsetenv)(b"k=v").is_err());
+    }
+
+    #[test]
+    fn default_interface_lstat_and_unlink_error_on_null() {
+        let tbl = default_interface();
+        unsafe {
+            let mut buf = std::mem::MaybeUninit::<libc::stat>::zeroed();
+            assert!((tbl.lstat)(std::ptr::null(), buf.as_mut_ptr()) < 0);
+            assert!((tbl.unlink)(std::ptr::null()) < 0);
+        }
     }
 
     #[test]
