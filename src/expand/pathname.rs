@@ -80,7 +80,6 @@ pub(super) fn path_join(base: &[u8], name: &[u8]) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use crate::arena::ByteArena;
     use crate::expand::core::Context;
     use crate::expand::test_support::{DefaultPathContext, FakeContext};
     use crate::expand::word::{expand_redirect_word, expand_word, expand_word_text};
@@ -90,7 +89,6 @@ mod tests {
 
     #[test]
     fn expands_text_without_field_splitting_or_pathname_expansion() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         ctx.env.insert(b"WORDS".to_vec(), b"one two".to_vec());
         assert_eq!(
@@ -100,7 +98,6 @@ mod tests {
                     raw: b"$WORDS".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("expand"),
             b"one two"
@@ -111,8 +108,7 @@ mod tests {
                 &Word {
                     raw: b"*".as_ref().into(),
                     line: 0
-                },
-                &arena
+                }
             )
             .expect("expand"),
             b"*"
@@ -121,7 +117,6 @@ mod tests {
 
     #[test]
     fn performs_pathname_expansion() {
-        let arena = ByteArena::new();
         let dir_entries = || {
             trace_entries![
                 readdir(_) -> dir_entry(b"a.txt"),
@@ -150,7 +145,6 @@ mod tests {
                             raw: b"/testdir/*.txt".as_ref().into(),
                             line: 0
                         },
-                        &arena,
                     )
                     .expect("glob"),
                     vec![b"/testdir/a.txt".as_ref(), b"/testdir/b.txt".as_ref()]
@@ -162,7 +156,6 @@ mod tests {
                             raw: b"\\*.txt".as_ref().into(),
                             line: 0
                         },
-                        &arena,
                     )
                     .expect("escaped glob"),
                     vec![b"*.txt".as_ref()]
@@ -174,7 +167,6 @@ mod tests {
                             raw: b"/testdir/.*.txt".as_ref().into(),
                             line: 0
                         },
-                        &arena,
                     )
                     .expect("hidden glob"),
                     vec![b"/testdir/.hidden.txt".as_ref()]
@@ -185,7 +177,6 @@ mod tests {
 
     #[test]
     fn can_disable_pathname_expansion_via_context() {
-        let arena = ByteArena::new();
         assert_no_syscalls(|| {
             let mut ctx = FakeContext::new();
             ctx.pathname_expansion_enabled = false;
@@ -197,7 +188,6 @@ mod tests {
                         raw: pattern.as_ref().into(),
                         line: 0
                     },
-                    &arena,
                 )
                 .expect("noglob"),
                 vec![pattern.as_ref()]
@@ -225,7 +215,6 @@ mod tests {
 
     #[test]
     fn unmatched_glob_returns_pattern_literally() {
-        let arena = ByteArena::new();
         run_trace(
             trace_entries![opendir(_) -> err(crate::sys::constants::ENOENT)],
             || {
@@ -237,7 +226,6 @@ mod tests {
                             raw: b"*.definitely-no-match".as_ref().into(),
                             line: 0
                         },
-                        &arena,
                     )
                     .expect("unmatched glob"),
                     vec![b"*.definitely-no-match".as_ref()]
@@ -248,7 +236,6 @@ mod tests {
 
     #[test]
     fn redirect_word_no_pathname_expansion() {
-        let arena = ByteArena::new();
         assert_no_syscalls(|| {
             let mut ctx = FakeContext::new();
             let result = expand_redirect_word(
@@ -257,7 +244,6 @@ mod tests {
                     raw: b"file_*.txt".as_ref().into(),
                     line: 0,
                 },
-                &arena,
             )
             .expect("redirect word");
             assert_eq!(result, b"file_*.txt");

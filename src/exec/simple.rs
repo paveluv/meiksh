@@ -1,6 +1,5 @@
 use std::rc::Rc;
 
-use crate::arena::ByteArena;
 use crate::bstr::ByteWriter;
 use crate::builtin;
 use crate::expand::word;
@@ -98,14 +97,12 @@ pub(super) fn run_builtin_flow(
     }
 }
 
-pub(super) fn write_xtrace(shell: &mut Shell, expanded: &ExpandedSimpleCommand<'_>) {
+pub(super) fn write_xtrace(shell: &mut Shell, expanded: &ExpandedSimpleCommand) {
     if !shell.options.xtrace {
         return;
     }
-    let arena = ByteArena::new();
     let ps4_raw = shell.get_var(b"PS4").unwrap_or(b"+ ").to_vec();
-    let prefix = word::expand_parameter_text(shell, &ps4_raw, &arena).unwrap_or(b"+ ");
-    let mut line = prefix.to_vec();
+    let mut line = word::expand_parameter_text(shell, &ps4_raw).unwrap_or_else(|_| b"+ ".to_vec());
     for (name, value) in &expanded.assignments {
         line.extend_from_slice(name);
         line.push(b'=');
@@ -137,8 +134,7 @@ pub(super) fn execute_simple(
     simple: &SimpleCommand,
     allow_exec_in_place: bool,
 ) -> Result<i32, ShellError> {
-    let arena = ByteArena::new();
-    let expanded = expand_simple(shell, simple, &arena)?;
+    let expanded = expand_simple(shell, simple)?;
 
     if let Some(first_word) = simple.words.first() {
         shell.lineno = first_word.line;
@@ -148,25 +144,23 @@ pub(super) fn execute_simple(
         write_xtrace(shell, &expanded);
     }
 
-    let owned_argv: Vec<Vec<u8>> = expanded.argv.iter().map(|s| s.to_vec()).collect();
-    let owned_assignments: Vec<(Vec<u8>, Vec<u8>)> = expanded
-        .assignments
-        .iter()
-        .map(|&(n, v)| (n.to_vec(), v.to_vec()))
-        .collect();
+    let ExpandedSimpleCommand {
+        assignments,
+        argv,
+        redirections,
+    } = expanded;
 
-    if expanded.argv.is_empty() {
+    if argv.is_empty() {
         let cmd_sub_status = if has_command_substitution(simple) {
             shell.last_status
         } else {
             0
         };
-        let guard = match apply_shell_redirections(&expanded.redirections, shell.options.noclobber)
-        {
+        let guard = match apply_shell_redirections(&redirections, shell.options.noclobber) {
             Ok(g) => g,
             Err(error) => return Ok(shell.diagnostic_syserr(1, &error).exit_status()),
         };
-        for (name, value) in &owned_assignments {
+        for (name, value) in &assignments {
             shell.set_var(name, value).map_err(|e| {
                 let msg = var_error_bytes(&e);
                 shell.diagnostic(1, &msg)
@@ -176,25 +170,24 @@ pub(super) fn execute_simple(
         return Ok(cmd_sub_status);
     }
 
-    let is_special_builtin = builtin::is_special_builtin(&owned_argv[0]);
-    let is_exec_no_cmd = is_special_builtin
-        && owned_argv[0] == b"exec"
-        && !owned_argv.iter().skip(1).any(|a| a == b"--");
+    let is_special_builtin = builtin::is_special_builtin(&argv[0]);
+    let is_exec_no_cmd =
+        is_special_builtin && argv[0] == b"exec" && !argv.iter().skip(1).any(|a| a == b"--");
 
     if is_exec_no_cmd {
-        for redir in &expanded.redirections {
+        for redir in &redirections {
             shell.lineno = redir.line;
             apply_shell_redirection(redir, shell.options.noclobber)
                 .map_err(|e| shell.diagnostic_syserr(1, &e))?;
         }
-        return match run_builtin_flow(shell, &owned_argv, &owned_assignments) {
+        return match run_builtin_flow(shell, &argv, &assignments) {
             Ok(BuiltinResult::Status(status) | BuiltinResult::UtilityError(status)) => Ok(status),
             Err(error) => Err(error),
         };
     } else if is_special_builtin {
-        let _guard = apply_shell_redirections(&expanded.redirections, shell.options.noclobber)
+        let _guard = apply_shell_redirections(&redirections, shell.options.noclobber)
             .map_err(|e| shell.diagnostic_syserr(1, &e))?;
-        let result = run_builtin_flow(shell, &owned_argv, &owned_assignments);
+        let result = run_builtin_flow(shell, &argv, &assignments);
         drop(_guard);
         return match result {
             Ok(BuiltinResult::UtilityError(status)) if !shell.interactive => {
@@ -205,19 +198,18 @@ pub(super) fn execute_simple(
         };
     }
 
-    if let Some(function) = shell.functions.get(&owned_argv[0]).map(Rc::clone) {
-        let guard = match apply_shell_redirections(&expanded.redirections, shell.options.noclobber)
-        {
+    if let Some(function) = shell.functions.get(&argv[0]).map(Rc::clone) {
+        let guard = match apply_shell_redirections(&redirections, shell.options.noclobber) {
             Ok(g) => g,
             Err(error) => return Ok(shell.diagnostic_syserr(1, &error).exit_status()),
         };
-        let saved_vars = save_vars(shell, &owned_assignments);
-        if let Err(e) = apply_prefix_assignments(shell, &owned_assignments) {
+        let saved_vars = save_vars(shell, &assignments);
+        if let Err(e) = apply_prefix_assignments(shell, &assignments) {
             restore_vars(shell, saved_vars);
             drop(guard);
             return Err(e);
         }
-        let saved = std::mem::replace(&mut shell.positional, owned_argv[1..].to_vec());
+        let saved = std::mem::replace(&mut shell.positional, argv[1..].to_vec());
         shell.function_depth += 1;
         let status = execute_command(shell, &function);
         shell.function_depth = shell.function_depth.saturating_sub(1);
@@ -234,21 +226,19 @@ pub(super) fn execute_simple(
             },
             Err(error) => Err(error),
         }
-    } else if builtin::is_builtin(&owned_argv[0]) {
-        let saved_vars = save_vars(shell, &owned_assignments);
-        let assign_result = apply_prefix_assignments(shell, &owned_assignments);
+    } else if builtin::is_builtin(&argv[0]) {
+        let saved_vars = save_vars(shell, &assignments);
+        let assign_result = apply_prefix_assignments(shell, &assignments);
         let result = match assign_result {
             Ok(()) => {
-                let r =
-                    match apply_shell_redirections(&expanded.redirections, shell.options.noclobber)
-                    {
-                        Ok(guard) => {
-                            let r = run_builtin_flow(shell, &owned_argv, &[]);
-                            drop(guard);
-                            r
-                        }
-                        Err(e) => Err(shell.diagnostic_syserr(1, &e)),
-                    };
+                let r = match apply_shell_redirections(&redirections, shell.options.noclobber) {
+                    Ok(guard) => {
+                        let r = run_builtin_flow(shell, &argv, &[]);
+                        drop(guard);
+                        r
+                    }
+                    Err(e) => Err(shell.diagnostic_syserr(1, &e)),
+                };
                 restore_vars(shell, saved_vars);
                 r
             }
@@ -262,15 +252,15 @@ pub(super) fn execute_simple(
             Err(error) => Ok(error.exit_status()),
         }
     } else {
-        for (name, _value) in &owned_assignments {
+        for (name, _value) in &assignments {
             if shell.readonly.contains(name) {
                 let mut msg = name.clone();
                 msg.extend_from_slice(b": readonly variable");
                 return Err(shell.diagnostic(1, &msg));
             }
         }
-        let command_name = owned_argv[0].clone();
-        let prepared = build_process_from_expanded(shell, expanded, owned_argv, owned_assignments)
+        let command_name = argv[0].clone();
+        let prepared = build_process_from_expanded(shell, argv, assignments, redirections)
             .expect("argv is non-empty");
         if !prepared.path_verified && !prepared.exec_path.contains(&b'/') {
             let _guard = apply_shell_redirections(&prepared.redirections, prepared.noclobber).ok();
@@ -324,23 +314,22 @@ pub(super) fn find_declaration_context(words: &[crate::syntax::ast::Word]) -> bo
     false
 }
 
-pub(super) fn expand_simple<'a>(
+pub(super) fn expand_simple(
     shell: &mut Shell,
     simple: &SimpleCommand,
-    arena: &'a ByteArena,
-) -> Result<ExpandedSimpleCommand<'a>, ShellError> {
+) -> Result<ExpandedSimpleCommand, ShellError> {
     let mut assignments = Vec::new();
     for assignment in &simple.assignments {
-        let value = word::expand_assignment_value(shell, &assignment.value, arena)
+        let value = word::expand_assignment_value(shell, &assignment.value)
             .map_err(|e| shell.expand_to_err(e))?;
-        assignments.push((arena.intern_bytes(&assignment.name), value));
+        assignments.push((assignment.name.to_vec(), value));
     }
 
     let declaration_ctx = find_declaration_context(&simple.words);
     let argv = if declaration_ctx {
-        expand_words_declaration(shell, &simple.words, arena)?
+        expand_words_declaration(shell, &simple.words)?
     } else {
-        word::expand_words(shell, &simple.words, arena).map_err(|e| shell.expand_to_err(e))?
+        word::expand_words(shell, &simple.words).map_err(|e| shell.expand_to_err(e))?
     };
     let mut redirections = Vec::new();
     for redirection in &simple.redirections {
@@ -353,20 +342,20 @@ pub(super) fn expand_simple<'a>(
                 .as_ref()
                 .ok_or_else(|| shell.diagnostic(2, b"missing here-document body" as &[u8]))?;
             let body = if here_doc.expand {
-                word::expand_here_document(shell, &here_doc.body, here_doc.body_line, arena)
+                word::expand_here_document(shell, &here_doc.body, here_doc.body_line)
                     .map_err(|e| shell.expand_to_err(e))?
             } else {
-                arena.intern_bytes(&here_doc.body)
+                here_doc.body.to_vec()
             };
-            (arena.intern_bytes(&here_doc.delimiter), Some(body))
+            (here_doc.delimiter.to_vec(), Some(body))
         } else {
-            let target = word::expand_redirect_word(shell, &redirection.target, arena)
+            let target = word::expand_redirect_word(shell, &redirection.target)
                 .map_err(|e| shell.expand_to_err(e))?;
             if matches!(
                 redirection.kind,
                 RedirectionKind::DupInput | RedirectionKind::DupOutput
             ) && target != b"-"
-                && parse_i32_bytes(target).is_none()
+                && parse_i32_bytes(&target).is_none()
             {
                 return Err(shell.diagnostic(
                     1,
@@ -395,41 +384,37 @@ pub(super) fn parse_i32_bytes(s: &[u8]) -> Option<i32> {
     crate::bstr::parse_i64(s).and_then(|v| i32::try_from(v).ok())
 }
 
-pub(super) fn expand_words_declaration<'a>(
+pub(super) fn expand_words_declaration(
     shell: &mut Shell,
     words: &[crate::syntax::ast::Word],
-    arena: &'a ByteArena,
-) -> Result<Vec<&'a [u8]>, ShellError> {
+) -> Result<Vec<Vec<u8>>, ShellError> {
     let mut result = Vec::new();
     let mut found_cmd = false;
     for word in words {
         if !found_cmd {
-            result
-                .extend(word::expand_word(shell, word, arena).map_err(|e| shell.expand_to_err(e))?);
+            result.extend(word::expand_word(shell, word).map_err(|e| shell.expand_to_err(e))?);
             if result
                 .last()
-                .is_some_and(|s: &&[u8]| !s.is_empty() && *s != b"command")
+                .is_some_and(|s: &Vec<u8>| !s.is_empty() && s != b"command")
             {
                 found_cmd = true;
             }
         } else if word::word_is_assignment(&word.raw) {
             result.push(
-                word::expand_word_as_declaration_assignment(shell, word, arena)
+                word::expand_word_as_declaration_assignment(shell, word)
                     .map_err(|e| shell.expand_to_err(e))?,
             );
         } else {
-            result
-                .extend(word::expand_word(shell, word, arena).map_err(|e| shell.expand_to_err(e))?);
+            result.extend(word::expand_word(shell, word).map_err(|e| shell.expand_to_err(e))?);
         }
     }
     Ok(result)
 }
 
-pub(super) fn expand_redirections<'a>(
+pub(super) fn expand_redirections(
     shell: &mut Shell,
     redirections: &[crate::syntax::ast::Redirection],
-    arena: &'a ByteArena,
-) -> Result<Vec<ExpandedRedirection<'a>>, ShellError> {
+) -> Result<Vec<ExpandedRedirection>, ShellError> {
     let mut expanded_vec = Vec::new();
     for redirection in redirections {
         let fd = redirection
@@ -441,20 +426,20 @@ pub(super) fn expand_redirections<'a>(
                 .as_ref()
                 .ok_or_else(|| shell.diagnostic(2, b"missing here-document body" as &[u8]))?;
             let body = if here_doc.expand {
-                word::expand_here_document(shell, &here_doc.body, here_doc.body_line, arena)
+                word::expand_here_document(shell, &here_doc.body, here_doc.body_line)
                     .map_err(|e| shell.expand_to_err(e))?
             } else {
-                arena.intern_bytes(&here_doc.body)
+                here_doc.body.to_vec()
             };
-            (arena.intern_bytes(&here_doc.delimiter), Some(body))
+            (here_doc.delimiter.to_vec(), Some(body))
         } else {
-            let target = word::expand_redirect_word(shell, &redirection.target, arena)
+            let target = word::expand_redirect_word(shell, &redirection.target)
                 .map_err(|e| shell.expand_to_err(e))?;
             if matches!(
                 redirection.kind,
                 RedirectionKind::DupInput | RedirectionKind::DupOutput
             ) && target != b"-"
-                && parse_i32_bytes(target).is_none()
+                && parse_i32_bytes(&target).is_none()
             {
                 return Err(shell.diagnostic(
                     1,
@@ -476,37 +461,34 @@ pub(super) fn expand_redirections<'a>(
 
 pub(super) fn build_process_from_expanded(
     shell: &Shell,
-    expanded: ExpandedSimpleCommand<'_>,
-    owned_argv: Vec<Vec<u8>>,
-    owned_assignments: Vec<(Vec<u8>, Vec<u8>)>,
+    argv: Vec<Vec<u8>>,
+    assignments: Vec<(Vec<u8>, Vec<u8>)>,
+    redirections: Vec<ExpandedRedirection>,
 ) -> Result<PreparedProcess, ShellError> {
-    let program = expanded
-        .argv
+    let program = argv
         .first()
         .ok_or_else(|| shell.diagnostic(1, b"empty command" as &[u8]))?;
-    let prefix_path = expanded
-        .assignments
+    let prefix_path = assignments
         .iter()
-        .find(|&&(name, _)| name == b"PATH")
-        .map(|&(_, value)| value);
+        .find(|(name, _)| name == b"PATH")
+        .map(|(_, value)| value.as_slice());
     let resolved = resolve_command_path(shell, program, prefix_path);
     let path_verified = resolved.is_some();
     let exec_path: Vec<u8> = resolved.unwrap_or_else(|| program.to_vec());
     let mut child_env = shell.env_for_child();
-    child_env.extend(owned_assignments);
-    let redirections = expanded
-        .redirections
+    child_env.extend(assignments);
+    let redirections = redirections
         .into_iter()
         .map(|r| ProcessRedirection {
             fd: r.fd,
             kind: r.kind,
-            target: r.target.to_vec().into(),
-            here_doc_body: r.here_doc_body.map(|s| s.to_vec().into()),
+            target: r.target.into_boxed_slice(),
+            here_doc_body: r.here_doc_body.map(Vec::into_boxed_slice),
         })
         .collect();
     Ok(PreparedProcess {
         exec_path: exec_path.into(),
-        argv: owned_argv
+        argv: argv
             .into_iter()
             .map(Vec::into_boxed_slice)
             .collect::<Vec<_>>()
@@ -626,8 +608,7 @@ mod tests {
                 shell.options.xtrace = true;
                 let expanded = ExpandedSimpleCommand {
                     assignments: vec![],
-
-                    argv: vec![b"echo", b"hello"],
+                    argv: vec![b"echo".to_vec(), b"hello".to_vec()],
                     redirections: vec![],
                 };
                 write_xtrace(&mut shell, &expanded);
@@ -642,8 +623,7 @@ mod tests {
             shell.options.xtrace = false;
             let expanded = ExpandedSimpleCommand {
                 assignments: vec![],
-
-                argv: vec![b"echo"],
+                argv: vec![b"echo".to_vec()],
                 redirections: vec![],
             };
             write_xtrace(&mut shell, &expanded);
@@ -658,8 +638,8 @@ mod tests {
                 let mut shell = test_shell();
                 shell.options.xtrace = true;
                 let expanded = ExpandedSimpleCommand {
-                    assignments: vec![(b"FOO", b"bar")],
-                    argv: vec![b"cmd"],
+                    assignments: vec![(b"FOO".to_vec(), b"bar".to_vec())],
+                    argv: vec![b"cmd".to_vec()],
                     redirections: vec![],
                 };
                 write_xtrace(&mut shell, &expanded);
@@ -849,7 +829,7 @@ mod tests {
                 shell.env.insert(b"PS4".to_vec(), b">> ".to_vec());
                 let expanded = ExpandedSimpleCommand {
                     assignments: vec![],
-                    argv: vec![b"echo", b"hi"],
+                    argv: vec![b"echo".to_vec(), b"hi".to_vec()],
                     redirections: vec![],
                 };
                 write_xtrace(&mut shell, &expanded);
@@ -865,7 +845,10 @@ mod tests {
                 let mut shell = test_shell();
                 shell.options.xtrace = true;
                 let expanded = ExpandedSimpleCommand {
-                    assignments: vec![(b"A" as &[u8], b"1" as &[u8]), (b"B", b"2")],
+                    assignments: vec![
+                        (b"A".to_vec(), b"1".to_vec()),
+                        (b"B".to_vec(), b"2".to_vec()),
+                    ],
                     argv: vec![],
                     redirections: vec![],
                 };

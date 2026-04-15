@@ -181,7 +181,6 @@ pub(super) fn is_glob_byte(b: u8) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::arena::ByteArena;
     use crate::expand::glob::{match_bracket, pattern_matches};
     use crate::expand::pathname::{expand_path_segments, expand_pathname};
     use crate::expand::test_support::FakeContext;
@@ -194,7 +193,6 @@ mod tests {
 
     #[test]
     fn performs_field_splitting_more_like_posix() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         assert_eq!(
             expand_word(
@@ -203,7 +201,6 @@ mod tests {
                     raw: b"$WORDS".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("expand"),
             vec![b"one".as_ref(), b"two".as_ref(), b"three".as_ref()]
@@ -215,7 +212,6 @@ mod tests {
                     raw: b"$DELIMS".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("expand"),
             vec![b"".as_ref() as &[u8], b"", b""]
@@ -227,7 +223,6 @@ mod tests {
                     raw: b"$EMPTY".as_ref().into(),
                     line: 0
                 },
-                &arena,
             )
             .expect("expand"),
             Vec::<&[u8]>::new()
@@ -355,36 +350,29 @@ mod tests {
 
     #[test]
     fn expands_here_documents_without_field_splitting() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
-        let expanded = expand_here_document(
-            &mut ctx,
-            b"hello $USER\n$(printf hi)\n$((1 + 2))\n",
-            0,
-            &arena,
-        )
-        .expect("expand heredoc");
+        let expanded =
+            expand_here_document(&mut ctx, b"hello $USER\n$(printf hi)\n$((1 + 2))\n", 0)
+                .expect("expand heredoc");
         assert_eq!(expanded, b"hello meiksh\nprintf hi\n3\n");
 
-        let escaped = expand_here_document(&mut ctx, b"\\$USER\nline\\\ncontinued\n", 0, &arena)
+        let escaped = expand_here_document(&mut ctx, b"\\$USER\nline\\\ncontinued\n", 0)
             .expect("expand heredoc");
         assert_eq!(escaped, b"$USER\nlinecontinued\n");
 
-        let trailing =
-            expand_here_document(&mut ctx, b"keep\\", 0, &arena).expect("expand heredoc");
+        let trailing = expand_here_document(&mut ctx, b"keep\\", 0).expect("expand heredoc");
         assert_eq!(trailing, b"keep\\");
 
-        let literal = expand_here_document(&mut ctx, b"\\x", 0, &arena).expect("expand heredoc");
+        let literal = expand_here_document(&mut ctx, b"\\x", 0).expect("expand heredoc");
         assert_eq!(literal, b"\\x");
 
-        let double_backslash = expand_here_document(&mut ctx, b"a\\\\b\n", 0, &arena)
+        let double_backslash = expand_here_document(&mut ctx, b"a\\\\b\n", 0)
             .expect("expand heredoc double backslash");
         assert_eq!(double_backslash, b"a\\b\n");
     }
 
     #[test]
     fn unquoted_at_undergoes_field_splitting() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         ctx.positional = vec![b"a b".to_vec(), b"c".to_vec()];
         assert_eq!(
@@ -393,8 +381,7 @@ mod tests {
                 &Word {
                     raw: b"$@".as_ref().into(),
                     line: 0
-                },
-                &arena
+                }
             )
             .expect("unquoted at"),
             vec![b"a".as_ref(), b"b", b"c"]
@@ -407,8 +394,7 @@ mod tests {
                 &Word {
                     raw: b"$@".as_ref().into(),
                     line: 0
-                },
-                &arena
+                }
             )
             .expect("unquoted at empty"),
             Vec::<&[u8]>::new()
@@ -431,7 +417,6 @@ mod tests {
 
     #[test]
     fn field_splitting_empty_result_returns_empty_vec() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         ctx.env.insert(b"WS".to_vec(), b"   ".to_vec());
         assert_eq!(
@@ -440,8 +425,7 @@ mod tests {
                 &Word {
                     raw: b"$WS".as_ref().into(),
                     line: 0
-                },
-                &arena
+                }
             )
             .expect("whitespace only"),
             Vec::<&[u8]>::new()
@@ -450,7 +434,6 @@ mod tests {
 
     #[test]
     fn at_break_with_glob_in_at_fields() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         ctx.pathname_expansion_enabled = false;
         ctx.positional = vec![b"*.txt".to_vec(), b"b".to_vec()];
@@ -460,7 +443,6 @@ mod tests {
                 raw: b"\"$@\"".as_ref().into(),
                 line: 0,
             },
-            &arena,
         )
         .expect("at with glob-like");
         assert_eq!(result, vec![b"*.txt".as_ref(), b"b"]);
@@ -480,7 +462,6 @@ mod tests {
 
     #[test]
     fn at_empty_combined_with_at_break() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         ctx.positional = vec![b"x".to_vec()];
         let result = expand_word(
@@ -489,7 +470,6 @@ mod tests {
                 raw: b"\"$@\"".as_ref().into(),
                 line: 0,
             },
-            &arena,
         )
         .expect("at one param");
         assert_eq!(result, vec![b"x".as_ref()]);
@@ -501,7 +481,6 @@ mod tests {
                 raw: b"\"$@\"".as_ref().into(),
                 line: 0,
             },
-            &arena,
         )
         .expect("at empty");
         assert_eq!(result2, Vec::<&[u8]>::new());
@@ -509,7 +488,6 @@ mod tests {
 
     #[test]
     fn redirect_word_with_expanded_field_splitting() {
-        let arena = ByteArena::new();
         assert_no_syscalls(|| {
             let mut ctx = FakeContext::new();
             ctx.env.insert(b"V".to_vec(), b"a b".to_vec());
@@ -519,7 +497,6 @@ mod tests {
                     raw: b"$V".as_ref().into(),
                     line: 0,
                 },
-                &arena,
             )
             .expect("redirect word split");
             assert_eq!(result, b"a b");

@@ -2,7 +2,6 @@
 #![warn(clippy::disallowed_methods)]
 #![warn(clippy::disallowed_macros)]
 
-pub(crate) mod arena;
 pub(crate) mod bstr;
 pub(crate) mod builtin;
 pub(crate) mod exec;

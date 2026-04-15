@@ -574,14 +574,12 @@ pub(super) fn apply_compound_assign(op: &[u8], lhs: i64, rhs: i64) -> Result<i64
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::arena::ByteArena;
     use crate::expand::test_support::FakeContext;
     use crate::expand::word::expand_word;
     use crate::syntax::ast::Word;
 
     #[test]
     fn arith_variable_reference() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         ctx.env.insert(b"count".to_vec(), b"7".to_vec());
         let fields = expand_word(
@@ -590,7 +588,6 @@ mod tests {
                 raw: b"$((count + 3))".as_ref().into(),
                 line: 0,
             },
-            &arena,
         )
         .expect("arith var");
         assert_eq!(fields, vec![b"10".as_ref()]);
@@ -598,7 +595,6 @@ mod tests {
 
     #[test]
     fn arith_dollar_variable_reference() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         ctx.env.insert(b"n".to_vec(), b"5".to_vec());
         let fields = expand_word(
@@ -607,7 +603,6 @@ mod tests {
                 raw: b"$(($n * 2))".as_ref().into(),
                 line: 0,
             },
-            &arena,
         )
         .expect("arith $var");
         assert_eq!(fields, vec![b"10".as_ref()]);
@@ -615,7 +610,6 @@ mod tests {
 
     #[test]
     fn arith_comparison_operators() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         assert_eq!(
             expand_word(
@@ -623,8 +617,7 @@ mod tests {
                 &Word {
                     raw: b"$((3 < 5))".as_ref().into(),
                     line: 0
-                },
-                &arena
+                }
             )
             .unwrap(),
             vec![b"1".as_ref()]
@@ -635,8 +628,7 @@ mod tests {
                 &Word {
                     raw: b"$((5 < 3))".as_ref().into(),
                     line: 0
-                },
-                &arena
+                }
             )
             .unwrap(),
             vec![b"0".as_ref()]
@@ -647,8 +639,7 @@ mod tests {
                 &Word {
                     raw: b"$((3 <= 3))".as_ref().into(),
                     line: 0
-                },
-                &arena
+                }
             )
             .unwrap(),
             vec![b"1".as_ref()]
@@ -659,8 +650,7 @@ mod tests {
                 &Word {
                     raw: b"$((5 > 3))".as_ref().into(),
                     line: 0
-                },
-                &arena
+                }
             )
             .unwrap(),
             vec![b"1".as_ref()]
@@ -671,8 +661,7 @@ mod tests {
                 &Word {
                     raw: b"$((3 >= 5))".as_ref().into(),
                     line: 0
-                },
-                &arena
+                }
             )
             .unwrap(),
             vec![b"0".as_ref()]
@@ -683,8 +672,7 @@ mod tests {
                 &Word {
                     raw: b"$((3 == 3))".as_ref().into(),
                     line: 0
-                },
-                &arena
+                }
             )
             .unwrap(),
             vec![b"1".as_ref()]
@@ -695,8 +683,7 @@ mod tests {
                 &Word {
                     raw: b"$((3 != 5))".as_ref().into(),
                     line: 0
-                },
-                &arena
+                }
             )
             .unwrap(),
             vec![b"1".as_ref()]
@@ -705,7 +692,6 @@ mod tests {
 
     #[test]
     fn arith_bitwise_operators() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         assert_eq!(
             expand_word(
@@ -713,8 +699,7 @@ mod tests {
                 &Word {
                     raw: b"$((6 & 3))".as_ref().into(),
                     line: 0
-                },
-                &arena
+                }
             )
             .unwrap(),
             vec![b"2".as_ref()]
@@ -725,8 +710,7 @@ mod tests {
                 &Word {
                     raw: b"$((6 | 3))".as_ref().into(),
                     line: 0
-                },
-                &arena
+                }
             )
             .unwrap(),
             vec![b"7".as_ref()]
@@ -737,8 +721,7 @@ mod tests {
                 &Word {
                     raw: b"$((6 ^ 3))".as_ref().into(),
                     line: 0
-                },
-                &arena
+                }
             )
             .unwrap(),
             vec![b"5".as_ref()]
@@ -749,8 +732,7 @@ mod tests {
                 &Word {
                     raw: b"$((~0))".as_ref().into(),
                     line: 0
-                },
-                &arena
+                }
             )
             .unwrap(),
             vec![b"-1".as_ref()]
@@ -761,8 +743,7 @@ mod tests {
                 &Word {
                     raw: b"$((1 << 4))".as_ref().into(),
                     line: 0
-                },
-                &arena
+                }
             )
             .unwrap(),
             vec![b"16".as_ref()]
@@ -773,8 +754,7 @@ mod tests {
                 &Word {
                     raw: b"$((16 >> 2))".as_ref().into(),
                     line: 0
-                },
-                &arena
+                }
             )
             .unwrap(),
             vec![b"4".as_ref()]
@@ -783,7 +763,6 @@ mod tests {
 
     #[test]
     fn arith_logical_operators() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         assert_eq!(
             expand_word(
@@ -791,8 +770,7 @@ mod tests {
                 &Word {
                     raw: b"$((1 && 1))".as_ref().into(),
                     line: 0
-                },
-                &arena
+                }
             )
             .unwrap(),
             vec![b"1".as_ref()]
@@ -803,8 +781,7 @@ mod tests {
                 &Word {
                     raw: b"$((1 && 0))".as_ref().into(),
                     line: 0
-                },
-                &arena
+                }
             )
             .unwrap(),
             vec![b"0".as_ref()]
@@ -815,8 +792,7 @@ mod tests {
                 &Word {
                     raw: b"$((0 || 1))".as_ref().into(),
                     line: 0
-                },
-                &arena
+                }
             )
             .unwrap(),
             vec![b"1".as_ref()]
@@ -827,8 +803,7 @@ mod tests {
                 &Word {
                     raw: b"$((0 || 0))".as_ref().into(),
                     line: 0
-                },
-                &arena
+                }
             )
             .unwrap(),
             vec![b"0".as_ref()]
@@ -839,8 +814,7 @@ mod tests {
                 &Word {
                     raw: b"$((!0))".as_ref().into(),
                     line: 0
-                },
-                &arena
+                }
             )
             .unwrap(),
             vec![b"1".as_ref()]
@@ -851,8 +825,7 @@ mod tests {
                 &Word {
                     raw: b"$((!5))".as_ref().into(),
                     line: 0
-                },
-                &arena
+                }
             )
             .unwrap(),
             vec![b"0".as_ref()]
@@ -861,7 +834,6 @@ mod tests {
 
     #[test]
     fn arith_logical_and_short_circuits() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         ctx.env.insert(b"x".to_vec(), b"0".to_vec());
         expand_word(
@@ -870,7 +842,6 @@ mod tests {
                 raw: b"$((0 && (x = 5)))".as_ref().into(),
                 line: 0,
             },
-            &arena,
         )
         .unwrap();
         assert_eq!(ctx.env.get(b"x".as_ref()).unwrap(), b"0");
@@ -878,7 +849,6 @@ mod tests {
 
     #[test]
     fn arith_logical_or_short_circuits() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         ctx.env.insert(b"x".to_vec(), b"0".to_vec());
         expand_word(
@@ -887,7 +857,6 @@ mod tests {
                 raw: b"$((1 || (x = 5)))".as_ref().into(),
                 line: 0,
             },
-            &arena,
         )
         .unwrap();
         assert_eq!(ctx.env.get(b"x".as_ref()).unwrap(), b"0");
@@ -895,7 +864,6 @@ mod tests {
 
     #[test]
     fn arith_ternary_short_circuits() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         ctx.env.insert(b"x".to_vec(), b"0".to_vec());
         expand_word(
@@ -904,7 +872,6 @@ mod tests {
                 raw: b"$((1 ? 10 : (x = 99)))".as_ref().into(),
                 line: 0,
             },
-            &arena,
         )
         .unwrap();
         assert_eq!(ctx.env.get(b"x".as_ref()).unwrap(), b"0");
@@ -912,7 +879,6 @@ mod tests {
 
     #[test]
     fn arith_ternary_operator() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         assert_eq!(
             expand_word(
@@ -920,8 +886,7 @@ mod tests {
                 &Word {
                     raw: b"$((1 ? 10 : 20))".as_ref().into(),
                     line: 0
-                },
-                &arena
+                }
             )
             .unwrap(),
             vec![b"10".as_ref()]
@@ -932,8 +897,7 @@ mod tests {
                 &Word {
                     raw: b"$((0 ? 10 : 20))".as_ref().into(),
                     line: 0
-                },
-                &arena
+                }
             )
             .unwrap(),
             vec![b"20".as_ref()]
@@ -942,7 +906,6 @@ mod tests {
 
     #[test]
     fn arith_assignment_operators() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         ctx.env.insert(b"x".to_vec(), b"10".to_vec());
         assert_eq!(
@@ -951,8 +914,7 @@ mod tests {
                 &Word {
                     raw: b"$((x = 5))".as_ref().into(),
                     line: 0
-                },
-                &arena
+                }
             )
             .unwrap(),
             vec![b"5".as_ref()]
@@ -965,8 +927,7 @@ mod tests {
                 &Word {
                     raw: b"$((x += 3))".as_ref().into(),
                     line: 0
-                },
-                &arena
+                }
             )
             .unwrap(),
             vec![b"8".as_ref()]
@@ -979,8 +940,7 @@ mod tests {
                 &Word {
                     raw: b"$((x -= 2))".as_ref().into(),
                     line: 0
-                },
-                &arena
+                }
             )
             .unwrap(),
             vec![b"6".as_ref()]
@@ -991,8 +951,7 @@ mod tests {
                 &Word {
                     raw: b"$((x *= 3))".as_ref().into(),
                     line: 0
-                },
-                &arena
+                }
             )
             .unwrap(),
             vec![b"18".as_ref()]
@@ -1003,8 +962,7 @@ mod tests {
                 &Word {
                     raw: b"$((x /= 6))".as_ref().into(),
                     line: 0
-                },
-                &arena
+                }
             )
             .unwrap(),
             vec![b"3".as_ref()]
@@ -1015,8 +973,7 @@ mod tests {
                 &Word {
                     raw: b"$((x %= 2))".as_ref().into(),
                     line: 0
-                },
-                &arena
+                }
             )
             .unwrap(),
             vec![b"1".as_ref()]
@@ -1029,8 +986,7 @@ mod tests {
                 &Word {
                     raw: b"$((x <<= 2))".as_ref().into(),
                     line: 0
-                },
-                &arena
+                }
             )
             .unwrap(),
             vec![b"16".as_ref()]
@@ -1041,8 +997,7 @@ mod tests {
                 &Word {
                     raw: b"$((x >>= 1))".as_ref().into(),
                     line: 0
-                },
-                &arena
+                }
             )
             .unwrap(),
             vec![b"8".as_ref()]
@@ -1053,8 +1008,7 @@ mod tests {
                 &Word {
                     raw: b"$((x &= 3))".as_ref().into(),
                     line: 0
-                },
-                &arena
+                }
             )
             .unwrap(),
             vec![b"0".as_ref()]
@@ -1067,8 +1021,7 @@ mod tests {
                 &Word {
                     raw: b"$((x |= 2))".as_ref().into(),
                     line: 0
-                },
-                &arena
+                }
             )
             .unwrap(),
             vec![b"7".as_ref()]
@@ -1079,8 +1032,7 @@ mod tests {
                 &Word {
                     raw: b"$((x ^= 3))".as_ref().into(),
                     line: 0
-                },
-                &arena
+                }
             )
             .unwrap(),
             vec![b"4".as_ref()]
@@ -1089,7 +1041,6 @@ mod tests {
 
     #[test]
     fn arith_hex_and_octal_constants() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         assert_eq!(
             expand_word(
@@ -1097,8 +1048,7 @@ mod tests {
                 &Word {
                     raw: b"$((0xff))".as_ref().into(),
                     line: 0
-                },
-                &arena
+                }
             )
             .unwrap(),
             vec![b"255".as_ref()]
@@ -1109,8 +1059,7 @@ mod tests {
                 &Word {
                     raw: b"$((0X1A))".as_ref().into(),
                     line: 0
-                },
-                &arena
+                }
             )
             .unwrap(),
             vec![b"26".as_ref()]
@@ -1121,8 +1070,7 @@ mod tests {
                 &Word {
                     raw: b"$((010))".as_ref().into(),
                     line: 0
-                },
-                &arena
+                }
             )
             .unwrap(),
             vec![b"8".as_ref()]
@@ -1133,8 +1081,7 @@ mod tests {
                 &Word {
                     raw: b"$((0))".as_ref().into(),
                     line: 0
-                },
-                &arena
+                }
             )
             .unwrap(),
             vec![b"0".as_ref()]
@@ -1143,7 +1090,6 @@ mod tests {
 
     #[test]
     fn arith_unary_plus() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         assert_eq!(
             expand_word(
@@ -1151,8 +1097,7 @@ mod tests {
                 &Word {
                     raw: b"$((+5))".as_ref().into(),
                     line: 0
-                },
-                &arena
+                }
             )
             .unwrap(),
             vec![b"5".as_ref()]
@@ -1161,7 +1106,6 @@ mod tests {
 
     #[test]
     fn arith_unset_variable_is_zero() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         assert_eq!(
             expand_word(
@@ -1169,8 +1113,7 @@ mod tests {
                 &Word {
                     raw: b"$((nosuch))".as_ref().into(),
                     line: 0
-                },
-                &arena
+                }
             )
             .unwrap(),
             vec![b"0".as_ref()]
@@ -1179,7 +1122,6 @@ mod tests {
 
     #[test]
     fn arith_nested_parens_and_precedence() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         assert_eq!(
             expand_word(
@@ -1187,8 +1129,7 @@ mod tests {
                 &Word {
                     raw: b"$((2 + 3 * 4))".as_ref().into(),
                     line: 0
-                },
-                &arena
+                }
             )
             .unwrap(),
             vec![b"14".as_ref()]
@@ -1199,8 +1140,7 @@ mod tests {
                 &Word {
                     raw: b"$(((2 + 3) * 4))".as_ref().into(),
                     line: 0
-                },
-                &arena
+                }
             )
             .unwrap(),
             vec![b"20".as_ref()]
@@ -1209,7 +1149,6 @@ mod tests {
 
     #[test]
     fn arith_variable_in_hex_value() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         ctx.env.insert(b"h".to_vec(), b"0xff".to_vec());
         assert_eq!(
@@ -1218,8 +1157,7 @@ mod tests {
                 &Word {
                     raw: b"$((h))".as_ref().into(),
                     line: 0
-                },
-                &arena
+                }
             )
             .unwrap(),
             vec![b"255".as_ref()]
@@ -1228,7 +1166,6 @@ mod tests {
 
     #[test]
     fn arith_variable_in_octal_value() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         ctx.env.insert(b"o".to_vec(), b"010".to_vec());
         assert_eq!(
@@ -1237,8 +1174,7 @@ mod tests {
                 &Word {
                     raw: b"$((o))".as_ref().into(),
                     line: 0
-                },
-                &arena
+                }
             )
             .unwrap(),
             vec![b"8".as_ref()]
@@ -1247,7 +1183,6 @@ mod tests {
 
     #[test]
     fn arith_backtick_in_expression() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         let fields = expand_word(
             &mut ctx,
@@ -1255,7 +1190,6 @@ mod tests {
                 raw: b"$((`7` + 3))".as_ref().into(),
                 line: 0,
             },
-            &arena,
         )
         .expect("arith backtick");
         assert_eq!(fields, vec![b"10".as_ref()]);
@@ -1263,7 +1197,6 @@ mod tests {
 
     #[test]
     fn arith_not_equal_via_parse_unary() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         assert_eq!(
             expand_word(
@@ -1271,8 +1204,7 @@ mod tests {
                 &Word {
                     raw: b"$((3 != 3))".as_ref().into(),
                     line: 0
-                },
-                &arena
+                }
             )
             .unwrap(),
             vec![b"0".as_ref()]
@@ -1281,7 +1213,6 @@ mod tests {
 
     #[test]
     fn arith_compound_assign_div_by_zero() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         ctx.env.insert(b"x".to_vec(), b"5".to_vec());
         let err = expand_word(
@@ -1290,7 +1221,6 @@ mod tests {
                 raw: b"$((x /= 0))".as_ref().into(),
                 line: 0,
             },
-            &arena,
         )
         .unwrap_err();
         assert_eq!(&*err.message, b"division by zero".as_ref());
@@ -1302,7 +1232,6 @@ mod tests {
                 raw: b"$((x %= 0))".as_ref().into(),
                 line: 0,
             },
-            &arena,
         )
         .unwrap_err();
         assert_eq!(&*err.message, b"division by zero".as_ref());
@@ -1310,7 +1239,6 @@ mod tests {
 
     #[test]
     fn arith_equality_not_confused_with_assignment() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         ctx.env.insert(b"x".to_vec(), b"5".to_vec());
         assert_eq!(
@@ -1319,8 +1247,7 @@ mod tests {
                 &Word {
                     raw: b"$((x == 5))".as_ref().into(),
                     line: 0
-                },
-                &arena
+                }
             )
             .unwrap(),
             vec![b"1".as_ref()]
@@ -1331,8 +1258,7 @@ mod tests {
                 &Word {
                     raw: b"$((x == 3))".as_ref().into(),
                     line: 0
-                },
-                &arena
+                }
             )
             .unwrap(),
             vec![b"0".as_ref()]
@@ -1341,7 +1267,6 @@ mod tests {
 
     #[test]
     fn arith_ternary_missing_colon_error() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         let err = expand_word(
             &mut ctx,
@@ -1349,7 +1274,6 @@ mod tests {
                 raw: b"$((1 ? 2 3))".as_ref().into(),
                 line: 0,
             },
-            &arena,
         )
         .unwrap_err();
         assert!(err.message.windows(3).any(|w| w == b"':'"));
@@ -1357,7 +1281,6 @@ mod tests {
 
     #[test]
     fn arith_invalid_hex_constant() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         let err = expand_word(
             &mut ctx,
@@ -1365,7 +1288,6 @@ mod tests {
                 raw: b"$((0x))".as_ref().into(),
                 line: 0,
             },
-            &arena,
         )
         .unwrap_err();
         assert!(err.message.windows(3).any(|w| w == b"hex"));
@@ -1373,7 +1295,6 @@ mod tests {
 
     #[test]
     fn arith_at_fields_in_expression() {
-        let arena = ByteArena::new();
         let mut ctx = FakeContext::new();
         ctx.positional = vec![b"3".to_vec()];
         let fields = expand_word(
@@ -1382,7 +1303,6 @@ mod tests {
                 raw: b"$(($@ + 2))".as_ref().into(),
                 line: 0,
             },
-            &arena,
         )
         .expect("at fields arith");
         assert_eq!(fields, vec![b"5".as_ref()]);
