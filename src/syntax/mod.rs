@@ -12,6 +12,7 @@ pub(crate) struct ParseError {
     pub(crate) line: Option<usize>,
 }
 
+#[cfg(test)]
 pub(crate) fn parse(source: &[u8]) -> Result<Program, ParseError> {
     parse_with_aliases(source, &HashMap::new())
 }
@@ -60,6 +61,7 @@ impl<'src> ParseSession<'src> {
         result
     }
 
+    #[cfg(test)]
     pub(crate) fn current_line(&self) -> usize {
         self.line
     }

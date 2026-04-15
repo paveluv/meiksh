@@ -123,8 +123,6 @@ impl Shell {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     use crate::shell::test_support::t_stderr;
     use crate::sys::test_support::{assert_no_syscalls, run_trace};
     use crate::trace_entries;

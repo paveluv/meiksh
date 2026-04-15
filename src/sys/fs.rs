@@ -1,7 +1,9 @@
 use libc::{c_int, mode_t};
 use std::ffi::{CStr, CString};
 
-use super::constants::{F_OK, O_CLOEXEC, O_CREAT, O_EXCL, O_RDONLY, O_TRUNC};
+use super::constants::{F_OK, O_CLOEXEC, O_RDONLY};
+#[cfg(test)]
+use super::constants::{O_CREAT, O_EXCL, O_TRUNC};
 use super::error::{SysError, SysResult};
 use super::fd_io::{close_fd, read_fd};
 use super::interface::{last_error, set_errno, sys_interface};
@@ -181,6 +183,7 @@ pub(crate) fn unlink(path: &[u8]) -> SysResult<()> {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn open_for_redirect(
     path: &[u8],
     flags: c_int,

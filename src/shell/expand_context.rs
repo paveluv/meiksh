@@ -91,8 +91,6 @@ impl Context for Shell {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     use crate::expand::core::Context;
     use crate::sys;
     use crate::sys::test_support::{assert_no_syscalls, run_trace};

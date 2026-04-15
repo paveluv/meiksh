@@ -80,7 +80,6 @@ pub(super) fn path_join(base: &[u8], name: &[u8]) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::arena::ByteArena;
     use crate::expand::core::Context;
     use crate::expand::test_support::{DefaultPathContext, FakeContext};

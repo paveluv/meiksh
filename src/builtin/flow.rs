@@ -77,7 +77,6 @@ pub(super) fn parse_loop_count(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::builtin::test_support::{diag, invoke, test_shell};
     use crate::sys::test_support::run_trace;
     use crate::trace_entries;

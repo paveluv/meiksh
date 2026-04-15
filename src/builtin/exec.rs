@@ -37,7 +37,6 @@ pub(super) fn exec_builtin(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::builtin::test_support::{diag, invoke, test_shell};
     use crate::sys::test_support::run_trace;
     use crate::trace_entries;

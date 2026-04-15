@@ -50,6 +50,7 @@ pub(super) struct SystemInterface {
     pub(super) exit_process: fn(c_int),
     // Environment
     pub(super) setenv: fn(&[u8], &[u8]) -> SysResult<()>,
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(super) unsetenv: fn(&[u8]) -> SysResult<()>,
     pub(super) getenv: fn(&[u8]) -> Option<Vec<u8>>,
     pub(super) get_environ: fn() -> HashMap<Vec<u8>, Vec<u8>>,
