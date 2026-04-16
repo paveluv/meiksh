@@ -75,10 +75,10 @@ pub(crate) fn expand_word<C: Context>(
     ctx.set_lineno(word.line);
 
     if !word.parts.is_empty() {
-        let ifs = ctx
-            .env_var(b"IFS")
-            .map(|c| c.into_owned())
-            .unwrap_or_else(|| b" \t\n".to_vec());
+        let ifs = match ctx.env_var(b"IFS") {
+            Some(c) => c.into_owned(),
+            None => b" \t\n".to_vec(),
+        };
         let output = expand_parts(ctx, &word.raw, &word.parts, &ifs, false)?;
         let result = output.finish();
         return match result {
@@ -159,10 +159,10 @@ pub(crate) fn expand_redirect_word<C: Context>(
     ctx.set_lineno(word.line);
 
     if !word.parts.is_empty() {
-        let ifs = ctx
-            .env_var(b"IFS")
-            .map(|c| c.into_owned())
-            .unwrap_or_else(|| b" \t\n".to_vec());
+        let ifs = match ctx.env_var(b"IFS") {
+            Some(c) => c.into_owned(),
+            None => b" \t\n".to_vec(),
+        };
         let output = expand_parts(ctx, &word.raw, &word.parts, &ifs, false)?;
         let result = output.finish();
         return Ok(match result {
@@ -273,12 +273,6 @@ pub(crate) fn expand_word_pattern<C: Context>(
     word: &Word,
 ) -> Result<Vec<u8>, ExpandError> {
     ctx.set_lineno(word.line);
-
-    if !word.parts.is_empty() {
-        let expanded = expand_raw(ctx, &word.raw)?;
-        return Ok(render_pattern_from_segments(&expanded.segments));
-    }
-
     let expanded = expand_raw(ctx, &word.raw)?;
     Ok(render_pattern_from_segments(&expanded.segments))
 }
@@ -546,8 +540,8 @@ pub(super) fn expand_raw<C: Context>(ctx: &mut C, raw: &[u8]) -> Result<Expanded
                             index += 1;
                             let command = scan_backtick_command(raw, &mut index, true)?;
                             let output = ctx.command_substitute_raw(&command)?;
-                            let trimmed = trim_trailing_newlines(&output).to_vec();
-                            push_segment(&mut segments, trimmed, QuoteState::Quoted);
+                            let trimmed = trim_trailing_newlines(&output);
+                            push_segment_slice(&mut segments, trimmed, QuoteState::Quoted);
                         }
                         b'\n' => {
                             ctx.inc_lineno();
@@ -602,21 +596,20 @@ pub(super) fn expand_raw<C: Context>(ctx: &mut C, raw: &[u8]) -> Result<Expanded
                 index += 1;
                 let command = scan_backtick_command(raw, &mut index, false)?;
                 let output = ctx.command_substitute_raw(&command)?;
-                let trimmed = trim_trailing_newlines(&output).to_vec();
-                push_segment(&mut segments, trimmed, QuoteState::Expanded);
+                let trimmed = trim_trailing_newlines(&output);
+                push_segment_slice(&mut segments, trimmed, QuoteState::Expanded);
             }
             b'~' if index == 0 => {
                 index += 1;
-                let mut user = Vec::new();
                 let at_start = index;
                 while index < raw.len() && raw[index] != b'/' {
                     let b = raw[index];
                     if b == b'\'' || b == b'"' || b == b'\\' || b == b'$' || b == b'`' {
                         break;
                     }
-                    user.push(raw[index]);
                     index += 1;
                 }
+                let user = &raw[at_start..index];
                 let broke_on_non_login =
                     index == at_start && index < raw.len() && raw[index] != b'/';
                 if broke_on_non_login {
@@ -633,12 +626,11 @@ pub(super) fn expand_raw<C: Context>(ctx: &mut C, raw: &[u8]) -> Result<Expanded
                             push_segment_slice(&mut segments, b"~", QuoteState::Literal);
                         }
                     }
-                } else if let Some(dir) = ctx.home_dir_for_user(&user) {
+                } else if let Some(dir) = ctx.home_dir_for_user(user) {
                     push_segment(&mut segments, dir.into_owned(), QuoteState::Quoted);
                 } else {
-                    let mut literal = vec![b'~'];
-                    literal.extend_from_slice(&user);
-                    push_segment(&mut segments, literal, QuoteState::Literal);
+                    push_segment_slice(&mut segments, b"~", QuoteState::Literal);
+                    push_segment_slice(&mut segments, user, QuoteState::Literal);
                 }
             }
             b'\n' => {

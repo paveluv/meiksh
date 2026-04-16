@@ -78,18 +78,18 @@ impl Shell {
     pub(crate) fn from_env() -> Result<Self, ShellError> {
         sys::locale::setup_locale();
         let args = sys::env::env_args_os();
-        let options = parse_options(&args)?;
+        let mut options = parse_options(&args)?;
         let shell_name: Box<[u8]> = options
             .shell_name_override
-            .clone()
+            .take()
             .unwrap_or_else(|| shell_name_from_args(&args).into());
         let raw_env = sys::env::env_vars();
         let mut env = HashMap::new();
         let mut exported = BTreeSet::new();
-        for (key, value) in &raw_env {
-            if crate::syntax::is_name(key) {
-                env.insert(key.clone(), value.clone());
+        for (key, value) in raw_env {
+            if crate::syntax::is_name(&key) {
                 exported.insert(key.clone());
+                env.insert(key, value);
             }
         }
         let interactive = options.force_interactive
@@ -107,12 +107,13 @@ impl Shell {
             bstr::i64_to_bytes(sys::process::parent_pid() as i64),
         );
         env.insert(b"OPTIND".to_vec(), b"1".to_vec());
-        if !env.contains_key(&b"MAILCHECK".to_vec()) {
+        if !env.contains_key(b"MAILCHECK".as_slice()) {
             env.insert(b"MAILCHECK".to_vec(), b"600".to_vec());
         }
         Self::init_pwd(&mut env);
+        let positional = std::mem::take(&mut options.positional);
         Ok(Self {
-            positional: options.positional.clone(),
+            positional,
             options,
             shell_name,
             env,
@@ -173,13 +174,14 @@ impl Shell {
     #[allow(dead_code)]
     pub(crate) fn from_args(args: &[&str]) -> Result<Self, ShellError> {
         let args: Vec<Vec<u8>> = args.iter().map(|s| s.as_bytes().to_vec()).collect();
-        let options = parse_options(&args)?;
+        let mut options = parse_options(&args)?;
         let shell_name: Box<[u8]> = options
             .shell_name_override
-            .clone()
+            .take()
             .unwrap_or_else(|| shell_name_from_args(&args).into());
+        let positional = std::mem::take(&mut options.positional);
         Ok(Self {
-            positional: options.positional.clone(),
+            positional,
             interactive: options.force_interactive,
             options,
             shell_name,
@@ -229,8 +231,8 @@ impl Shell {
         }
         let result = if let Some(command) = self.options.command_string.clone() {
             self.run_source(b"<command>", &command)
-        } else if let Some(script) = self.options.script_path.clone() {
-            let (resolved, contents) = self.load_script_source(&script)?;
+        } else if let Some(ref script) = self.options.script_path {
+            let (resolved, contents) = self.load_script_source(script)?;
             self.run_source(&resolved, &contents)
         } else if self.interactive {
             interactive::run(self)

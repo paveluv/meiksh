@@ -56,44 +56,38 @@ impl ExpandOutput {
             self.current.extend_from_slice(bytes);
             return;
         }
-        let ifs_ws: Vec<u8> = ifs.iter().copied().filter(|b| b.is_ascii_whitespace()).collect();
-        let ifs_other: Vec<u8> = ifs
-            .iter()
-            .copied()
-            .filter(|b| !b.is_ascii_whitespace())
-            .collect();
 
         for &b in bytes {
-            if ifs_other.contains(&b) {
-                self.fields.push(std::mem::take(&mut self.current));
-                self.current_has_glob = false;
-            } else if ifs_ws.contains(&b) {
+            if !ifs.contains(&b) {
+                if is_glob_byte(b) {
+                    self.current_has_glob = true;
+                }
+                self.current.push(b);
+            } else if b.is_ascii_whitespace() {
                 if !self.current.is_empty() {
                     self.fields.push(std::mem::take(&mut self.current));
                     self.current_has_glob = false;
                 }
             } else {
-                if is_glob_byte(b) {
-                    self.current_has_glob = true;
-                }
-                self.current.push(b);
+                self.fields.push(std::mem::take(&mut self.current));
+                self.current_has_glob = false;
             }
         }
     }
 
-    pub(super) fn push_at_fields(&mut self, fields: Vec<Vec<u8>>) {
+    pub(super) fn push_at_fields(&mut self, fields: &[Vec<u8>]) {
         self.has_at_expansion = true;
         if fields.is_empty() {
             self.at_empty = true;
         } else {
             self.had_quoted_content = true;
-            for (i, field) in fields.into_iter().enumerate() {
+            for (i, field) in fields.iter().enumerate() {
                 if i > 0 {
                     self.at_field_breaks.push(self.fields.len() + 1);
                     self.fields.push(std::mem::take(&mut self.current));
                     self.current_has_glob = false;
                 }
-                self.current.extend_from_slice(&field);
+                self.current.extend_from_slice(field);
             }
         }
     }
@@ -327,8 +321,7 @@ fn expand_special_var<C: Context>(
     match ch {
         b'@' => {
             if quoted {
-                let params = ctx.positional_params().to_vec();
-                output.push_at_fields(params);
+                output.push_at_fields(ctx.positional_params());
             } else {
                 let joined = Cow::Owned(bstr::join_bstrings(ctx.positional_params(), b" "));
                 let value = require_set_parameter(ctx, b"@", Some(joined))?;
@@ -350,11 +343,11 @@ fn expand_special_var<C: Context>(
             }
         }
         b'0' => {
-            let name = ctx.shell_name().to_vec();
+            let name = ctx.shell_name();
             if quoted {
-                output.push_quoted(&name);
+                output.push_quoted(name);
             } else {
-                output.push_expanded(&name, ifs);
+                output.push_expanded(name, ifs);
             }
         }
         b'1'..=b'9' => {
@@ -424,7 +417,9 @@ fn expand_braced<C: Context>(
                 Some(v) if op == BracedOp::DefaultColon && v.is_empty() => true,
                 _ => false,
             };
-            let _ = require_set_parameter(ctx, name, value.clone());
+            if value.is_none() && ctx.nounset_enabled() && name != b"@" && name != b"*" {
+                // nounset side-effect only; default word will be used
+            }
             if use_word {
                 expand_braced_word(ctx, raw, word_parts, ifs, quoted, output)?;
             } else {
@@ -503,9 +498,9 @@ fn expand_braced<C: Context>(
         }
         BracedOp::TrimSuffix | BracedOp::TrimSuffixLong => {
             let value = lookup_param(ctx, name);
-            let value = require_set_parameter(ctx, name, value)?;
+            let value = require_set_parameter(ctx, name, value)?.into_owned();
             let pattern = expand_braced_word_pattern(ctx, raw, word_parts)?;
-            let trimmed = trim_suffix(value.as_bytes(), &pattern, op == BracedOp::TrimSuffixLong);
+            let trimmed = trim_suffix(&value, &pattern, op == BracedOp::TrimSuffixLong);
             if quoted {
                 output.push_quoted(trimmed);
             } else {
@@ -514,9 +509,9 @@ fn expand_braced<C: Context>(
         }
         BracedOp::TrimPrefix | BracedOp::TrimPrefixLong => {
             let value = lookup_param(ctx, name);
-            let value = require_set_parameter(ctx, name, value)?;
+            let value = require_set_parameter(ctx, name, value)?.into_owned();
             let pattern = expand_braced_word_pattern(ctx, raw, word_parts)?;
-            let trimmed = trim_prefix(value.as_bytes(), &pattern, op == BracedOp::TrimPrefixLong);
+            let trimmed = trim_prefix(&value, &pattern, op == BracedOp::TrimPrefixLong);
             if quoted {
                 output.push_quoted(trimmed);
             } else {

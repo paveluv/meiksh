@@ -482,7 +482,7 @@ impl<'a> Parser<'a> {
             | Token::AndIf
             | Token::RParen => Err(self.error(b"expected command")),
             _ => {
-                let name = self.peek_token()?.display_name();
+                let name = Box::from(self.peek_token()?.display_name());
                 self.advance_token();
                 self.parse_simple_command_with_first_word(name, Box::new([]), line)
                     .map(Command::Simple)
@@ -503,9 +503,9 @@ impl<'a> Parser<'a> {
         if let Some((name, value_raw)) = split_assignment(&first_raw) {
             let value_parts = build_assignment_value_parts(&first_raw, &first_parts, name.len() + 1);
             assignments.push(Assignment {
-                name: name.to_vec().into_boxed_slice(),
+                name: Box::from(name),
                 value: Word {
-                    raw: value_raw.to_vec().into_boxed_slice(),
+                    raw: Box::from(value_raw),
                     parts: value_parts,
                     line: first_line,
                 },
@@ -580,9 +580,9 @@ impl<'a> Parser<'a> {
                 if let Some((name, value_raw)) = split_assignment(&raw) {
                     let value_parts = build_assignment_value_parts(&raw, &parts, name.len() + 1);
                     assignments.push(Assignment {
-                        name: name.to_vec().into_boxed_slice(),
+                        name: Box::from(name),
                         value: Word {
-                            raw: value_raw.to_vec().into_boxed_slice(),
+                            raw: Box::from(value_raw),
                             parts: value_parts,
                             line,
                         },
@@ -862,7 +862,7 @@ impl<'a> Parser<'a> {
                 let (pattern_raw, pattern_parts) = if matches!(self.peek_token()?, Token::Word(_, _)) {
                     self.take_word()
                 } else if let Some(name) = self.peek_token()?.keyword_name() {
-                    let w: Box<[u8]> = name.to_vec().into_boxed_slice();
+                    let w: Box<[u8]> = Box::from(name);
                     self.advance_token();
                     (w, Box::new([]) as Box<[WordPart]>)
                 } else {

@@ -83,7 +83,7 @@ pub(super) fn expand_dollar<C: Context>(
                 Ok((Expansion::AtFields(params), 2))
             } else {
                 let joined = Cow::Owned(bstr::join_bstrings(ctx.positional_params(), b" "));
-                let value = require_set_parameter(ctx, b"@", Some(joined))?;
+                let value = require_set_parameter(ctx, b"@", Some(joined))?.into_owned();
                 Ok((Expansion::One(value), 2))
             }
         }
@@ -104,14 +104,17 @@ pub(super) fn expand_dollar<C: Context>(
             } else {
                 require_set_parameter(ctx, ch_name, ctx.special_param(c1))?
             };
-            Ok((Expansion::One(value), 2))
+            Ok((Expansion::One(value.into_owned()), 2))
         }
         next if next.is_ascii_digit() => Ok((
-            Expansion::One(require_set_parameter(
-                ctx,
-                &source[1..2],
-                ctx.positional_param((next - b'0') as usize),
-            )?),
+            Expansion::One(
+                require_set_parameter(
+                    ctx,
+                    &source[1..2],
+                    ctx.positional_param((next - b'0') as usize),
+                )?
+                .into_owned(),
+            ),
             2,
         )),
         next if next == b'_' || next.is_ascii_alphabetic() => {
@@ -126,7 +129,7 @@ pub(super) fn expand_dollar<C: Context>(
             }
             let name = &source[1..index];
             Ok((
-                Expansion::One(require_set_parameter(ctx, name, lookup_param(ctx, name))?),
+                Expansion::One(require_set_parameter(ctx, name, lookup_param(ctx, name))?.into_owned()),
                 index,
             ))
         }
@@ -158,11 +161,11 @@ pub(super) fn expand_parameter_dollar<C: Context>(
             } else {
                 require_set_parameter(ctx, ch_name, ctx.special_param(c1))?
             };
-            Ok((value, 2))
+            Ok((value.into_owned(), 2))
         }
         next if next.is_ascii_digit() => {
             let value = ctx.positional_param((next - b'0') as usize);
-            Ok((require_set_parameter(ctx, &source[1..2], value)?, 2))
+            Ok((require_set_parameter(ctx, &source[1..2], value)?.into_owned(), 2))
         }
         next if next == b'_' || next.is_ascii_alphabetic() => {
             let mut index = 1usize;
@@ -176,7 +179,7 @@ pub(super) fn expand_parameter_dollar<C: Context>(
             }
             let name = &source[1..index];
             Ok((
-                require_set_parameter(ctx, name, lookup_param(ctx, name))?,
+                require_set_parameter(ctx, name, lookup_param(ctx, name))?.into_owned(),
                 index,
             ))
         }
@@ -505,42 +508,39 @@ pub(super) fn expand_braced_parameter<C: Context>(
     let is_set = value.is_some();
     let is_null = value.as_deref().map(|s| s.is_empty()).unwrap_or(true);
 
-    let value_owned = || {
-        value
-            .as_ref()
-            .map(|c| c.clone().into_owned())
-            .unwrap_or_default()
-    };
     if op.is_none() {
-        return Ok(Expansion::One(require_set_parameter(ctx, name, value)?));
+        return Ok(Expansion::One(require_set_parameter(ctx, name, value)?.into_owned()));
     }
     let op_bytes = op.unwrap();
     let w = word.unwrap_or(b"");
+    let into_one = |v: Option<Cow<'_, [u8]>>| -> Expansion {
+        Expansion::One(v.map(Cow::into_owned).unwrap_or_default())
+    };
     if op_bytes == b":-" {
         if !is_set || is_null {
             expand_parameter_word_as_expansion(ctx, w, quoted)
         } else {
-            Ok(Expansion::One(value_owned()))
+            Ok(into_one(value))
         }
     } else if op_bytes == b"-" {
         if !is_set {
             expand_parameter_word_as_expansion(ctx, w, quoted)
         } else {
-            Ok(Expansion::One(value_owned()))
+            Ok(into_one(value))
         }
     } else if op_bytes == b":=" {
         if !is_set || is_null {
             let val = assign_parameter(ctx, name, w, quoted)?;
             Ok(Expansion::One(val))
         } else {
-            Ok(Expansion::One(value_owned()))
+            Ok(into_one(value))
         }
     } else if op_bytes == b"=" {
         if !is_set {
             let val = assign_parameter(ctx, name, w, quoted)?;
             Ok(Expansion::One(val))
         } else {
-            Ok(Expansion::One(value_owned()))
+            Ok(into_one(value))
         }
     } else if op_bytes == b":?" {
         if !is_set || is_null {
@@ -559,7 +559,7 @@ pub(super) fn expand_braced_parameter<C: Context>(
                 message: message.into(),
             })
         } else {
-            Ok(Expansion::One(value_owned()))
+            Ok(into_one(value))
         }
     } else if op_bytes == b"?" {
         if !is_set {
@@ -578,7 +578,7 @@ pub(super) fn expand_braced_parameter<C: Context>(
                 message: message.into(),
             })
         } else {
-            Ok(Expansion::One(value_owned()))
+            Ok(into_one(value))
         }
     } else if op_bytes == b":+" {
         if is_set && !is_null {
@@ -593,7 +593,7 @@ pub(super) fn expand_braced_parameter<C: Context>(
             Ok(Expansion::One(Vec::new()))
         }
     } else if op_bytes == b"%" || op_bytes == b"%%" || op_bytes == b"#" || op_bytes == b"##" {
-        let val = require_set_parameter(ctx, name, value)?;
+        let val = require_set_parameter(ctx, name, value)?.into_owned();
         let pat = expand_parameter_pattern_word(ctx, w)?;
         let mode = if op_bytes == b"%" {
             PatternRemoval::SmallestSuffix
@@ -632,40 +632,37 @@ pub(super) fn expand_braced_parameter_text<C: Context>(
     let is_set = value.is_some();
     let is_null = value.as_deref().map(|s| s.is_empty()).unwrap_or(true);
 
-    let value_owned = || {
-        value
-            .as_ref()
-            .map(|c| c.clone().into_owned())
-            .unwrap_or_default()
-    };
     if op.is_none() {
-        return require_set_parameter(ctx, name, value);
+        return Ok(require_set_parameter(ctx, name, value)?.into_owned());
     }
     let op_bytes = op.unwrap();
     let w = word.unwrap_or(b"");
+    let into_owned = |v: Option<Cow<'_, [u8]>>| -> Vec<u8> {
+        v.map(Cow::into_owned).unwrap_or_default()
+    };
     if op_bytes == b":-" {
         if !is_set || is_null {
             expand_parameter_text_owned(ctx, w)
         } else {
-            Ok(value_owned())
+            Ok(into_owned(value))
         }
     } else if op_bytes == b"-" {
         if !is_set {
             expand_parameter_text_owned(ctx, w)
         } else {
-            Ok(value_owned())
+            Ok(into_owned(value))
         }
     } else if op_bytes == b":=" {
         if !is_set || is_null {
             assign_parameter_text(ctx, name, w)
         } else {
-            Ok(value_owned())
+            Ok(into_owned(value))
         }
     } else if op_bytes == b"=" {
         if !is_set {
             assign_parameter_text(ctx, name, w)
         } else {
-            Ok(value_owned())
+            Ok(into_owned(value))
         }
     } else if op_bytes == b":?" {
         if !is_set || is_null {
@@ -675,7 +672,7 @@ pub(super) fn expand_braced_parameter_text<C: Context>(
                 message: message.into(),
             })
         } else {
-            Ok(value_owned())
+            Ok(into_owned(value))
         }
     } else if op_bytes == b"?" {
         if !is_set {
@@ -684,7 +681,7 @@ pub(super) fn expand_braced_parameter_text<C: Context>(
                 message: message.into(),
             })
         } else {
-            Ok(value_owned())
+            Ok(into_owned(value))
         }
     } else if op_bytes == b":+" {
         if is_set && !is_null {
@@ -700,25 +697,25 @@ pub(super) fn expand_braced_parameter_text<C: Context>(
         }
     } else if op_bytes == b"%" {
         remove_parameter_pattern(
-            require_set_parameter(ctx, name, value)?,
+            require_set_parameter(ctx, name, value)?.into_owned(),
             &expand_parameter_text_owned(ctx, w)?,
             PatternRemoval::SmallestSuffix,
         )
     } else if op_bytes == b"%%" {
         remove_parameter_pattern(
-            require_set_parameter(ctx, name, value)?,
+            require_set_parameter(ctx, name, value)?.into_owned(),
             &expand_parameter_text_owned(ctx, w)?,
             PatternRemoval::LargestSuffix,
         )
     } else if op_bytes == b"#" {
         remove_parameter_pattern(
-            require_set_parameter(ctx, name, value)?,
+            require_set_parameter(ctx, name, value)?.into_owned(),
             &expand_parameter_text_owned(ctx, w)?,
             PatternRemoval::SmallestPrefix,
         )
     } else if op_bytes == b"##" {
         remove_parameter_pattern(
-            require_set_parameter(ctx, name, value)?,
+            require_set_parameter(ctx, name, value)?.into_owned(),
             &expand_parameter_text_owned(ctx, w)?,
             PatternRemoval::LargestPrefix,
         )
@@ -905,11 +902,11 @@ pub(super) fn lookup_param<'a, C: Context>(ctx: &'a C, name: &[u8]) -> Option<Co
     ctx.env_var(name)
 }
 
-pub(super) fn require_set_parameter<C: Context>(
+pub(super) fn require_set_parameter<'a, C: Context>(
     ctx: &C,
     name: &[u8],
-    value: Option<Cow<'_, [u8]>>,
-) -> Result<Vec<u8>, ExpandError> {
+    value: Option<Cow<'a, [u8]>>,
+) -> Result<Cow<'a, [u8]>, ExpandError> {
     if value.is_none() && ctx.nounset_enabled() && name != b"@" && name != b"*" {
         let mut msg = Vec::new();
         msg.extend_from_slice(name);
@@ -918,7 +915,7 @@ pub(super) fn require_set_parameter<C: Context>(
             message: msg.into(),
         });
     }
-    Ok(value.map(|c| c.into_owned()).unwrap_or_default())
+    Ok(value.unwrap_or(Cow::Borrowed(b"")))
 }
 
 pub(super) enum PatternRemoval {
@@ -929,37 +926,40 @@ pub(super) enum PatternRemoval {
 }
 
 pub(super) fn remove_parameter_pattern(
-    value: Vec<u8>,
+    mut value: Vec<u8>,
     pattern: &[u8],
     mode: PatternRemoval,
 ) -> Result<Vec<u8>, ExpandError> {
-    let boundaries: Vec<usize> = (0..=value.len()).collect();
     match mode {
         PatternRemoval::SmallestPrefix => {
-            for &end in &boundaries {
+            for end in 0..=value.len() {
                 if pattern_matches(&value[..end], pattern) {
-                    return Ok(value[end..].to_vec());
+                    value.drain(..end);
+                    return Ok(value);
                 }
             }
         }
         PatternRemoval::LargestPrefix => {
-            for &end in boundaries.iter().rev() {
+            for end in (0..=value.len()).rev() {
                 if pattern_matches(&value[..end], pattern) {
-                    return Ok(value[end..].to_vec());
+                    value.drain(..end);
+                    return Ok(value);
                 }
             }
         }
         PatternRemoval::SmallestSuffix => {
-            for &start in boundaries.iter().rev() {
+            for start in (0..=value.len()).rev() {
                 if pattern_matches(&value[start..], pattern) {
-                    return Ok(value[..start].to_vec());
+                    value.truncate(start);
+                    return Ok(value);
                 }
             }
         }
         PatternRemoval::LargestSuffix => {
-            for &start in &boundaries {
+            for start in 0..=value.len() {
                 if pattern_matches(&value[start..], pattern) {
-                    return Ok(value[..start].to_vec());
+                    value.truncate(start);
+                    return Ok(value);
                 }
             }
         }
