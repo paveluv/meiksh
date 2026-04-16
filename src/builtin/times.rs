@@ -61,7 +61,10 @@ mod tests {
 
     #[test]
     fn times_error_branch() {
-        let msg = crate::builtin::test_support::diag(b"times: Success");
+        let strerror_0 = crate::sys::error::SysError::Errno(0).strerror();
+        let mut expected = b"times: ".to_vec();
+        expected.extend_from_slice(&strerror_0);
+        let msg = crate::builtin::test_support::diag(&expected);
         run_trace(
             trace_entries![
                 times(_) -> err(libc::EACCES),

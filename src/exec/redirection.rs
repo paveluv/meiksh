@@ -631,7 +631,7 @@ mod tests {
     fn execute_nested_program_sets_up_heredoc_fd() {
         run_trace(
             trace_entries![
-                fcntl(fd(0), int(1030), int(10)) -> err(sys::constants::EBADF),
+                fcntl(fd(0), int(sys::constants::F_DUPFD_CLOEXEC as i64), int(10)) -> err(sys::constants::EBADF),
                 pipe() -> fds(10, 11),
                 write(fd(11), bytes(b"hello\n")) -> auto,
                 close(fd(11)) -> 0,

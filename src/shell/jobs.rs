@@ -1123,7 +1123,7 @@ mod tests {
     fn wait_for_job_stopped_handling() {
         run_trace(
             trace_entries![
-                waitpid(int(2001), _, int(sys::constants::WUNTRACED)) -> stopped_sig(20),
+                waitpid(int(2001), _, int(sys::constants::WUNTRACED)) -> stopped_sig(sys::constants::SIGTSTP),
                 tcgetattr(fd(sys::constants::STDIN_FILENO), _) -> 0,
                 write(
                     fd(sys::constants::STDERR_FILENO),
@@ -1139,9 +1139,9 @@ mod tests {
                     vec![fake_handle(2001)],
                 );
                 let status = shell.wait_for_job(id).expect("wait stopped");
-                assert_eq!(status, 128 + 20);
+                assert_eq!(status, 128 + sys::constants::SIGTSTP);
                 let job = shell.jobs.iter().find(|j| j.id == id).expect("job exists");
-                assert!(matches!(job.state, JobState::Stopped(20)));
+                assert!(matches!(job.state, JobState::Stopped(s) if s == sys::constants::SIGTSTP));
                 assert!(job.saved_termios.is_some());
             },
         );
@@ -1173,12 +1173,12 @@ mod tests {
     #[test]
     fn wait_for_pid_operand_stopped() {
         run_trace(
-            trace_entries![waitpid(int(3001), _, int(sys::constants::WUNTRACED)) -> stopped_sig(20),],
+            trace_entries![waitpid(int(3001), _, int(sys::constants::WUNTRACED)) -> stopped_sig(sys::constants::SIGTSTP),],
             || {
                 let mut shell = test_shell();
                 shell.register_background_job(b"sleep"[..].into(), None, vec![fake_handle(3001)]);
                 let status = shell.wait_for_pid_operand(3001).expect("wait stopped pid");
-                assert_eq!(status, 128 + 20);
+                assert_eq!(status, 128 + sys::constants::SIGTSTP);
             },
         );
     }
@@ -1186,14 +1186,14 @@ mod tests {
     #[test]
     fn wait_on_job_index_stopped() {
         run_trace(
-            trace_entries![waitpid(int(4001), _, int(sys::constants::WUNTRACED)) -> stopped_sig(20),],
+            trace_entries![waitpid(int(4001), _, int(sys::constants::WUNTRACED)) -> stopped_sig(sys::constants::SIGTSTP),],
             || {
                 let mut shell = test_shell();
                 shell.register_background_job(b"sleep"[..].into(), None, vec![fake_handle(4001)]);
                 let status = shell
                     .wait_on_job_index(0, false)
                     .expect("wait stopped index");
-                assert_eq!(status, 128 + 20);
+                assert_eq!(status, 128 + sys::constants::SIGTSTP);
             },
         );
     }
@@ -1665,7 +1665,7 @@ mod tests {
     fn wait_for_child_blocking_skips_stop_when_not_reporting() {
         run_trace(
             trace_entries![
-                waitpid(int(7070), _, int(sys::constants::WUNTRACED)) -> stopped_sig(19),
+                waitpid(int(7070), _, int(sys::constants::WUNTRACED)) -> stopped_sig(sys::constants::SIGSTOP),
                 waitpid(int(7070), _, int(sys::constants::WUNTRACED)) -> status(42),
             ],
             || {
