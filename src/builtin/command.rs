@@ -130,10 +130,10 @@ pub(super) fn describe_command(
     name: &[u8],
     use_default_path: bool,
 ) -> Option<CommandDescription> {
-    if let Some(value) = shell.aliases.get(name) {
+    if let Some(value) = shell.aliases().get(name) {
         return Some(CommandDescription::Alias(value.to_vec()));
     }
-    if shell.functions.contains_key(name) {
+    if shell.functions().contains_key(name) {
         return Some(CommandDescription::Function);
     }
     if is_special_builtin(name) {
@@ -198,14 +198,14 @@ pub(super) fn type_builtin(shell: &Shell, argv: &[Vec<u8>]) -> Result<BuiltinOut
 
 pub(super) fn hash(shell: &mut Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutcome, ShellError> {
     if argv.len() >= 2 && argv[1] == b"-r" {
-        shell.path_cache.clear();
+        shell.path_cache_mut().clear();
         return Ok(BuiltinOutcome::Status(0));
     }
     if argv.len() == 1 {
-        if shell.path_cache.is_empty() {
+        if shell.path_cache().is_empty() {
             return Ok(BuiltinOutcome::Status(0));
         }
-        for (name, path) in &shell.path_cache {
+        for (name, path) in shell.path_cache() {
             let line = ByteWriter::new()
                 .bytes(name)
                 .byte(b'\t')
@@ -217,14 +217,14 @@ pub(super) fn hash(shell: &mut Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutcome
     }
     let mut status = 0;
     for name in &argv[1..] {
-        if is_builtin(name) || shell.functions.contains_key(name.as_slice()) {
+        if is_builtin(name) || shell.functions().contains_key(name.as_slice()) {
             continue;
         }
         match search_path(name, shell, false, |p| {
             sys::fs::access_path(p, sys::constants::X_OK).is_ok()
         }) {
             Some(path) => {
-                shell.path_cache.insert(name.as_slice().into(), path);
+                shell.path_cache_mut().insert(name.as_slice().into(), path);
             }
             None => {
                 let msg = ByteWriter::new()
@@ -477,7 +477,9 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                shell.env.insert(b"PATH".to_vec(), b"/nonexistent".to_vec());
+                shell
+                    .env_mut()
+                    .insert(b"PATH".to_vec(), b"/nonexistent".to_vec());
                 let outcome = invoke(
                     &mut shell,
                     &[b"type".to_vec(), b"totally_missing_cmd".to_vec()],
@@ -502,11 +504,11 @@ mod tests {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
             shell
-                .path_cache
+                .path_cache_mut()
                 .insert(b"foo"[..].into(), b"/usr/bin/foo".to_vec());
             let outcome = invoke(&mut shell, &[b"hash".to_vec(), b"-r".to_vec()]).expect("hash -r");
             assert!(matches!(outcome, BuiltinOutcome::Status(0)));
-            assert!(shell.path_cache.is_empty());
+            assert!(shell.path_cache().is_empty());
         });
     }
 
@@ -520,7 +522,9 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                shell.env.insert(b"PATH".to_vec(), b"/nonexistent".to_vec());
+                shell
+                    .env_mut()
+                    .insert(b"PATH".to_vec(), b"/nonexistent".to_vec());
                 let outcome = invoke(&mut shell, &[b"hash".to_vec(), b"totally_missing".to_vec()])
                     .expect("hash missing");
                 assert!(matches!(outcome, BuiltinOutcome::Status(1)));
@@ -620,7 +624,9 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                shell.env.insert(b"PATH".to_vec(), b"/usr/bin".to_vec());
+                shell
+                    .env_mut()
+                    .insert(b"PATH".to_vec(), b"/usr/bin".to_vec());
                 let outcome = invoke(
                     &mut shell,
                     &[b"command".to_vec(), b"-v".to_vec(), b"ls".to_vec()],
@@ -637,7 +643,9 @@ mod tests {
             trace_entries![access(any, any) -> err(libc::ENOENT)],
             || {
                 let mut shell = test_shell();
-                shell.env.insert(b"PATH".to_vec(), b"/nonexistent".to_vec());
+                shell
+                    .env_mut()
+                    .insert(b"PATH".to_vec(), b"/nonexistent".to_vec());
                 let outcome = invoke(
                     &mut shell,
                     &[b"command".to_vec(), b"-v".to_vec(), b"nosuchcmd".to_vec()],
@@ -692,7 +700,7 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                shell.functions.insert(
+                shell.functions_mut().insert(
                     b"myfunc"[..].into(),
                     std::rc::Rc::new(crate::syntax::ast::Command::Simple(Default::default())),
                 );
@@ -732,7 +740,9 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                shell.aliases.insert(b"ll"[..].into(), b"ls -la"[..].into());
+                shell
+                    .aliases_mut()
+                    .insert(b"ll"[..].into(), b"ls -la"[..].into());
                 let outcome = invoke(
                     &mut shell,
                     &[b"command".to_vec(), b"-v".to_vec(), b"ll".to_vec()],
@@ -755,7 +765,9 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                shell.aliases.insert(b"ll"[..].into(), b"ls -la"[..].into());
+                shell
+                    .aliases_mut()
+                    .insert(b"ll"[..].into(), b"ls -la"[..].into());
                 let outcome = invoke(
                     &mut shell,
                     &[b"command".to_vec(), b"-V".to_vec(), b"ll".to_vec()],
@@ -774,7 +786,7 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                shell.functions.insert(
+                shell.functions_mut().insert(
                     b"myfunc"[..].into(),
                     std::rc::Rc::new(crate::syntax::ast::Command::Simple(Default::default())),
                 );
@@ -851,7 +863,9 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                shell.env.insert(b"PATH".to_vec(), b"/usr/bin".to_vec());
+                shell
+                    .env_mut()
+                    .insert(b"PATH".to_vec(), b"/usr/bin".to_vec());
                 let outcome = invoke(
                     &mut shell,
                     &[b"command".to_vec(), b"-V".to_vec(), b"ls".to_vec()],
@@ -868,7 +882,9 @@ mod tests {
             trace_entries![access(any, any) -> err(libc::ENOENT)],
             || {
                 let mut shell = test_shell();
-                shell.env.insert(b"PATH".to_vec(), b"/nonexistent".to_vec());
+                shell
+                    .env_mut()
+                    .insert(b"PATH".to_vec(), b"/nonexistent".to_vec());
                 let outcome = invoke(
                     &mut shell,
                     &[b"command".to_vec(), b"-V".to_vec(), b"nosuchcmd".to_vec()],
@@ -964,7 +980,7 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                shell.functions.insert(
+                shell.functions_mut().insert(
                     b"myfunc"[..].into(),
                     std::rc::Rc::new(crate::syntax::ast::Command::Simple(Default::default())),
                 );
@@ -998,7 +1014,9 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                shell.aliases.insert(b"ll"[..].into(), b"ls -la"[..].into());
+                shell
+                    .aliases_mut()
+                    .insert(b"ll"[..].into(), b"ls -la"[..].into());
                 let outcome =
                     invoke(&mut shell, &[b"type".to_vec(), b"ll".to_vec()]).expect("type ll");
                 assert!(matches!(outcome, BuiltinOutcome::Status(0)));
@@ -1015,7 +1033,9 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                shell.env.insert(b"PATH".to_vec(), b"/usr/bin".to_vec());
+                shell
+                    .env_mut()
+                    .insert(b"PATH".to_vec(), b"/usr/bin".to_vec());
                 let outcome =
                     invoke(&mut shell, &[b"type".to_vec(), b"ls".to_vec()]).expect("type ls");
                 assert!(matches!(outcome, BuiltinOutcome::Status(0)));
@@ -1034,7 +1054,9 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                shell.env.insert(b"PATH".to_vec(), b"/nonexistent".to_vec());
+                shell
+                    .env_mut()
+                    .insert(b"PATH".to_vec(), b"/nonexistent".to_vec());
                 let outcome = invoke(
                     &mut shell,
                     &[b"type".to_vec(), b"echo".to_vec(), b"nosuchcmd".to_vec()],
@@ -1077,7 +1099,9 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                shell.env.insert(b"PATH".to_vec(), b"/nonexistent".to_vec());
+                shell
+                    .env_mut()
+                    .insert(b"PATH".to_vec(), b"/nonexistent".to_vec());
                 let outcome = invoke(&mut shell, &[b"command".to_vec(), b"nosuchcmd".to_vec()])
                     .expect("command nosuchcmd");
                 assert!(matches!(outcome, BuiltinOutcome::Status(127)));
@@ -1096,7 +1120,9 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                shell.env.insert(b"PATH".to_vec(), b"/usr/bin".to_vec());
+                shell
+                    .env_mut()
+                    .insert(b"PATH".to_vec(), b"/usr/bin".to_vec());
                 let outcome = invoke(&mut shell, &[b"command".to_vec(), b"noperm".to_vec()])
                     .expect("command noperm");
                 assert!(matches!(outcome, BuiltinOutcome::Status(126)));
@@ -1117,7 +1143,9 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                shell.env.insert(b"PATH".to_vec(), b"/usr/bin".to_vec());
+                shell
+                    .env_mut()
+                    .insert(b"PATH".to_vec(), b"/usr/bin".to_vec());
                 let outcome = invoke(&mut shell, &[b"command".to_vec(), b"myext".to_vec()])
                     .expect("command myext");
                 assert!(matches!(outcome, BuiltinOutcome::Status(0)));
@@ -1137,7 +1165,9 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                shell.env.insert(b"PATH".to_vec(), b"/usr/bin".to_vec());
+                shell
+                    .env_mut()
+                    .insert(b"PATH".to_vec(), b"/usr/bin".to_vec());
                 let outcome = invoke(&mut shell, &[b"command".to_vec(), b"myext".to_vec()])
                     .expect("command myext enoent");
                 assert!(matches!(outcome, BuiltinOutcome::Status(127)));
@@ -1157,7 +1187,9 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                shell.env.insert(b"PATH".to_vec(), b"/usr/bin".to_vec());
+                shell
+                    .env_mut()
+                    .insert(b"PATH".to_vec(), b"/usr/bin".to_vec());
                 let outcome = invoke(&mut shell, &[b"command".to_vec(), b"myext".to_vec()])
                     .expect("command myext eacces");
                 assert!(matches!(outcome, BuiltinOutcome::Status(126)));
@@ -1179,8 +1211,10 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                shell.env.insert(b"PATH".to_vec(), b"/custom".to_vec());
-                shell.exported.insert(b"PATH".to_vec());
+                shell
+                    .env_mut()
+                    .insert(b"PATH".to_vec(), b"/custom".to_vec());
+                shell.exported_mut().insert(b"PATH".to_vec());
                 let outcome = invoke(
                     &mut shell,
                     &[b"command".to_vec(), b"-p".to_vec(), b"myext".to_vec()],
@@ -1205,7 +1239,7 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                shell.env.insert(b"PATH".to_vec(), b"/a::".to_vec());
+                shell.env_mut().insert(b"PATH".to_vec(), b"/a::".to_vec());
                 let result = which(b"mybin", &shell);
                 assert_eq!(result, Some(b"/home/user/./mybin".to_vec()));
             },
@@ -1243,7 +1277,9 @@ mod tests {
     fn describe_command_alias() {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
-            shell.aliases.insert(b"ll"[..].into(), b"ls -la"[..].into());
+            shell
+                .aliases_mut()
+                .insert(b"ll"[..].into(), b"ls -la"[..].into());
             let desc = describe_command(&shell, b"ll", false);
             assert!(matches!(desc, Some(CommandDescription::Alias(_))));
         });
@@ -1253,7 +1289,7 @@ mod tests {
     fn describe_command_function() {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
-            shell.functions.insert(
+            shell.functions_mut().insert(
                 b"myfunc"[..].into(),
                 std::rc::Rc::new(crate::syntax::ast::Command::Simple(Default::default())),
             );

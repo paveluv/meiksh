@@ -256,7 +256,7 @@ pub(super) fn resolve_command_path(
     }
 
     if path_override.is_none()
-        && let Some(cached) = shell.path_cache.get(program)
+        && let Some(cached) = shell.path_cache().get(program)
     {
         return Some(cached.clone());
     }
@@ -316,7 +316,7 @@ mod tests {
                 assert_eq!(error.exit_status(), 1);
 
                 let mut shell = test_shell();
-                shell.env.insert(b"PATH".to_vec(), Vec::new());
+                shell.env_mut().insert(b"PATH".to_vec(), Vec::new());
                 let prepared = build_process_from_expanded(
                     &shell,
                     vec![b"echo".to_vec(), b"hello".to_vec()],

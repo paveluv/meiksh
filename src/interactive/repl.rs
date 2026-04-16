@@ -103,7 +103,7 @@ pub(super) fn run_loop(shell: &mut Shell) -> Result<i32, ShellError> {
         }
         accumulated.extend_from_slice(&line);
 
-        match crate::syntax::parse_with_aliases(&accumulated, &shell.aliases) {
+        match crate::syntax::parse_with_aliases(&accumulated, &shell.aliases()) {
             Ok(_) => {}
             Err(ref e) if shell.input_is_incomplete(e) => {
                 continue;
@@ -192,9 +192,9 @@ mod tests {
             || {
                 let mut shell = test_shell();
                 shell
-                    .env
+                    .env_mut()
                     .insert(b"HISTFILE".to_vec(), b"/tmp/history.txt".to_vec());
-                shell.env.insert(b"PS1".to_vec(), b"test$ ".to_vec());
+                shell.env_mut().insert(b"PS1".to_vec(), b"test$ ".to_vec());
 
                 let handle = sys::types::ChildHandle {
                     pid: 4001,
@@ -246,7 +246,7 @@ mod tests {
             || {
                 let mut shell = test_shell();
                 shell
-                    .env
+                    .env_mut()
                     .insert(b"HISTFILE".to_vec(), b"/tmp/bad-history.txt".to_vec());
                 let status = run_loop(&mut shell).expect("parse handled");
                 assert_eq!(status, 0);
@@ -398,9 +398,11 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                shell.env.insert(b"PATH".to_vec(), b"/usr/bin".to_vec());
                 shell
-                    .env
+                    .env_mut()
+                    .insert(b"PATH".to_vec(), b"/usr/bin".to_vec());
+                shell
+                    .env_mut()
                     .insert(b"HISTFILE".to_vec(), b"/tmp/hist".to_vec());
                 let status = run_loop(&mut shell).expect("command not found handled");
                 assert_eq!(
@@ -427,7 +429,7 @@ mod tests {
             || {
                 let mut shell = test_shell();
                 shell
-                    .env
+                    .env_mut()
                     .insert(b"HISTFILE".to_vec(), b"/tmp/hist".to_vec());
                 let _ = run_loop(&mut shell);
             },
@@ -452,7 +454,7 @@ mod tests {
                 let mut shell = test_shell();
                 shell.options.notify = true;
                 shell
-                    .env
+                    .env_mut()
                     .insert(b"HISTFILE".to_vec(), b"/tmp/hist".to_vec());
                 let _ = run_loop(&mut shell);
             },

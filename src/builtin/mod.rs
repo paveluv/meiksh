@@ -263,47 +263,14 @@ pub(crate) fn run(
 #[cfg(test)]
 pub(super) mod test_support {
     use crate::shell::error::ShellError;
-    use crate::shell::options::ShellOptions;
     use crate::shell::state::Shell;
-    use std::collections::{BTreeMap, BTreeSet, HashMap};
 
     use super::BuiltinOutcome;
 
     pub(crate) fn test_shell() -> Shell {
-        Shell {
-            options: ShellOptions::default(),
-            shell_name: (*b"meiksh").into(),
-            env: HashMap::new(),
-            exported: BTreeSet::new(),
-            readonly: BTreeSet::new(),
-            aliases: HashMap::new(),
-            functions: HashMap::new(),
-            positional: Vec::new(),
-            last_status: 3,
-            last_background: None,
-            running: true,
-            jobs: Vec::new(),
-            known_pid_statuses: HashMap::new(),
-            known_job_statuses: HashMap::new(),
-            trap_actions: BTreeMap::new(),
-            ignored_on_entry: BTreeSet::new(),
-            subshell_saved_traps: None,
-            loop_depth: 0,
-            function_depth: 0,
-            source_depth: 0,
-            pending_control: None,
-            interactive: false,
-            errexit_suppressed: false,
-            owns_terminal: false,
-            in_subshell: false,
-            wait_was_interrupted: false,
-            pid: 0,
-            lineno: 0,
-            path_cache: HashMap::new(),
-            history: Vec::new(),
-            mail_last_check: 0,
-            mail_sizes: HashMap::new(),
-        }
+        let mut shell = crate::shell::test_support::test_shell();
+        shell.last_status = 3;
+        shell
     }
 
     pub(crate) fn invoke(
@@ -421,7 +388,7 @@ mod tests {
     fn resolve_cd_target_cdpath_empty_prefix() {
         run_trace(trace_entries![stat(any, any) -> stat_dir,], || {
             let mut shell = test_shell();
-            shell.env.insert(b"CDPATH".to_vec(), b":".to_vec());
+            shell.env_mut().insert(b"CDPATH".to_vec(), b":".to_vec());
             let (resolved, _, print) = resolve_cd_target(&shell, b"subdir", false);
             assert_eq!(resolved, b"./subdir");
             assert!(!print);
@@ -437,7 +404,9 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                shell.env.insert(b"CDPATH".to_vec(), b"/a:/b".to_vec());
+                shell
+                    .env_mut()
+                    .insert(b"CDPATH".to_vec(), b"/a:/b".to_vec());
                 let (resolved, _, _) = resolve_cd_target(&shell, b"nosuch", false);
                 assert_eq!(resolved, b"nosuch");
             },

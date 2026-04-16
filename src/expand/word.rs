@@ -1,13 +1,11 @@
-use std::borrow::Cow;
-
 use crate::bstr;
 use crate::syntax::ast::Word;
 
 use super::core::{Context, ExpandError};
 use super::expand_parts::{ExpandOutput, ExpandResult, expand_parts};
 use super::model::{
-    ExpandedWord, Expansion, Field, QuoteState, Segment, flatten_segments, is_glob_byte,
-    push_segment, push_segment_slice, render_pattern_from_segments, split_fields_from_segments,
+    ExpandedWord, Expansion, QuoteState, Segment, flatten_segments, is_glob_byte, push_segment,
+    push_segment_slice, render_pattern_from_segments,
 };
 use super::parameter::{expand_dollar, expand_parameter_dollar};
 use super::pathname::expand_pathname;
@@ -16,11 +14,19 @@ pub(crate) fn expand_words<C: Context>(
     ctx: &mut C,
     words: &[Word],
 ) -> Result<Vec<Vec<u8>>, ExpandError> {
+    let ifs = resolve_ifs(ctx);
     let mut result = Vec::new();
     for word in words {
-        result.extend(expand_word(ctx, word)?);
+        result.extend(expand_word_with_ifs(ctx, word, &ifs)?);
     }
     Ok(result)
+}
+
+fn resolve_ifs<C: Context>(ctx: &C) -> Vec<u8> {
+    match ctx.env_var(b"IFS") {
+        Some(c) => c.into_owned(),
+        None => b" \t\n".to_vec(),
+    }
 }
 
 pub(crate) fn expand_word_as_declaration_assignment<C: Context>(
@@ -72,14 +78,19 @@ pub(crate) fn expand_word<C: Context>(
     ctx: &mut C,
     word: &Word,
 ) -> Result<Vec<Vec<u8>>, ExpandError> {
+    let ifs = resolve_ifs(ctx);
+    expand_word_with_ifs(ctx, word, &ifs)
+}
+
+fn expand_word_with_ifs<C: Context>(
+    ctx: &mut C,
+    word: &Word,
+    ifs: &[u8],
+) -> Result<Vec<Vec<u8>>, ExpandError> {
     ctx.set_lineno(word.line);
 
     if !word.parts.is_empty() {
-        let ifs = match ctx.env_var(b"IFS") {
-            Some(c) => c.into_owned(),
-            None => b" \t\n".to_vec(),
-        };
-        let output = expand_parts(ctx, &word.raw, &word.parts, &ifs, false)?;
+        let output = expand_parts(ctx, &word.raw, &word.parts, ifs, false)?;
         let result = output.finish();
         return match result {
             ExpandResult::Fields(fields) => Ok(fields),
@@ -102,10 +113,57 @@ pub(crate) fn expand_word<C: Context>(
         };
     }
 
-    let expanded = expand_raw(ctx, &word.raw)?;
+    // Fallback for Words constructed without pre-parsed parts (e.g. in tests).
+    // The parser always populates word.parts, so this path is never reached
+    // during normal execution.
+    expand_word_raw_fallback(ctx, &word.raw, ifs)
+}
 
-    if expanded.has_at_expansion {
-        return expand_word_with_at_fields(&expanded, expanded.had_quoted_null_outside_at);
+fn expand_word_raw_fallback<C: Context>(
+    ctx: &mut C,
+    raw: &[u8],
+    ifs: &[u8],
+) -> Result<Vec<Vec<u8>>, ExpandError> {
+    let expanded = expand_raw(ctx, raw)?;
+
+    let has_at_expansion = expanded
+        .segments
+        .iter()
+        .any(|s| matches!(s, Segment::AtBreak | Segment::AtEmpty));
+
+    if has_at_expansion {
+        let has_at_empty = expanded
+            .segments
+            .iter()
+            .any(|s| matches!(s, Segment::AtEmpty));
+        let has_at_break = expanded
+            .segments
+            .iter()
+            .any(|s| matches!(s, Segment::AtBreak));
+
+        if has_at_empty && !has_at_break {
+            let text = flatten_segments(&expanded.segments);
+            if !text.is_empty() || expanded.had_quoted_null_outside_at {
+                return Ok(vec![text]);
+            }
+            return Ok(Vec::new());
+        }
+
+        if !has_at_break {
+            return Ok(vec![flatten_segments(&expanded.segments)]);
+        }
+
+        let mut fields = Vec::new();
+        let mut current = Vec::new();
+        for seg in &expanded.segments {
+            if let Segment::Text(text, _) = seg {
+                current.extend_from_slice(text);
+            } else if matches!(seg, Segment::AtBreak) {
+                fields.push(std::mem::take(&mut current));
+            }
+        }
+        fields.push(current);
+        return Ok(fields);
     }
 
     if expanded.segments.is_empty() {
@@ -120,36 +178,71 @@ pub(crate) fn expand_word<C: Context>(
         .iter()
         .any(|seg| matches!(seg, Segment::Text(_, QuoteState::Expanded)));
 
-    let ifs_cow = ctx.env_var(b"IFS").unwrap_or(Cow::Borrowed(b" \t\n"));
     let fields = if has_expanded {
-        split_fields_from_segments(&expanded.segments, &ifs_cow)
+        split_fields_raw(&expanded.segments, ifs)
     } else {
+        let text = flatten_segments(&expanded.segments);
+        if text.is_empty() {
+            return Ok(Vec::new());
+        }
         let has_glob = expanded.segments.iter().any(|seg| {
             matches!(seg, Segment::Text(text, QuoteState::Literal) if text.iter().any(|&b| is_glob_byte(b)))
         });
-        vec![Field {
-            text: flatten_segments(&expanded.segments),
-            has_unquoted_glob: has_glob,
-        }]
-    };
-    if fields.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let mut result = Vec::new();
-    for field in fields {
-        if field.has_unquoted_glob && ctx.pathname_expansion_enabled() {
-            let matches = expand_pathname(&field.text);
+        if has_glob && ctx.pathname_expansion_enabled() {
+            let matches = expand_pathname(&text);
             if matches.is_empty() {
-                result.push(field.text);
+                vec![text]
             } else {
-                result.extend(matches);
+                matches
             }
         } else {
-            result.push(field.text);
+            vec![text]
+        }
+    };
+    Ok(fields)
+}
+
+fn split_fields_raw(segments: &[Segment], ifs: &[u8]) -> Vec<Vec<u8>> {
+    if ifs.is_empty() {
+        return vec![flatten_segments(segments)];
+    }
+    let mut fields = Vec::new();
+    let mut current = Vec::new();
+
+    let ifs_ws: Vec<u8> = ifs
+        .iter()
+        .copied()
+        .filter(|b| b.is_ascii_whitespace())
+        .collect();
+    let ifs_other: Vec<u8> = ifs
+        .iter()
+        .copied()
+        .filter(|b| !b.is_ascii_whitespace())
+        .collect();
+
+    for seg in segments {
+        if let Segment::Text(text, state) = seg {
+            if *state != QuoteState::Expanded {
+                current.extend_from_slice(text);
+                continue;
+            }
+            for &b in text.iter() {
+                if ifs_other.contains(&b) {
+                    fields.push(std::mem::take(&mut current));
+                } else if ifs_ws.contains(&b) {
+                    if !current.is_empty() {
+                        fields.push(std::mem::take(&mut current));
+                    }
+                } else {
+                    current.push(b);
+                }
+            }
         }
     }
-    Ok(result)
+    if !current.is_empty() {
+        fields.push(current);
+    }
+    fields
 }
 
 pub(crate) fn expand_redirect_word<C: Context>(
@@ -157,12 +250,9 @@ pub(crate) fn expand_redirect_word<C: Context>(
     word: &Word,
 ) -> Result<Vec<u8>, ExpandError> {
     ctx.set_lineno(word.line);
+    let ifs = resolve_ifs(ctx);
 
     if !word.parts.is_empty() {
-        let ifs = match ctx.env_var(b"IFS") {
-            Some(c) => c.into_owned(),
-            None => b" \t\n".to_vec(),
-        };
         let output = expand_parts(ctx, &word.raw, &word.parts, &ifs, false)?;
         let result = output.finish();
         return Ok(match result {
@@ -175,75 +265,7 @@ pub(crate) fn expand_redirect_word<C: Context>(
     }
 
     let expanded = expand_raw(ctx, &word.raw)?;
-
-    if expanded.segments.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let has_expanded = expanded
-        .segments
-        .iter()
-        .any(|seg| matches!(seg, Segment::Text(_, QuoteState::Expanded)));
-
-    let ifs_cow = ctx.env_var(b"IFS").unwrap_or(Cow::Borrowed(b" \t\n"));
-    let fields = if has_expanded {
-        split_fields_from_segments(&expanded.segments, &ifs_cow)
-    } else {
-        vec![Field {
-            text: flatten_segments(&expanded.segments),
-            has_unquoted_glob: false,
-        }]
-    };
-
-    Ok(bstr::join_bstrings(
-        &fields.into_iter().map(|f| f.text).collect::<Vec<_>>(),
-        b" ",
-    ))
-}
-
-pub(super) fn expand_word_with_at_fields(
-    expanded: &ExpandedWord,
-    had_quoted_null_outside_at: bool,
-) -> Result<Vec<Vec<u8>>, ExpandError> {
-    let has_at_empty = expanded
-        .segments
-        .iter()
-        .any(|s| matches!(s, Segment::AtEmpty));
-    let has_at_break = expanded
-        .segments
-        .iter()
-        .any(|s| matches!(s, Segment::AtBreak));
-
-    if has_at_empty && !has_at_break {
-        let mut text = Vec::new();
-        for seg in &expanded.segments {
-            if let Segment::Text(t, _) = seg {
-                text.extend_from_slice(t);
-            }
-        }
-        if !text.is_empty() || had_quoted_null_outside_at {
-            return Ok(vec![text]);
-        }
-        return Ok(Vec::new());
-    }
-
-    if !has_at_break {
-        return Ok(vec![flatten_segments(&expanded.segments)]);
-    }
-
-    let mut fields = Vec::new();
-    let mut current = Vec::new();
-
-    for seg in &expanded.segments {
-        if let Segment::Text(text, _) = seg {
-            current.extend_from_slice(text);
-        } else if matches!(seg, Segment::AtBreak) {
-            fields.push(std::mem::take(&mut current));
-        }
-    }
-    fields.push(current);
-
-    Ok(fields)
+    Ok(flatten_segments(&expanded.segments))
 }
 
 pub(crate) fn expand_word_text<C: Context>(
@@ -467,9 +489,9 @@ pub(super) fn apply_expansion(
 pub(super) fn expand_raw<C: Context>(ctx: &mut C, raw: &[u8]) -> Result<ExpandedWord, ExpandError> {
     let mut index = 0usize;
     let mut segments = Vec::new();
+    let mut has_at_expansion = false;
     let mut had_quoted_content = false;
     let mut had_quoted_null_outside_at = false;
-    let mut has_at_expansion = false;
 
     while index < raw.len() {
         match raw[index] {
@@ -496,7 +518,7 @@ pub(super) fn expand_raw<C: Context>(ctx: &mut C, raw: &[u8]) -> Result<Expanded
                 had_quoted_content = true;
                 index += 1;
                 let mut buffer = Vec::new();
-                let at_before = has_at_expansion;
+                let _at_before = has_at_expansion;
                 while index < raw.len() && raw[index] != b'"' {
                     match raw[index] {
                         b'\\' => {
@@ -564,7 +586,7 @@ pub(super) fn expand_raw<C: Context>(ctx: &mut C, raw: &[u8]) -> Result<Expanded
                 if !buffer.is_empty() {
                     push_segment(&mut segments, buffer, QuoteState::Quoted);
                 }
-                if !has_at_expansion || at_before == has_at_expansion {
+                if !has_at_expansion || _at_before == has_at_expansion {
                     had_quoted_null_outside_at = true;
                 }
                 index += 1;
@@ -660,7 +682,6 @@ pub(super) fn expand_raw<C: Context>(ctx: &mut C, raw: &[u8]) -> Result<Expanded
         segments,
         had_quoted_content,
         had_quoted_null_outside_at,
-        has_at_expansion,
     })
 }
 

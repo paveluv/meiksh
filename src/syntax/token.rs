@@ -241,6 +241,9 @@ pub(super) struct Parser<'a> {
     token_queue: VecDeque<Token>,
     pub(super) keyword_mode: bool,
     alias_mode: bool,
+    word_raw: Vec<u8>,
+    word_parts: Vec<WordPart>,
+    word_qbuf: Vec<u8>,
 }
 
 impl<'a> Parser<'a> {
@@ -272,6 +275,9 @@ impl<'a> Parser<'a> {
             token_queue: VecDeque::new(),
             keyword_mode: true,
             alias_mode: true,
+            word_raw: Vec::new(),
+            word_parts: Vec::new(),
+            word_qbuf: Vec::new(),
         }
     }
 
@@ -1108,14 +1114,21 @@ impl<'a> Parser<'a> {
                             continue;
                         }
                     }
-                    let mut raw = digits;
-                    let mut parts = Vec::new();
-                    let mut qbuf = Vec::new();
-                    let (_had_quote, lit_start) =
-                        self.scan_raw_word_parts(&mut raw, &mut parts, &mut qbuf, 0)?;
-                    flush_literal(&raw, lit_start, raw.len(), &mut parts);
-                    flush_quoted_buf(&mut qbuf, &mut parts);
-                    if !raw.is_empty() {
+                    self.word_raw.clear();
+                    self.word_raw.extend_from_slice(&digits);
+                    self.word_parts.clear();
+                    self.word_qbuf.clear();
+                    let (_had_quote, lit_start) = self.scan_raw_word_parts_scratch(0)?;
+                    flush_literal(
+                        &self.word_raw,
+                        lit_start,
+                        self.word_raw.len(),
+                        &mut self.word_parts,
+                    );
+                    flush_quoted_buf(&mut self.word_qbuf, &mut self.word_parts);
+                    if !self.word_raw.is_empty() {
+                        let raw = std::mem::take(&mut self.word_raw);
+                        let parts = std::mem::take(&mut self.word_parts);
                         queued_items.push(HereDocLineItem::Token(Token::Word(
                             raw.into_boxed_slice(),
                             parts.into_boxed_slice(),
@@ -1123,14 +1136,20 @@ impl<'a> Parser<'a> {
                     }
                 }
                 _ => {
-                    let mut raw = Vec::new();
-                    let mut parts = Vec::new();
-                    let mut qbuf = Vec::new();
-                    let (_had_quote, lit_start) =
-                        self.scan_raw_word_parts(&mut raw, &mut parts, &mut qbuf, 0)?;
-                    flush_literal(&raw, lit_start, raw.len(), &mut parts);
-                    flush_quoted_buf(&mut qbuf, &mut parts);
-                    if !raw.is_empty() {
+                    self.word_raw.clear();
+                    self.word_parts.clear();
+                    self.word_qbuf.clear();
+                    let (_had_quote, lit_start) = self.scan_raw_word_parts_scratch(0)?;
+                    flush_literal(
+                        &self.word_raw,
+                        lit_start,
+                        self.word_raw.len(),
+                        &mut self.word_parts,
+                    );
+                    flush_quoted_buf(&mut self.word_qbuf, &mut self.word_parts);
+                    if !self.word_raw.is_empty() {
+                        let raw = std::mem::take(&mut self.word_raw);
+                        let parts = std::mem::take(&mut self.word_parts);
                         queued_items.push(HereDocLineItem::Token(Token::Word(
                             raw.into_boxed_slice(),
                             parts.into_boxed_slice(),
@@ -1157,13 +1176,13 @@ impl<'a> Parser<'a> {
             match item {
                 HereDocLineItem::Token(tok) => self.token_queue.push_back(tok),
                 HereDocLineItem::HereDocRef(idx) => {
-                    let (ref body, body_line) = bodies[idx];
-                    let entry = &heredoc_entries[idx];
+                    let (body, body_line) = std::mem::take(&mut bodies[idx]);
+                    let entry = &mut heredoc_entries[idx];
                     self.token_queue.push_back(Token::HereDoc {
                         strip_tabs: entry.strip_tabs,
                         expand: entry.expand,
-                        delimiter: entry.delimiter.clone(),
-                        body: body.clone(),
+                        delimiter: std::mem::take(&mut entry.delimiter),
+                        body,
                         body_line,
                     });
                 }
@@ -1171,13 +1190,13 @@ impl<'a> Parser<'a> {
         }
         self.token_queue.push_back(Token::Newline);
 
-        let (ref body, body_line) = bodies[0];
-        let first = &heredoc_entries[0];
+        let (body, body_line) = std::mem::take(&mut bodies[0]);
+        let first = &mut heredoc_entries[0];
         Ok(Token::HereDoc {
             strip_tabs: first.strip_tabs,
             expand: first.expand,
-            delimiter: first.delimiter.clone(),
-            body: body.clone(),
+            delimiter: std::mem::take(&mut first.delimiter),
+            body,
             body_line,
         })
     }
@@ -1198,15 +1217,22 @@ impl<'a> Parser<'a> {
                 return Ok(Token::IoNumber(fd));
             }
         }
-        self.produce_word(digits)
+        self.produce_word_with_prefix(digits)
     }
 
     #[inline(always)]
     fn produce_word_token(&mut self) -> Result<Token, ParseError> {
-        self.produce_word(Vec::new())
+        self.word_raw.clear();
+        self.produce_word()
     }
 
-    fn produce_word(&mut self, prefix: Vec<u8>) -> Result<Token, ParseError> {
+    fn produce_word_with_prefix(&mut self, prefix: Vec<u8>) -> Result<Token, ParseError> {
+        self.word_raw.clear();
+        self.word_raw.extend_from_slice(&prefix);
+        self.produce_word()
+    }
+
+    fn produce_word(&mut self) -> Result<Token, ParseError> {
         let check_keyword = self.keyword_mode;
         let check_alias = self.alias_mode || self.alias_trailing_blank_pending;
         if !self.alias_trailing_blank_pending && self.alias_stack.len() == 1 {
@@ -1216,38 +1242,46 @@ impl<'a> Parser<'a> {
             self.alias_trailing_blank_pending = false;
         }
 
-        let mut raw = prefix;
-        let mut parts = Vec::new();
-        let mut qbuf = Vec::new();
+        self.word_parts.clear();
+        self.word_qbuf.clear();
         loop {
-            if raw.is_empty() {
+            if self.word_raw.is_empty() {
                 if self.cached_byte.is_none() || matches!(self.peek_byte(), Some(b) if is_delim(b))
                 {
                     return Ok(Token::Eof);
                 }
             }
 
-            let initial_lit = if parts.is_empty() { 0 } else { raw.len() };
-            let (had_quote, lit_start) =
-                self.scan_raw_word_parts(&mut raw, &mut parts, &mut qbuf, initial_lit)?;
-            flush_literal(&raw, lit_start, raw.len(), &mut parts);
-            if raw.is_empty() {
+            let initial_lit = if self.word_parts.is_empty() {
+                0
+            } else {
+                self.word_raw.len()
+            };
+            let (had_quote, lit_start) = self.scan_raw_word_parts_scratch(initial_lit)?;
+            flush_literal(
+                &self.word_raw,
+                lit_start,
+                self.word_raw.len(),
+                &mut self.word_parts,
+            );
+            if self.word_raw.is_empty() {
                 return Ok(Token::Eof);
             }
 
             if !had_quote {
                 if check_alias {
-                    if let Some((key, value)) = self.aliases.get_key_value(raw.as_slice()) {
-                        if is_alias_eligible(&raw)
-                            && !self.expanding_aliases.contains(raw.as_slice())
+                    if let Some((key, value)) = self.aliases.get_key_value(self.word_raw.as_slice())
+                    {
+                        if is_alias_eligible(&self.word_raw)
+                            && !self.expanding_aliases.contains(self.word_raw.as_slice())
                             && self.alias_depth < 1024
                         {
                             let value: &[u8] = value;
                             let trailing_blank = alias_has_trailing_blank(value);
                             self.expanding_aliases.insert(Cow::Borrowed(&**key));
-                            raw.clear();
-                            parts.clear();
-                            qbuf.clear();
+                            self.word_raw.clear();
+                            self.word_parts.clear();
+                            self.word_qbuf.clear();
                             self.alias_stack.push(AliasLayer {
                                 text: Cow::Borrowed(value),
                                 pos: 0,
@@ -1261,13 +1295,15 @@ impl<'a> Parser<'a> {
                     }
                 }
                 if check_keyword {
-                    if let Some(kw_tok) = word_to_keyword_token(&raw) {
+                    if let Some(kw_tok) = word_to_keyword_token(&self.word_raw) {
                         return Ok(kw_tok);
                     }
                 }
             }
 
-            flush_quoted_buf(&mut qbuf, &mut parts);
+            flush_quoted_buf(&mut self.word_qbuf, &mut self.word_parts);
+            let raw = std::mem::take(&mut self.word_raw);
+            let parts = std::mem::take(&mut self.word_parts);
             return Ok(Token::Word(
                 raw.into_boxed_slice(),
                 parts.into_boxed_slice(),
@@ -1367,6 +1403,18 @@ impl<'a> Parser<'a> {
 
     /// Scans a word from the input, accumulating raw bytes and building WordParts.
     /// `initial_lit_start` is the position in `raw` where the current literal
+    fn scan_raw_word_parts_scratch(
+        &mut self,
+        initial_lit_start: usize,
+    ) -> Result<(bool, usize), ParseError> {
+        let raw = &mut self.word_raw as *mut Vec<u8>;
+        let parts = &mut self.word_parts as *mut Vec<WordPart>;
+        let qbuf = &mut self.word_qbuf as *mut Vec<u8>;
+        // SAFETY: scratch buffers are disjoint from all other Parser fields
+        // accessed by scan_raw_word_parts.
+        unsafe { self.scan_raw_word_parts(&mut *raw, &mut *parts, &mut *qbuf, initial_lit_start) }
+    }
+
     /// region begins (typically 0 for a fresh word, or raw.len() if a prefix was
     /// already flushed).
     /// Returns `(had_quote, literal_start)` where `literal_start` is the position

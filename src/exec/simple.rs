@@ -40,7 +40,7 @@ pub(super) fn save_vars(shell: &Shell, assignments: &[(Vec<u8>, Vec<u8>)]) -> Ve
         .map(|(name, _)| SavedVar {
             name: name.clone().into(),
             value: shell.get_var(name).map(|s| s.to_vec()),
-            was_exported: shell.exported.contains(name),
+            was_exported: shell.exported().contains(name),
         })
         .collect()
 }
@@ -63,16 +63,16 @@ pub(super) fn restore_vars(shell: &mut Shell, saved: Vec<SavedVar>) {
         let name: Vec<u8> = entry.name.into();
         match entry.value {
             Some(v) => {
-                shell.env.insert(name.clone(), v);
+                shell.env_mut().insert(name.clone(), v);
             }
             None => {
-                shell.env.remove(&name);
+                shell.env_mut().remove(&name);
             }
         }
         if entry.was_exported {
-            shell.exported.insert(name);
+            shell.exported_mut().insert(name);
         } else {
-            shell.exported.remove(&name);
+            shell.exported_mut().remove(&name);
         }
     }
 }
@@ -212,7 +212,7 @@ pub(super) fn execute_simple(
         };
     }
 
-    if let Some(function) = shell.functions.get(&argv[0]).map(Rc::clone) {
+    if let Some(function) = shell.functions().get(&argv[0]).map(Rc::clone) {
         let guard = match apply_shell_redirections(&redirections, shell.options.noclobber) {
             Ok(g) => g,
             Err(error) => return Ok(shell.diagnostic_syserr(1, &error).exit_status()),
@@ -267,7 +267,7 @@ pub(super) fn execute_simple(
         }
     } else {
         for (name, _value) in &assignments {
-            if shell.readonly.contains(name) {
+            if shell.readonly().contains(name) {
                 let mut msg = name.clone();
                 msg.extend_from_slice(b": readonly variable");
                 return Err(shell.diagnostic(1, &msg));
@@ -533,8 +533,10 @@ mod tests {
     fn save_restore_vars_restores_previous_values() {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
-            shell.env.insert(b"FOO".to_vec(), b"original".to_vec());
-            shell.exported.insert(b"FOO".to_vec());
+            shell
+                .env_mut()
+                .insert(b"FOO".to_vec(), b"original".to_vec());
+            shell.exported_mut().insert(b"FOO".to_vec());
 
             let assignments = vec![
                 (b"FOO".to_vec(), b"temp".to_vec()),
@@ -549,9 +551,9 @@ mod tests {
 
             restore_vars(&mut shell, saved);
             assert_eq!(shell.get_var(b"FOO"), Some(b"original" as &[u8]));
-            assert!(shell.exported.contains(&b"FOO".to_vec()));
+            assert!(shell.exported().contains(&b"FOO".to_vec()));
             assert_eq!(shell.get_var(b"BAR"), None);
-            assert!(!shell.exported.contains(&b"BAR".to_vec()));
+            assert!(!shell.exported().contains(&b"BAR".to_vec()));
         });
     }
 
@@ -559,7 +561,9 @@ mod tests {
     fn non_special_builtin_prefix_assignments_are_temporary() {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
-            shell.env.insert(b"FOO".to_vec(), b"original".to_vec());
+            shell
+                .env_mut()
+                .insert(b"FOO".to_vec(), b"original".to_vec());
             let program = parse_test("FOO=temp true").expect("parse");
             let status = execute_program(&mut shell, &program).expect("execute");
             assert_eq!(status, 0);
@@ -582,7 +586,9 @@ mod tests {
     fn function_prefix_assignments_are_temporary() {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
-            shell.env.insert(b"FOO".to_vec(), b"original".to_vec());
+            shell
+                .env_mut()
+                .insert(b"FOO".to_vec(), b"original".to_vec());
             let program = parse_test("myfn() { :; }; FOO=temp myfn").expect("parse");
             let status = execute_program(&mut shell, &program).expect("execute");
             assert_eq!(status, 0);
@@ -605,8 +611,8 @@ mod tests {
     fn assignment_expansion_does_not_field_split() {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
-            shell.env.insert(b"IFS".to_vec(), b" ".to_vec());
-            shell.env.insert(b"X".to_vec(), b"a b c".to_vec());
+            shell.env_mut().insert(b"IFS".to_vec(), b" ".to_vec());
+            shell.env_mut().insert(b"X".to_vec(), b"a b c".to_vec());
             let program = parse_test("Y=$X").expect("parse");
             let _status = execute_program(&mut shell, &program).expect("execute");
             assert_eq!(shell.get_var(b"Y"), Some(b"a b c" as &[u8]));
@@ -831,8 +837,10 @@ mod tests {
             trace_entries![write(fd(sys::constants::STDERR_FILENO), bytes(b"meiksh: line 1: X: readonly variable\n")) -> auto],
             || {
                 let mut shell = test_shell();
-                shell.env.insert(b"PATH".to_vec(), b"/usr/bin".to_vec());
-                shell.readonly.insert(b"X".to_vec());
+                shell
+                    .env_mut()
+                    .insert(b"PATH".to_vec(), b"/usr/bin".to_vec());
+                shell.readonly_mut().insert(b"X".to_vec());
                 let err = shell
                     .execute_string(b"X=val /nonexistent/cmd")
                     .expect_err("readonly prefix");
@@ -848,7 +856,7 @@ mod tests {
             || {
                 let mut shell = test_shell();
                 shell.options.xtrace = true;
-                shell.env.insert(b"PS4".to_vec(), b">> ".to_vec());
+                shell.env_mut().insert(b"PS4".to_vec(), b">> ".to_vec());
                 let expanded = ExpandedSimpleCommand {
                     assignments: vec![],
                     argv: vec![b"echo".to_vec(), b"hi".to_vec()],
@@ -885,7 +893,7 @@ mod tests {
             trace_entries![write(fd(sys::constants::STDERR_FILENO), bytes(b"meiksh: RO: readonly variable\n")) -> auto],
             || {
                 let mut shell = test_shell();
-                shell.readonly.insert(b"RO".to_vec());
+                shell.readonly_mut().insert(b"RO".to_vec());
                 let assignments = vec![(b"RO".to_vec(), b"newval".to_vec())];
                 let err = apply_prefix_assignments(&mut shell, &assignments)
                     .expect_err("readonly should fail");

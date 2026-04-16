@@ -6,7 +6,7 @@ use crate::shell::state::Shell;
 
 pub(super) fn set(shell: &mut Shell, argv: &[Vec<u8>]) -> BuiltinOutcome {
     if argv.len() == 1 {
-        let mut items: Vec<_> = shell.env.iter().collect();
+        let mut items: Vec<_> = shell.env().iter().collect();
         items.sort_by(|a, b| a.0.cmp(b.0));
         for (name, value) in items {
             let quoted = shell_quote_if_needed(value);
@@ -205,8 +205,8 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                shell.env.insert(b"A".to_vec(), b"1".to_vec());
-                shell.env.insert(b"B".to_vec(), b"2".to_vec());
+                shell.env_mut().insert(b"A".to_vec(), b"1".to_vec());
+                shell.env_mut().insert(b"B".to_vec(), b"2".to_vec());
                 let outcome = invoke(&mut shell, &[b"set".to_vec()]);
                 assert!(matches!(outcome, Ok(BuiltinOutcome::Status(0))));
             },

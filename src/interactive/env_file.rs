@@ -33,7 +33,9 @@ mod tests {
     fn load_env_file_ignores_relative_path() {
         run_trace(trace_entries![], || {
             let mut shell = test_shell();
-            shell.env.insert(b"ENV".to_vec(), b"relative.sh".to_vec());
+            shell
+                .env_mut()
+                .insert(b"ENV".to_vec(), b"relative.sh".to_vec());
             load_env_file(&mut shell).expect("relative ignored");
         });
     }
@@ -45,7 +47,7 @@ mod tests {
             || {
                 let mut shell = test_shell();
                 shell
-                    .env
+                    .env_mut()
                     .insert(b"ENV".to_vec(), b"/tmp/meiksh-missing-env.sh".to_vec());
                 load_env_file(&mut shell).expect("missing ignored");
             },
@@ -64,7 +66,9 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                shell.env.insert(b"ENV".to_vec(), b"/tmp/env.sh".to_vec());
+                shell
+                    .env_mut()
+                    .insert(b"ENV".to_vec(), b"/tmp/env.sh".to_vec());
                 load_env_file(&mut shell).expect("source env file");
                 assert_eq!(shell.get_var(b"FROM_ENV_FILE"), Some(b"1".as_ref()));
             },
@@ -83,9 +87,11 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                shell.env.insert(b"HOME".to_vec(), b"/home/user".to_vec());
                 shell
-                    .env
+                    .env_mut()
+                    .insert(b"HOME".to_vec(), b"/home/user".to_vec());
+                shell
+                    .env_mut()
                     .insert(b"ENV".to_vec(), b"${HOME}/env.sh".to_vec());
                 load_env_file(&mut shell).expect("expanded env file");
                 assert_eq!(shell.get_var(b"FROM_EXPANDED_ENV"), Some(b"1".as_ref()));
@@ -97,9 +103,11 @@ mod tests {
     fn load_env_file_respects_identity_guard() {
         run_trace(trace_entries![], || {
             let mut shell = test_shell();
-            shell.env.insert(b"HOME".to_vec(), b"/home/user".to_vec());
             shell
-                .env
+                .env_mut()
+                .insert(b"HOME".to_vec(), b"/home/user".to_vec());
+            shell
+                .env_mut()
                 .insert(b"ENV".to_vec(), b"${HOME}/env.sh".to_vec());
             sys::test_support::with_process_ids_for_test((1, 2, 3, 3), || {
                 load_env_file(&mut shell).expect("guarded env file");
@@ -124,7 +132,9 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                shell.env.insert(b"ENV".to_vec(), b"/tmp/bad.sh".to_vec());
+                shell
+                    .env_mut()
+                    .insert(b"ENV".to_vec(), b"/tmp/bad.sh".to_vec());
                 let error = load_env_file(&mut shell).expect_err("invalid env file");
                 assert_ne!(error.exit_status(), 0);
             },

@@ -78,7 +78,9 @@ mod tests {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
             assert_eq!(expand_prompt(&mut shell, b"PS1", b"$ "), b"$ ");
-            shell.env.insert(b"PS1".to_vec(), b"custom> ".to_vec());
+            shell
+                .env_mut()
+                .insert(b"PS1".to_vec(), b"custom> ".to_vec());
             assert_eq!(expand_prompt(&mut shell, b"PS1", b"$ "), b"custom> ");
         });
     }

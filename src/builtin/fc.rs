@@ -73,7 +73,7 @@ pub(super) fn fc(shell: &mut Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutcome, 
         i += 1;
     }
 
-    let history = &shell.history;
+    let history = shell.history();
     if history.is_empty() {
         return Ok(BuiltinOutcome::Status(0));
     }

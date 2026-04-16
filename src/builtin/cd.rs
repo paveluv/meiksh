@@ -223,7 +223,7 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                shell.env.insert(b"PWD".to_vec(), b"/home".to_vec());
+                shell.env_mut().insert(b"PWD".to_vec(), b"/home".to_vec());
                 let outcome = invoke(
                     &mut shell,
                     &[b"cd".to_vec(), b"-Pe".to_vec(), b"/tmp".to_vec()],
@@ -246,7 +246,7 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                shell.env.insert(b"PWD".to_vec(), b"/home".to_vec());
+                shell.env_mut().insert(b"PWD".to_vec(), b"/home".to_vec());
                 let outcome = invoke(
                     &mut shell,
                     &[b"cd".to_vec(), b"-P".to_vec(), b"/usr".to_vec()],
@@ -285,8 +285,8 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                shell.env.insert(b"PWD".to_vec(), b"/home".to_vec());
-                shell.env.insert(b"CDPATH".to_vec(), b"/opt".to_vec());
+                shell.env_mut().insert(b"PWD".to_vec(), b"/home".to_vec());
+                shell.env_mut().insert(b"CDPATH".to_vec(), b"/opt".to_vec());
                 let outcome =
                     invoke(&mut shell, &[b"cd".to_vec(), b"subdir".to_vec()]).expect("cd cdpath");
                 assert!(matches!(outcome, BuiltinOutcome::Status(0)));
@@ -341,7 +341,7 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                shell.env.insert(b"PWD".to_vec(), b"/home".to_vec());
+                shell.env_mut().insert(b"PWD".to_vec(), b"/home".to_vec());
                 let outcome = invoke(
                     &mut shell,
                     &[b"cd".to_vec(), b"--".to_vec(), b"/tmp".to_vec()],
@@ -374,7 +374,7 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                shell.env.insert(b"PWD".to_vec(), b"/home".to_vec());
+                shell.env_mut().insert(b"PWD".to_vec(), b"/home".to_vec());
                 let outcome = invoke(
                     &mut shell,
                     &[b"cd".to_vec(), b"-P".to_vec(), b"/tmp".to_vec()],
@@ -396,7 +396,7 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                shell.env.insert(b"PWD".to_vec(), b"/".to_vec());
+                shell.env_mut().insert(b"PWD".to_vec(), b"/".to_vec());
                 let result = cd_logical_curpath(&shell, b"tmp").expect("curpath");
                 assert_eq!(result, b"/tmp");
             },
@@ -414,8 +414,10 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                shell.env.insert(b"PWD".to_vec(), b"/old".to_vec());
-                shell.env.insert(b"HOME".to_vec(), b"/home/user".to_vec());
+                shell.env_mut().insert(b"PWD".to_vec(), b"/old".to_vec());
+                shell
+                    .env_mut()
+                    .insert(b"HOME".to_vec(), b"/home/user".to_vec());
                 let outcome = invoke(&mut shell, &[b"cd".to_vec()]).expect("cd home");
                 assert!(matches!(outcome, BuiltinOutcome::Status(0)));
                 assert_eq!(shell.get_var(b"PWD"), Some(b"/home/user" as &[u8]));

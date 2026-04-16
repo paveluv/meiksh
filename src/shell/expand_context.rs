@@ -11,7 +11,7 @@ use super::state::Shell;
 
 impl Context for Shell {
     fn env_var(&self, name: &[u8]) -> Option<Cow<'_, [u8]>> {
-        self.env.get(name).map(|v| Cow::Borrowed(v.as_slice()))
+        self.env().get(name).map(|v| Cow::Borrowed(v.as_slice()))
     }
 
     fn special_param(&self, name: u8) -> Option<Cow<'_, [u8]>> {

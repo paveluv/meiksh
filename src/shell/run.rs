@@ -11,7 +11,7 @@ use crate::sys;
 
 use super::error::{ShellError, var_error_message};
 use super::options::{ShellOptions, option_error_message};
-use super::state::{FlowSignal, PendingControl, Shell};
+use super::state::{FlowSignal, PendingControl, SharedEnv, Shell};
 use super::traps::{TrapAction, TrapCondition};
 
 pub fn run_from_env() -> i32 {
@@ -116,11 +116,16 @@ impl Shell {
             positional,
             options,
             shell_name,
-            env,
-            exported,
-            readonly: BTreeSet::new(),
-            aliases: HashMap::new(),
-            functions: HashMap::new(),
+            shared: Rc::new(SharedEnv {
+                env,
+                exported,
+                readonly: BTreeSet::new(),
+                aliases: HashMap::new(),
+                functions: HashMap::new(),
+                path_cache: HashMap::new(),
+                history: Vec::new(),
+                mail_sizes: HashMap::new(),
+            }),
             last_status: 0,
             last_background: None,
             running: true,
@@ -141,10 +146,7 @@ impl Shell {
             wait_was_interrupted: false,
             pid: sys::process::current_pid(),
             lineno: 0,
-            path_cache: HashMap::new(),
-            history: Vec::new(),
             mail_last_check: 0,
-            mail_sizes: HashMap::new(),
         })
     }
 
@@ -185,11 +187,16 @@ impl Shell {
             interactive: options.force_interactive,
             options,
             shell_name,
-            env: HashMap::new(),
-            exported: BTreeSet::new(),
-            readonly: BTreeSet::new(),
-            aliases: HashMap::new(),
-            functions: HashMap::new(),
+            shared: Rc::new(SharedEnv {
+                env: HashMap::new(),
+                exported: BTreeSet::new(),
+                readonly: BTreeSet::new(),
+                aliases: HashMap::new(),
+                functions: HashMap::new(),
+                path_cache: HashMap::new(),
+                history: Vec::new(),
+                mail_sizes: HashMap::new(),
+            }),
             last_status: 0,
             last_background: None,
             running: true,
@@ -209,10 +216,7 @@ impl Shell {
             wait_was_interrupted: false,
             pid: sys::process::current_pid(),
             lineno: 0,
-            path_cache: HashMap::new(),
-            history: Vec::new(),
             mail_last_check: 0,
-            mail_sizes: HashMap::new(),
         })
     }
 
@@ -280,7 +284,7 @@ impl Shell {
 
     fn run_source_buffer(&mut self, source: &[u8]) -> Result<i32, ShellError> {
         if self.options.syntax_check_only {
-            let _ = syntax::parse_with_aliases(source, &self.aliases)
+            let _ = syntax::parse_with_aliases(source, &self.aliases())
                 .map_err(|e| self.parse_to_err(e))?;
             return Ok(0);
         }
@@ -357,7 +361,7 @@ impl Shell {
         loop {
             let prev_pos = session.current_pos();
             let program = match session
-                .next_command(&self.aliases)
+                .next_command(&self.aliases())
                 .map_err(|e| self.parse_to_err(e))?
             {
                 Some(p) => p,
@@ -394,7 +398,7 @@ impl Shell {
         if source.is_empty() {
             return Ok(None);
         }
-        match syntax::parse_with_aliases(source, &self.aliases) {
+        match syntax::parse_with_aliases(source, &self.aliases()) {
             Ok(_) => {
                 let buffered = std::mem::take(source);
                 self.run_source_buffer(&buffered).map(Some)
@@ -1083,7 +1087,9 @@ mod tests {
             trace_entries![access(str("cwd-script"), int(0)) -> 0,],
             || {
                 let mut shell = test_shell();
-                shell.env.insert(b"PATH".to_vec(), b"/search-path".to_vec());
+                shell
+                    .env_mut()
+                    .insert(b"PATH".to_vec(), b"/search-path".to_vec());
                 assert_eq!(
                     resolve_script_path(&shell, b"cwd-script"),
                     Some(b"cwd-script".to_vec())
@@ -1101,7 +1107,9 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                shell.env.insert(b"PATH".to_vec(), b"/search-path".to_vec());
+                shell
+                    .env_mut()
+                    .insert(b"PATH".to_vec(), b"/search-path".to_vec());
                 assert_eq!(
                     resolve_script_path(&shell, b"path-script"),
                     Some(b"/search-path/path-script".to_vec())
@@ -1191,7 +1199,9 @@ mod tests {
             assert_eq!(status, 0);
             assert_eq!(shell.get_var(b"SAME"), Some(b"1".as_slice()));
 
-            shell.aliases.insert(b"cond"[..].into(), b"if"[..].into());
+            shell
+                .aliases_mut()
+                .insert(b"cond"[..].into(), b"if"[..].into());
             let status = shell
                 .execute_string(b"cond true; then export BRANCH=hit; fi")
                 .expect("run reserved-word alias");
@@ -1205,10 +1215,10 @@ mod tests {
             assert_eq!(shell.get_var(b"TOP"), Some(b"ok".as_slice()));
 
             shell
-                .aliases
+                .aliases_mut()
                 .insert(b"chain"[..].into(), b"eval "[..].into());
             shell
-                .aliases
+                .aliases_mut()
                 .insert(b"word"[..].into(), b"VALUE=chain"[..].into());
             let status = shell
                 .execute_string(b"chain word")
@@ -1384,7 +1394,9 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                shell.env.insert(b"PATH".to_vec(), b"/usr/bin".to_vec());
+                shell
+                    .env_mut()
+                    .insert(b"PATH".to_vec(), b"/usr/bin".to_vec());
                 let err = shell.load_script_source(b"nonexistent-script");
                 assert!(err.is_err());
                 let e = err.unwrap_err();

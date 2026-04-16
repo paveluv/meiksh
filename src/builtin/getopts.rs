@@ -78,7 +78,7 @@ pub(super) fn getopts_inner(
             let _ = shell.unset_var(b"OPTARG");
             let buf = bstr::u64_to_bytes((optind + 1) as u64);
             getopts_set(shell, b"OPTIND", &buf)?;
-            shell.env.remove(b"_GETOPTS_CIND" as &[u8]);
+            shell.env_mut().remove(b"_GETOPTS_CIND" as &[u8]);
             return Ok(BuiltinOutcome::Status(1));
         }
         if arg_bytes.len() < 2 || arg_bytes[0] != b'-' {
@@ -86,7 +86,7 @@ pub(super) fn getopts_inner(
             let _ = shell.unset_var(b"OPTARG");
             let buf = bstr::u64_to_bytes(optind as u64);
             getopts_set(shell, b"OPTIND", &buf)?;
-            shell.env.remove(b"_GETOPTS_CIND" as &[u8]);
+            shell.env_mut().remove(b"_GETOPTS_CIND" as &[u8]);
             return Ok(BuiltinOutcome::Status(1));
         }
     }
@@ -103,12 +103,12 @@ pub(super) fn getopts_inner(
                 getopts_set(shell, b"OPTARG", &arg_bytes[next_ci..])?;
                 let buf = bstr::u64_to_bytes((optind + 1) as u64);
                 getopts_set(shell, b"OPTIND", &buf)?;
-                shell.env.remove(b"_GETOPTS_CIND" as &[u8]);
+                shell.env_mut().remove(b"_GETOPTS_CIND" as &[u8]);
             } else if optind < params.len() {
                 getopts_set(shell, b"OPTARG", &params[optind])?;
                 let buf = bstr::u64_to_bytes((optind + 2) as u64);
                 getopts_set(shell, b"OPTIND", &buf)?;
-                shell.env.remove(b"_GETOPTS_CIND" as &[u8]);
+                shell.env_mut().remove(b"_GETOPTS_CIND" as &[u8]);
             } else {
                 if silent {
                     getopts_set(shell, name, b":")?;
@@ -126,20 +126,20 @@ pub(super) fn getopts_inner(
                 }
                 let buf = bstr::u64_to_bytes((optind + 1) as u64);
                 getopts_set(shell, b"OPTIND", &buf)?;
-                shell.env.remove(b"_GETOPTS_CIND" as &[u8]);
+                shell.env_mut().remove(b"_GETOPTS_CIND" as &[u8]);
                 return Ok(BuiltinOutcome::Status(0));
             }
         } else {
             let _ = shell.unset_var(b"OPTARG");
             if next_ci < arg_bytes.len() {
-                shell.env.insert(
+                shell.env_mut().insert(
                     b"_GETOPTS_CIND".to_vec(),
                     bstr::u64_to_bytes(next_ci as u64),
                 );
             } else {
                 let buf = bstr::u64_to_bytes((optind + 1) as u64);
                 getopts_set(shell, b"OPTIND", &buf)?;
-                shell.env.remove(b"_GETOPTS_CIND" as &[u8]);
+                shell.env_mut().remove(b"_GETOPTS_CIND" as &[u8]);
             }
         }
         getopts_set(shell, name, &[opt_byte])?;
@@ -159,14 +159,14 @@ pub(super) fn getopts_inner(
         }
         getopts_set(shell, name, b"?")?;
         if next_ci < arg_bytes.len() {
-            shell.env.insert(
+            shell.env_mut().insert(
                 b"_GETOPTS_CIND".to_vec(),
                 bstr::u64_to_bytes(next_ci as u64),
             );
         } else {
             let buf = bstr::u64_to_bytes((optind + 1) as u64);
             getopts_set(shell, b"OPTIND", &buf)?;
-            shell.env.remove(b"_GETOPTS_CIND" as &[u8]);
+            shell.env_mut().remove(b"_GETOPTS_CIND" as &[u8]);
         }
         Ok(BuiltinOutcome::Status(0))
     }
@@ -196,7 +196,7 @@ mod tests {
     fn getopts_optind_past_params() {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
-            shell.env.insert(b"OPTIND".to_vec(), b"5".to_vec());
+            shell.env_mut().insert(b"OPTIND".to_vec(), b"5".to_vec());
             let outcome = invoke(
                 &mut shell,
                 &[
@@ -222,8 +222,8 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                shell.env.insert(b"OPTIND".to_vec(), b"5".to_vec());
-                shell.readonly.insert(b"OPTIND".to_vec());
+                shell.env_mut().insert(b"OPTIND".to_vec(), b"5".to_vec());
+                shell.readonly_mut().insert(b"OPTIND".to_vec());
                 let outcome = invoke(
                     &mut shell,
                     &[

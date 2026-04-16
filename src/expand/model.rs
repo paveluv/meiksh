@@ -23,15 +23,16 @@ pub(super) struct ExpandedWord {
     pub(super) segments: Vec<Segment>,
     pub(super) had_quoted_content: bool,
     pub(super) had_quoted_null_outside_at: bool,
-    pub(super) has_at_expansion: bool,
 }
 
+#[cfg(test)]
 #[derive(Debug, PartialEq, Eq)]
 pub(super) struct Field {
     pub(super) text: Vec<u8>,
     pub(super) has_unquoted_glob: bool,
 }
 
+#[cfg(test)]
 pub(super) fn segment_bytes(segments: &[Segment]) -> impl Iterator<Item = (u8, QuoteState)> + '_ {
     segments
         .iter()
@@ -45,6 +46,7 @@ pub(super) fn segment_bytes(segments: &[Segment]) -> impl Iterator<Item = (u8, Q
         .flatten()
 }
 
+#[cfg(test)]
 pub(super) fn split_fields_from_segments(segments: &[Segment], ifs: &[u8]) -> Vec<Field> {
     if ifs.is_empty() {
         return vec![Field {
@@ -65,15 +67,13 @@ pub(super) fn split_fields_from_segments(segments: &[Segment], ifs: &[u8]) -> Ve
         .copied()
         .filter(|b| !b.is_ascii_whitespace())
         .collect();
-    let chars: Vec<(u8, QuoteState)> = segment_bytes(segments).collect();
+    let mut iter = segment_bytes(segments).peekable();
 
     let mut fields = Vec::new();
     let mut current = Vec::new();
     let mut current_glob = false;
-    let mut index = 0usize;
 
-    while index < chars.len() {
-        let (b, state) = chars[index];
+    while let Some((b, state)) = iter.next() {
         let splittable = state == QuoteState::Expanded;
         if splittable && ifs_other.contains(&b) {
             fields.push(Field {
@@ -81,12 +81,11 @@ pub(super) fn split_fields_from_segments(segments: &[Segment], ifs: &[u8]) -> Ve
                 has_unquoted_glob: current_glob,
             });
             current_glob = false;
-            index += 1;
-            while index < chars.len()
-                && chars[index].1 == QuoteState::Expanded
-                && ifs_ws.contains(&chars[index].0)
+            while iter
+                .peek()
+                .is_some_and(|&(pb, ps)| ps == QuoteState::Expanded && ifs_ws.contains(&pb))
             {
-                index += 1;
+                iter.next();
             }
             continue;
         }
@@ -98,17 +97,16 @@ pub(super) fn split_fields_from_segments(segments: &[Segment], ifs: &[u8]) -> Ve
                 });
                 current_glob = false;
             }
-            while index < chars.len()
-                && chars[index].1 == QuoteState::Expanded
-                && ifs_ws.contains(&chars[index].0)
+            while iter
+                .peek()
+                .is_some_and(|&(pb, ps)| ps == QuoteState::Expanded && ifs_ws.contains(&pb))
             {
-                index += 1;
+                iter.next();
             }
             continue;
         }
         current_glob |= state != QuoteState::Quoted && is_glob_byte(b);
         current.push(b);
-        index += 1;
     }
 
     if !current.is_empty() {
@@ -148,7 +146,14 @@ pub(super) fn push_segment_slice(segments: &mut Vec<Segment>, text: &[u8], state
 }
 
 pub(super) fn flatten_segments(segments: &[Segment]) -> Vec<u8> {
-    let mut result = Vec::new();
+    let total: usize = segments
+        .iter()
+        .map(|s| match s {
+            Segment::Text(part, _) => part.len(),
+            _ => 0,
+        })
+        .sum();
+    let mut result = Vec::with_capacity(total);
     for seg in segments {
         if let Segment::Text(part, _) = seg {
             result.extend_from_slice(part);

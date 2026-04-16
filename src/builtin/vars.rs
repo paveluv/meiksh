@@ -83,7 +83,7 @@ pub(super) fn unset(shell: &mut Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutcom
                 }
             }
             UnsetTarget::Function => {
-                shell.functions.remove(item.as_slice());
+                shell.functions_mut().remove(item.as_slice());
             }
         }
     }
@@ -126,7 +126,7 @@ pub(super) fn parse_declaration_listing_flag(
 
 pub(super) fn exported_lines(shell: &Shell) -> Vec<Vec<u8>> {
     shell
-        .exported
+        .exported()
         .iter()
         .map(|name| declaration_line(b"export", name, shell.get_var(name)))
         .collect()
@@ -134,7 +134,7 @@ pub(super) fn exported_lines(shell: &Shell) -> Vec<Vec<u8>> {
 
 pub(super) fn readonly_lines(shell: &Shell) -> Vec<Vec<u8>> {
     shell
-        .readonly
+        .readonly()
         .iter()
         .map(|name| declaration_line(b"readonly", name, shell.get_var(name)))
         .collect()
@@ -210,7 +210,7 @@ mod tests {
             let mut shell = test_shell();
             invoke(&mut shell, &[b"export".to_vec(), b"NAME=value".to_vec()]).expect("export");
             assert_eq!(shell.get_var(b"NAME"), Some(b"value" as &[u8]));
-            assert!(shell.exported.contains(b"NAME" as &[u8]));
+            assert!(shell.exported().contains(b"NAME" as &[u8]));
         });
     }
 
@@ -222,7 +222,7 @@ mod tests {
 
             invoke(&mut shell, &[b"unset".to_vec(), b"NAME".to_vec()]).expect("unset");
             assert_eq!(shell.get_var(b"NAME"), None);
-            assert!(!shell.exported.contains(b"NAME" as &[u8]));
+            assert!(!shell.exported().contains(b"NAME" as &[u8]));
         });
     }
 
@@ -235,7 +235,7 @@ mod tests {
                 &[b"readonly".to_vec(), b"LOCKED=value".to_vec()],
             )
             .expect("readonly");
-            assert!(shell.readonly.contains(b"LOCKED" as &[u8]));
+            assert!(shell.readonly().contains(b"LOCKED" as &[u8]));
         });
     }
 
@@ -243,7 +243,9 @@ mod tests {
     fn export_tilde_expansion_in_value() {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
-            shell.env.insert(b"HOME".to_vec(), b"/home/user".to_vec());
+            shell
+                .env_mut()
+                .insert(b"HOME".to_vec(), b"/home/user".to_vec());
             invoke(&mut shell, &[b"export".to_vec(), b"FOO=~/bin".to_vec()]).expect("export tilde");
             assert_eq!(shell.get_var(b"FOO"), Some(b"/home/user/bin" as &[u8]));
         });
