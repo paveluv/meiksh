@@ -2213,7 +2213,15 @@ fn run_test_isolated(
         // ── Child process ──
         unsafe {
             libc::setsid();
+            #[cfg(target_os = "linux")]
             libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0);
+            #[cfg(target_os = "freebsd")]
+            libc::procctl(
+                libc::P_PID,
+                0,
+                libc::PROC_REAP_ACQUIRE,
+                std::ptr::null_mut(),
+            );
             libc::close(pipe_r);
         }
 
