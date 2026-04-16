@@ -291,6 +291,10 @@ unsafe fn errno_ptr() -> *mut c_int {
     {
         unsafe { libc::__errno_location() }
     }
+    #[cfg(target_os = "freebsd")]
+    {
+        unsafe { libc::__error() }
+    }
 }
 
 pub(super) fn last_error() -> SysError {

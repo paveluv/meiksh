@@ -91,7 +91,7 @@ pub(crate) const RLIMIT_NOFILE: i32 = libc::RLIMIT_NOFILE as i32;
 pub(crate) const RLIMIT_STACK: i32 = libc::RLIMIT_STACK as i32;
 pub(crate) const RLIMIT_CPU: i32 = libc::RLIMIT_CPU as i32;
 pub(crate) const RLIMIT_AS: i32 = libc::RLIMIT_AS as i32;
-pub(crate) const RLIM_INFINITY: u64 = libc::RLIM_INFINITY;
+pub(crate) const RLIM_INFINITY: u64 = libc::RLIM_INFINITY as u64;
 
 #[cfg(test)]
 mod tests {

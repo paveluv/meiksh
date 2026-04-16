@@ -263,20 +263,20 @@ pub(crate) fn spawn_child(
 }
 pub(crate) fn getrlimit(resource: i32) -> SysResult<(u64, u64)> {
     let mut rlim = std::mem::MaybeUninit::<libc::rlimit>::zeroed();
-    let rc = unsafe { libc::getrlimit(resource as libc::__rlimit_resource_t, rlim.as_mut_ptr()) };
+    let rc = unsafe { libc::getrlimit(resource as _, rlim.as_mut_ptr()) };
     if rc < 0 {
         return Err(last_error());
     }
     let rlim = unsafe { rlim.assume_init() };
-    Ok((rlim.rlim_cur, rlim.rlim_max))
+    Ok((rlim.rlim_cur as u64, rlim.rlim_max as u64))
 }
 
 pub(crate) fn setrlimit(resource: i32, soft: u64, hard: u64) -> SysResult<()> {
     let rlim = libc::rlimit {
-        rlim_cur: soft,
-        rlim_max: hard,
+        rlim_cur: soft as _,
+        rlim_max: hard as _,
     };
-    let rc = unsafe { libc::setrlimit(resource as libc::__rlimit_resource_t, &rlim) };
+    let rc = unsafe { libc::setrlimit(resource as _, &rlim) };
     if rc < 0 {
         return Err(last_error());
     }
