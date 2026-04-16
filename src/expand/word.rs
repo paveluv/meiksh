@@ -167,12 +167,10 @@ pub(crate) fn expand_redirect_word<C: Context>(
         let result = output.finish();
         return Ok(match result {
             ExpandResult::Fields(fields) => bstr::join_bstrings(&fields, b" "),
-            ExpandResult::FieldsWithGlob(entries) => {
-                bstr::join_bstrings(
-                    &entries.into_iter().map(|e| e.text).collect::<Vec<_>>(),
-                    b" ",
-                )
-            }
+            ExpandResult::FieldsWithGlob(entries) => bstr::join_bstrings(
+                &entries.into_iter().map(|e| e.text).collect::<Vec<_>>(),
+                b" ",
+            ),
         });
     }
 
@@ -256,7 +254,14 @@ pub(crate) fn expand_word_text<C: Context>(
 
     if !word.parts.is_empty() {
         let mut output = ExpandOutput::new();
-        super::expand_parts::expand_parts_into(ctx, &word.raw, &word.parts, b"", true, &mut output)?;
+        super::expand_parts::expand_parts_into(
+            ctx,
+            &word.raw,
+            &word.parts,
+            b"",
+            true,
+            &mut output,
+        )?;
         return Ok(output.into_single_vec());
     }
 
@@ -280,7 +285,14 @@ pub(crate) fn expand_assignment_value<C: Context>(
 
     if !word.parts.is_empty() {
         let mut output = ExpandOutput::new();
-        super::expand_parts::expand_parts_into(ctx, &word.raw, &word.parts, b"", true, &mut output)?;
+        super::expand_parts::expand_parts_into(
+            ctx,
+            &word.raw,
+            &word.parts,
+            b"",
+            true,
+            &mut output,
+        )?;
         return Ok(output.into_single_vec());
     }
 

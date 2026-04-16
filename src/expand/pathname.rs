@@ -214,7 +214,8 @@ mod tests {
         assert_eq!(ctx.env_var(b"NAME").as_deref(), Some(b"value".as_ref()));
         assert_eq!(ctx.shell_name(), b"meiksh");
         assert_eq!(
-            ctx.command_substitute_raw(b"printf ok").expect("substitute"),
+            ctx.command_substitute_raw(b"printf ok")
+                .expect("substitute"),
             b"printf ok\n"
         );
     }

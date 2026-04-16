@@ -2988,3 +2988,1758 @@ fn command_v_alias_prefix() {
         "alias greet='echo hi'"
     );
 }
+
+// ── Coverage tests for WordPart IR parser and parts-based expander ──
+
+#[test]
+fn dollar_single_quote_escapes() {
+    let out = Command::new(meiksh())
+        .args([
+            "-c",
+            r#"printf '%s\n' $'\a\b\e\f\n\r\t\v\"\'\\\x41\077\cA'"#,
+        ])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    let bytes = &out.stdout;
+    assert_eq!(bytes[0], 0x07); // \a
+    assert_eq!(bytes[1], 0x08); // \b
+    assert_eq!(bytes[2], 0x1b); // \e
+    assert_eq!(bytes[3], 0x0c); // \f
+    assert_eq!(bytes[4], b'\n'); // \n
+    assert_eq!(bytes[5], b'\r'); // \r
+    assert_eq!(bytes[6], b'\t'); // \t
+    assert_eq!(bytes[7], 0x0b); // \v
+    assert_eq!(bytes[8], b'"'); // \"
+    assert_eq!(bytes[9], b'\''); // \'
+    assert_eq!(bytes[10], b'\\'); // \\
+    assert_eq!(bytes[11], b'A'); // \x41
+    assert_eq!(bytes[12], b'?'); // \077
+    assert_eq!(bytes[13], 0x01); // \cA
+}
+
+#[test]
+fn special_vars_via_parts() {
+    let out = Command::new(meiksh())
+        .args(["-c", "set -- a b c; echo $# $? $$ $- $0"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let parts: Vec<&str> = stdout.trim().split_whitespace().collect();
+    assert_eq!(parts[0], "3"); // $#
+    assert_eq!(parts[1], "0"); // $?
+    assert!(!parts[2].is_empty()); // $$
+    assert!(!parts[3].is_empty()); // $-
+}
+
+#[test]
+fn positional_params_via_parts() {
+    let out = Command::new(meiksh())
+        .args(["-c", "set -- alpha beta; echo $1 $2"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "alpha beta");
+}
+
+#[test]
+fn at_star_expansion_via_parts() {
+    let out = Command::new(meiksh())
+        .args(["-c", "set -- x y z; echo \"$@\"; echo $*"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let lines: Vec<&str> = stdout.trim().lines().collect();
+    assert_eq!(lines[0], "x y z");
+    assert_eq!(lines[1], "x y z");
+}
+
+#[test]
+fn star_with_custom_ifs() {
+    let out = Command::new(meiksh())
+        .args(["-c", "IFS=:; set -- a b c; echo \"$*\""])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "a:b:c");
+}
+
+#[test]
+fn literal_dollar_via_parts() {
+    let out = Command::new(meiksh())
+        .args(["-c", "echo $ alone"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "$ alone");
+}
+
+#[test]
+fn braced_default_op_via_parts() {
+    let out = Command::new(meiksh())
+        .args(["-c", "unset x; echo ${x:-fallback}"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "fallback");
+}
+
+#[test]
+fn braced_default_colon_empty_via_parts() {
+    let out = Command::new(meiksh())
+        .args(["-c", "x=''; echo ${x:-notempty}"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "notempty");
+}
+
+#[test]
+fn braced_assign_op_via_parts() {
+    let out = Command::new(meiksh())
+        .args(["-c", "unset x; echo ${x:=assigned}; echo $x"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let lines: Vec<&str> = stdout.trim().lines().collect();
+    assert_eq!(lines[0], "assigned");
+    assert_eq!(lines[1], "assigned");
+}
+
+#[test]
+fn braced_error_op_via_parts() {
+    let out = Command::new(meiksh())
+        .args(["-c", "unset x; echo ${x?custom error msg} 2>&1; echo done"])
+        .output()
+        .expect("run");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("custom error msg"),
+        "expected error msg in stderr: {stderr}"
+    );
+}
+
+#[test]
+fn braced_error_colon_op_via_parts() {
+    let out = Command::new(meiksh())
+        .args(["-c", "x=''; echo ${x:?must not be empty} 2>&1; echo done"])
+        .output()
+        .expect("run");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("must not be empty"),
+        "expected error msg in stderr: {stderr}"
+    );
+}
+
+#[test]
+fn braced_alt_op_via_parts() {
+    let out = Command::new(meiksh())
+        .args([
+            "-c",
+            "x=val; echo \"${x+alt}\"; unset x; echo \"${x+gone}end\"",
+        ])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let lines: Vec<&str> = stdout.trim().lines().collect();
+    assert_eq!(lines[0], "alt");
+    assert_eq!(lines[1], "end");
+}
+
+#[test]
+fn braced_alt_colon_op_via_parts() {
+    let out = Command::new(meiksh())
+        .args(["-c", "x=''; echo \"${x:+notempty}end\""])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "end");
+}
+
+#[test]
+fn braced_length_op_via_parts() {
+    let out = Command::new(meiksh())
+        .args(["-c", "x=hello; echo ${#x}"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "5");
+}
+
+#[test]
+fn braced_trim_suffix_via_parts() {
+    let out = Command::new(meiksh())
+        .args(["-c", "v=a/b/c.txt; echo ${v%.*}; echo ${v%%/*}"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let lines: Vec<&str> = stdout.trim().lines().collect();
+    assert_eq!(lines[0], "a/b/c");
+    assert_eq!(lines[1], "a");
+}
+
+#[test]
+fn braced_trim_prefix_via_parts() {
+    let out = Command::new(meiksh())
+        .args(["-c", "v=a/b/c.txt; echo ${v#*/}; echo ${v##*/}"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let lines: Vec<&str> = stdout.trim().lines().collect();
+    assert_eq!(lines[0], "b/c.txt");
+    assert_eq!(lines[1], "c.txt");
+}
+
+#[test]
+fn braced_positional_param() {
+    let out = Command::new(meiksh())
+        .args(["-c", "set -- one two; echo ${1} ${2}"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "one two");
+}
+
+#[test]
+fn braced_special_param() {
+    let out = Command::new(meiksh())
+        .args(["-c", "set -- a b; echo ${#}; echo ${?}"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let lines: Vec<&str> = stdout.trim().lines().collect();
+    assert_eq!(lines[0], "2");
+    assert_eq!(lines[1], "0");
+}
+
+#[test]
+fn arithmetic_literal_via_parts() {
+    let out = Command::new(meiksh())
+        .args(["-c", "echo $((42))"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "42");
+}
+
+#[test]
+fn arithmetic_with_var_via_parts() {
+    let out = Command::new(meiksh())
+        .args(["-c", "x=10; echo $((x + $x * 2))"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "30");
+}
+
+#[test]
+fn command_sub_via_parts() {
+    let out = Command::new(meiksh())
+        .args(["-c", "echo $(echo hello)"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "hello");
+}
+
+#[test]
+fn backtick_sub_via_parts() {
+    let out = Command::new(meiksh())
+        .args(["-c", "echo `echo world`"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "world");
+}
+
+#[test]
+fn backtick_in_double_quotes() {
+    let out = Command::new(meiksh())
+        .args(["-c", "echo \"`echo inner`\""])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "inner");
+}
+
+#[test]
+fn backtick_with_escape_in_dquotes() {
+    let out = Command::new(meiksh())
+        .args(["-c", r#"echo "`echo \"hi\"`""#])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "hi");
+}
+
+#[test]
+fn backtick_with_dollar_escape() {
+    let out = Command::new(meiksh())
+        .args(["-c", "echo `echo \\\\\\$HOME`"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "$HOME");
+}
+
+#[test]
+fn double_quote_parts_with_backslash() {
+    let out = Command::new(meiksh())
+        .args(["-c", r#"echo "hello\nworld""#])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), r"hello\nworld");
+}
+
+#[test]
+fn double_quote_with_dollar_expansion() {
+    let out = Command::new(meiksh())
+        .args(["-c", r#"x=val; echo "prefix${x}suffix""#])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim(),
+        "prefixvalsuffix"
+    );
+}
+
+#[test]
+fn empty_double_quote_parts() {
+    let out = Command::new(meiksh())
+        .args(["-c", "set -- \"\"; echo $#"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "1");
+}
+
+#[test]
+fn braced_default_with_quoted_word() {
+    let out = Command::new(meiksh())
+        .args(["-c", r#"unset x; echo ${x:-"hello $(echo w)orld"}"#])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "hello world");
+}
+
+#[test]
+fn braced_assign_with_expansion_word() {
+    let out = Command::new(meiksh())
+        .args(["-c", "unset x; echo ${x:=val$(echo ue)}; echo $x"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let lines: Vec<&str> = stdout.trim().lines().collect();
+    assert_eq!(lines[0], "value");
+    assert_eq!(lines[1], "value");
+}
+
+#[test]
+fn nested_braced_in_braced() {
+    let out = Command::new(meiksh())
+        .args(["-c", "y=inner; echo ${x:-${y}}"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "inner");
+}
+
+#[test]
+fn nested_arith_with_parens() {
+    let out = Command::new(meiksh())
+        .args(["-c", "echo $((1+(2*3)))"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "7");
+}
+
+#[test]
+fn nested_command_sub_in_braced() {
+    let out = Command::new(meiksh())
+        .args(["-c", "echo ${x:-$(echo nested)}"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "nested");
+}
+
+#[test]
+fn tilde_trailing_slash_stripping() {
+    let out = Command::new(meiksh())
+        .args(["-c", "HOME=/root/; echo ~/foo"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "/root/foo");
+}
+
+#[test]
+fn redirect_word_with_expansion() {
+    let td = TempDir::new("redir_expand");
+    let script = format!(
+        "x=outfile; echo hello > {}/\"$x\"; cat {}/outfile",
+        td.path.display(),
+        td.path.display()
+    );
+    let out = Command::new(meiksh())
+        .args(["-c", &script])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "hello");
+}
+
+#[test]
+fn assignment_value_with_expansion() {
+    let out = Command::new(meiksh())
+        .args(["-c", "x=hello; y=\"${x} world\"; echo $y"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "hello world");
+}
+
+#[test]
+fn command_sub_in_assignment_triggers_subshell() {
+    let out = Command::new(meiksh())
+        .args(["-c", "x=$(echo fromcmd); echo $x"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "fromcmd");
+}
+
+#[test]
+fn glob_in_literal_part() {
+    let td = TempDir::new("glob_lit");
+    fs::write(td.path.join("a.txt"), "").expect("write");
+    fs::write(td.path.join("b.txt"), "").expect("write");
+    let script = format!(
+        "cd {} && echo *.txt | tr ' ' '\\n' | sort",
+        td.path.display()
+    );
+    let out = Command::new(meiksh())
+        .args(["-c", &script])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("a.txt") && stdout.contains("b.txt"));
+}
+
+#[test]
+fn braced_error_default_message() {
+    let out = Command::new(meiksh())
+        .args(["-c", "unset x; echo ${x?} 2>&1"])
+        .output()
+        .expect("run");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("parameter null or not set"),
+        "expected default error, got: {stderr}"
+    );
+}
+
+#[test]
+fn braced_default_no_colon_unset() {
+    let out = Command::new(meiksh())
+        .args(["-c", "unset x; echo ${x-fallback}"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "fallback");
+}
+
+#[test]
+fn braced_default_no_colon_empty_keeps_empty() {
+    let out = Command::new(meiksh())
+        .args(["-c", "x=''; echo \"${x-fallback}end\""])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "end");
+}
+
+#[test]
+fn braced_assign_no_colon() {
+    let out = Command::new(meiksh())
+        .args(["-c", "unset x; echo ${x=assigned}; echo $x"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let lines: Vec<&str> = stdout.trim().lines().collect();
+    assert_eq!(lines[0], "assigned");
+    assert_eq!(lines[1], "assigned");
+}
+
+#[test]
+fn at_empty_expansion_no_fields() {
+    let out = Command::new(meiksh())
+        .args(["-c", "set --; echo \"$@\"end"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "end");
+}
+
+#[test]
+fn at_in_braced_default_produces_fields() {
+    let out = Command::new(meiksh())
+        .args([
+            "-c",
+            "set -- a b c; unset x; for w in ${x:-\"$@\"}; do echo \"$w\"; done",
+        ])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let lines: Vec<&str> = stdout.trim().lines().collect();
+    assert_eq!(lines, vec!["a", "b", "c"]);
+}
+
+#[test]
+fn backslash_newline_continuation_in_word() {
+    let out = Command::new(meiksh())
+        .args(["-c", "echo hel\\\nlo"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "hello");
+}
+
+#[test]
+fn backslash_escape_in_word() {
+    let out = Command::new(meiksh())
+        .args(["-c", r"echo hello\ world"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "hello world");
+}
+
+#[test]
+fn quoted_tilde_stays_literal_via_parts() {
+    let out = Command::new(meiksh())
+        .args(["-c", "echo ~'user'"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "~user");
+}
+
+#[test]
+fn braced_trim_with_expansion_pattern() {
+    let out = Command::new(meiksh())
+        .args(["-c", "pat='.*'; v=file.tar.gz; echo ${v%$pat}"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "file.tar");
+}
+
+#[test]
+fn simple_var_downgrade_from_braces() {
+    let out = Command::new(meiksh())
+        .args(["-c", "x=val; echo ${x}"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "val");
+}
+
+#[test]
+fn dollar_single_quote_control_backslash_c() {
+    let out = Command::new(meiksh())
+        .args(["-c", "printf '%s' $'\\cA' | od -An -tx1 | tr -d ' \\n'"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "01");
+}
+
+#[test]
+fn shell_name_zero_via_parts() {
+    let out = Command::new(meiksh())
+        .args(["-c", "echo $0"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(!stdout.trim().is_empty());
+}
+
+#[test]
+fn nested_command_sub_with_quotes_in_parens() {
+    let out = Command::new(meiksh())
+        .args(["-c", "echo $(echo 'hello world')"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "hello world");
+}
+
+#[test]
+fn braced_with_nested_arith_in_word() {
+    let out = Command::new(meiksh())
+        .args(["-c", "unset x; echo ${x:-$((1+2))}"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "3");
+}
+
+#[test]
+fn braced_with_backtick_in_word() {
+    let out = Command::new(meiksh())
+        .args(["-c", "unset x; echo ${x:-`echo bt`}"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "bt");
+}
+
+#[test]
+fn hash_at_start_not_expanded() {
+    let out = Command::new(meiksh())
+        .args(["-c", "echo ok # this is a comment"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ok");
+}
+
+#[test]
+fn find_closing_paren_with_quotes() {
+    let out = Command::new(meiksh())
+        .args(["-c", "echo $(echo \"(not a paren)\")"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "(not a paren)");
+}
+
+#[test]
+fn find_closing_brace_with_nested_arith() {
+    let out = Command::new(meiksh())
+        .args(["-c", "x=5; echo ${x:-$((1+2))}"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "5");
+}
+
+#[test]
+fn find_closing_brace_with_nested_cmd_sub() {
+    let out = Command::new(meiksh())
+        .args(["-c", "unset x; echo ${x:-$(echo nested)}"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "nested");
+}
+
+#[test]
+fn find_closing_brace_with_nested_brace() {
+    let out = Command::new(meiksh())
+        .args(["-c", "y=inner; unset x; echo ${x:-${y:-default}}"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "inner");
+}
+
+#[test]
+fn arith_with_single_quotes() {
+    let out = Command::new(meiksh())
+        .args(["-c", "echo $(( '1' + '2' ))"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "3");
+}
+
+#[test]
+fn arith_with_double_quotes() {
+    let out = Command::new(meiksh())
+        .args(["-c", "x=5; echo $(( \"$x\" + 1 ))"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "6");
+}
+
+#[test]
+fn braced_with_backslash_in_word() {
+    let out = Command::new(meiksh())
+        .args(["-c", r#"unset x; echo "${x:-hello\ world}""#])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "hello world");
+}
+
+#[test]
+fn braced_with_single_quote_in_word() {
+    let out = Command::new(meiksh())
+        .args(["-c", "unset x; echo ${x:-'literal text'}"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "literal text");
+}
+
+#[test]
+fn find_closing_brace_with_quotes() {
+    let out = Command::new(meiksh())
+        .args(["-c", r#"unset x; echo ${x:-"}"}"#])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "}");
+}
+
+#[test]
+fn find_closing_brace_with_single_quotes() {
+    let out = Command::new(meiksh())
+        .args(["-c", "unset x; echo ${x:-'}'}"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "}");
+}
+
+#[test]
+fn find_closing_brace_with_escape() {
+    let out = Command::new(meiksh())
+        .args(["-c", r#"unset x; echo "${x:-\}ok}""#])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "}ok");
+}
+
+#[test]
+fn double_quote_backslash_special_chars() {
+    let out = Command::new(meiksh())
+        .args(["-c", r#"echo "a\$b\\c\`d\"e""#])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "a$b\\c`d\"e");
+}
+
+#[test]
+fn dollar_single_quote_unknown_escape() {
+    let out = Command::new(meiksh())
+        .args(["-c", "printf '%s' $'\\z'"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "z");
+}
+
+#[test]
+fn dollar_single_quote_hex_no_digits() {
+    let out = Command::new(meiksh())
+        .args(["-c", "printf '%s' $'\\xZZ'"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "xZZ");
+}
+
+#[test]
+fn arith_in_find_closing_brace() {
+    let out = Command::new(meiksh())
+        .args(["-c", "x=5; echo ${x:-$((2+3))}"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "5");
+}
+
+#[test]
+fn double_quote_with_backtick_in_braced_word() {
+    let out = Command::new(meiksh())
+        .args(["-c", "unset x; echo \"${x:-`echo hi`}\""])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "hi");
+}
+
+#[test]
+fn double_quote_backslash_non_special() {
+    let out = Command::new(meiksh())
+        .args(["-c", r#"echo "\a\b\z""#])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), r"\a\b\z");
+}
+
+#[test]
+fn braced_error_set_passes() {
+    let out = Command::new(meiksh())
+        .args(["-c", "x=ok; echo ${x?err}"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ok");
+}
+
+#[test]
+fn braced_error_colon_set_nonempty_passes() {
+    let out = Command::new(meiksh())
+        .args(["-c", "x=ok; echo ${x:?err}"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ok");
+}
+
+#[test]
+fn at_unquoted_expansion_via_parts() {
+    let out = Command::new(meiksh())
+        .args(["-c", "set -- hello world; echo $@"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "hello world");
+}
+
+#[test]
+fn star_with_null_ifs() {
+    let out = Command::new(meiksh())
+        .args(["-c", "IFS=; set -- a b c; echo \"$*\""])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "abc");
+}
+
+#[test]
+fn star_unset_ifs_defaults_to_space() {
+    let out = Command::new(meiksh())
+        .args(["-c", "unset IFS; set -- a b c; echo \"$*\""])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "a b c");
+}
+
+#[test]
+fn braced_assign_colon_with_empty_value() {
+    let out = Command::new(meiksh())
+        .args(["-c", "x=''; echo ${x:=newval}; echo $x"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let lines: Vec<&str> = stdout.trim().lines().collect();
+    assert_eq!(lines[0], "newval");
+    assert_eq!(lines[1], "newval");
+}
+
+#[test]
+fn braced_assign_colon_with_set_value() {
+    let out = Command::new(meiksh())
+        .args(["-c", "x=existing; echo ${x:=unused}; echo $x"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let lines: Vec<&str> = stdout.trim().lines().collect();
+    assert_eq!(lines[0], "existing");
+    assert_eq!(lines[1], "existing");
+}
+
+#[test]
+fn heredoc_with_quoted_delimiter() {
+    let out = Command::new(meiksh())
+        .args(["-c", "cat <<'END'\nhello $HOME\nEND"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "hello $HOME");
+}
+
+#[test]
+fn heredoc_with_backslash_in_delimiter() {
+    let out = Command::new(meiksh())
+        .args(["-c", "cat <<E\\ND\nhello\nEND"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "hello");
+}
+
+#[test]
+fn heredoc_with_dollar_construct_in_body() {
+    let out = Command::new(meiksh())
+        .args(["-c", "x=world; cat <<EOF\nhello $x\nEOF"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "hello world");
+}
+
+#[test]
+fn multiline_literal_in_parts() {
+    let out = Command::new(meiksh())
+        .args(["-c", "printf '%s' 'line1\\nline2'"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("line1") && stdout.contains("line2"),
+        "got: {stdout}"
+    );
+}
+
+#[test]
+fn trim_suffix_with_expansion_in_pattern() {
+    let out = Command::new(meiksh())
+        .args(["-c", "x=hello.world; pat='.world'; echo ${x%$pat}"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "hello");
+}
+
+#[test]
+fn trim_suffix_no_match_returns_original() {
+    let out = Command::new(meiksh())
+        .args(["-c", "x=hello; echo ${x%.xyz}"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "hello");
+}
+
+#[test]
+fn trim_prefix_no_match_returns_original() {
+    let out = Command::new(meiksh())
+        .args(["-c", "x=hello; echo ${x#xyz*}"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "hello");
+}
+
+#[test]
+fn arithmetic_with_expansion_in_parts() {
+    let out = Command::new(meiksh())
+        .args(["-c", "x=10; echo $(($x + $(echo 5)))"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "15");
+}
+
+#[test]
+fn glob_in_expanded_value_not_expanded_when_quoted() {
+    let td = TempDir::new("glob_quoted");
+    fs::write(td.path.join("a.txt"), "").expect("write");
+    let script = format!("cd {} && x='*.txt'; echo \"$x\"", td.path.display());
+    let out = Command::new(meiksh())
+        .args(["-c", &script])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "*.txt");
+}
+
+#[test]
+fn command_sub_in_prefix_assignment() {
+    let out = Command::new(meiksh())
+        .args(["-c", "x=$(echo val) env sh -c 'echo $x'"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "val");
+}
+
+#[test]
+fn redirect_with_variable_in_filename() {
+    let td = TempDir::new("redir_var");
+    let script = format!(
+        "d={}; echo hello > \"$d/out.txt\"; cat \"$d/out.txt\"",
+        td.path.display()
+    );
+    let out = Command::new(meiksh())
+        .args(["-c", &script])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "hello");
+}
+
+#[test]
+fn assignment_value_via_parts_path() {
+    let out = Command::new(meiksh())
+        .args(["-c", "x=$((2+3)); echo $x"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "5");
+}
+
+#[test]
+fn tilde_user_with_trailing_slash_dir() {
+    let user = std::env::var("USER")
+        .or_else(|_| std::env::var("LOGNAME"))
+        .unwrap();
+    let out = Command::new(meiksh())
+        .args(["-c", &format!("echo ~{user}/foo")])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let trimmed = stdout.trim();
+    assert!(
+        trimmed.ends_with("/foo"),
+        "expected /foo suffix, got: {trimmed}"
+    );
+    assert!(
+        !trimmed.contains("//"),
+        "should not have double slash, got: {trimmed}"
+    );
+}
+
+#[test]
+fn braced_with_dollar_in_word() {
+    let out = Command::new(meiksh())
+        .args(["-c", "y=sub; unset x; echo ${x:-pre${y}post}"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "presubpost");
+}
+
+#[test]
+fn quoted_literal_with_newlines() {
+    let out = Command::new(meiksh())
+        .args(["-c", "echo \"line1\nline2\""])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("line1\nline2"));
+}
+
+#[test]
+fn expand_word_text_with_parts() {
+    let out = Command::new(meiksh())
+        .args(["-c", "x=hello; printf '%s\\n' \"$x world\""])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "hello world");
+}
+
+#[test]
+fn braced_with_double_quote_in_word() {
+    let out = Command::new(meiksh())
+        .args(["-c", "unset x; echo ${x:-\"hello world\"}"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "hello world");
+}
+
+#[test]
+fn braced_with_backslash_escape_in_word() {
+    let out = Command::new(meiksh())
+        .args(["-c", "unset x; echo \"${x:-a\\\\b}\""])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "a\\b");
+}
+
+#[test]
+fn braced_with_nested_command_sub_in_braced() {
+    let out = Command::new(meiksh())
+        .args(["-c", "unset x; echo ${x:-$(echo ${y:-deep})}"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "deep");
+}
+
+#[test]
+fn backtick_in_braced_word_of_parts() {
+    let out = Command::new(meiksh())
+        .args(["-c", "unset x; echo \"${x:-`echo tick`}\""])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "tick");
+}
+
+#[test]
+fn dollar_single_quote_octal_escape() {
+    let out = Command::new(meiksh())
+        .args(["-c", "printf '%s' $'\\101\\102\\103'"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "ABC");
+}
+
+#[test]
+fn find_paren_with_escaped_paren() {
+    let out = Command::new(meiksh())
+        .args(["-c", "echo $(echo '()')"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "()");
+}
+
+#[test]
+fn heredoc_with_dollar_single_quote() {
+    let out = Command::new(meiksh())
+        .args(["-c", "cat <<$'EOF'\nhello\nEOF"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "hello");
+}
+
+#[test]
+fn heredoc_with_double_digit_delimiter() {
+    let out = Command::new(meiksh())
+        .args(["-c", "cat <<12\nhello\n12"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "hello");
+}
+
+#[test]
+fn heredoc_with_double_quote_delimiter() {
+    let out = Command::new(meiksh())
+        .args(["-c", "cat <<\"EOF\"\nhello\nEOF"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "hello");
+}
+
+#[test]
+fn backslash_newline_at_start_of_word() {
+    let out = Command::new(meiksh())
+        .args(["-c", "echo \\\nhello"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "hello");
+}
+
+#[test]
+fn braced_arith_and_cmd_sub_in_find_brace() {
+    let out = Command::new(meiksh())
+        .args(["-c", "unset x; echo ${x:-$((1+2))$(echo ok)}"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "3ok");
+}
+
+#[test]
+fn paren_with_double_quotes_in_cmd_sub() {
+    let out = Command::new(meiksh())
+        .args(["-c", "echo $(echo \"hi()\")"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "hi()");
+}
+
+#[test]
+fn paren_with_backslash_in_cmd_sub() {
+    let out = Command::new(meiksh())
+        .args(["-c", "echo $(echo a\\)b)"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+}
+
+#[test]
+fn arith_with_nested_parens_in_find_arith() {
+    let out = Command::new(meiksh())
+        .args(["-c", "echo $((2 * (3 + (4 - 1))))"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "12");
+}
+
+#[test]
+fn braced_positional_large_index() {
+    let out = Command::new(meiksh())
+        .args(["-c", "echo ${100:-none}"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "none");
+}
+
+#[test]
+fn arith_with_double_quotes_in_find_arith() {
+    let out = Command::new(meiksh())
+        .args(["-c", "x=5; echo $((\"$x\" + 1))"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "6");
+}
+
+#[test]
+fn braced_word_dquote_with_dollar_var() {
+    let out = Command::new(meiksh())
+        .args(["-c", "y=val; unset x; echo ${x:-\"pre$y post\"}"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "preval post");
+}
+
+#[test]
+fn braced_word_dquote_with_backtick() {
+    let out = Command::new(meiksh())
+        .args(["-c", "unset x; echo ${x:-\"pre`echo bt`post\"}"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "prebtpost");
+}
+
+#[test]
+fn braced_word_dquote_with_backslash_dollar() {
+    let out = Command::new(meiksh())
+        .args(["-c", "unset x; echo \"${x:-a\\$b}\""])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "a$b");
+}
+
+#[test]
+fn braced_word_dquote_with_backslash_backtick() {
+    let out = Command::new(meiksh())
+        .args(["-c", "unset x; echo \"${x:-a\\`echo b\\`c}\""])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+}
+
+#[test]
+fn braced_word_top_level_backslash() {
+    let out = Command::new(meiksh())
+        .args(["-c", "unset x; echo \"${x:-a\\nb}\""])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("a") && stdout.contains("b"));
+}
+
+#[test]
+fn braced_word_top_level_dollar() {
+    let out = Command::new(meiksh())
+        .args(["-c", "y=inner; unset x; echo ${x:-$y}"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "inner");
+}
+
+#[test]
+fn braced_word_top_level_backtick() {
+    let out = Command::new(meiksh())
+        .args(["-c", "unset x; echo ${x:-`echo back`}"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "back");
+}
+
+#[test]
+fn scan_raw_word_hash_comment() {
+    let out = Command::new(meiksh())
+        .args(["-c", "cat <<END\n# not a comment\nEND"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim(),
+        "# not a comment"
+    );
+}
+
+#[test]
+fn scan_raw_word_backslash_eof() {
+    let out = Command::new(meiksh())
+        .args(["-c", "echo hello\\"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("hello"));
+}
+
+#[test]
+fn scan_raw_word_dollar_construct() {
+    let out = Command::new(meiksh())
+        .args(["-c", "x=val; cat <<END\n${x}\nEND"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "val");
+}
+
+#[test]
+fn heredoc_with_single_quote_delim() {
+    let out = Command::new(meiksh())
+        .args(["-c", "cat <<'E N D'\nhello $HOME\nE N D"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "hello $HOME");
+}
+
+#[test]
+fn build_dollar_parts_short_dollar() {
+    let out = Command::new(meiksh())
+        .args(["-c", "echo \"$ end\""])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "$ end");
+}
+
+#[test]
+fn classify_dollar_empty_braces() {
+    let out = Command::new(meiksh())
+        .args(["-c", "echo ${} 2>/dev/null || echo fail"])
+        .output()
+        .expect("run");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(!stdout.is_empty());
+}
+
+#[test]
+fn classify_braced_name_digit_overflow() {
+    let out = Command::new(meiksh())
+        .args(["-c", "echo ${99999999999999999999:-overflow}"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "overflow");
+}
+
+#[test]
+fn classify_braced_op_all_ops() {
+    let out = Command::new(meiksh())
+        .args([
+            "-c",
+            "v=abcabc; echo \"[${v%%a*}][${v%a*}][${v##*a}][${v#*a}]\"",
+        ])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim(),
+        "[][abc][bc][bcabc]"
+    );
+}
+
+#[test]
+fn classify_braced_op_colon_ops() {
+    let out = Command::new(meiksh())
+        .args([
+            "-c",
+            "unset a; a=''; echo ${a:=v1}; echo ${a:?err}; echo ${a:+alt}; b=''; echo ${b:-def}",
+        ])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let lines: Vec<&str> = stdout.trim().lines().collect();
+    assert_eq!(lines[0], "v1");
+    assert_eq!(lines[1], "v1");
+    assert_eq!(lines[2], "alt");
+    assert_eq!(lines[3], "def");
+}
+
+#[test]
+fn parse_braced_name_special_chars() {
+    let out = Command::new(meiksh())
+        .args(["-c", "set -- a b; echo ${!} ${$} ${?} ${*} ${@}"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let parts: Vec<&str> = stdout.trim().split_whitespace().collect();
+    assert!(parts.len() >= 3);
+}
+
+#[test]
+fn tilde_followed_by_word_content() {
+    let out = Command::new(meiksh())
+        .args(["-c", "echo ~abc123def"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+}
+
+#[test]
+fn tilde_alone_with_word_break() {
+    let out = Command::new(meiksh())
+        .args(["-c", "HOME=/home/test; echo ~ done"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("/home/test"));
+    assert!(stdout.contains("done"));
+}
+
+#[test]
+fn into_single_vec_with_ifs_split_fields() {
+    let out = Command::new(meiksh())
+        .args(["-c", "x='a b c'; y=\"${x}\"; echo $y"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "a b c");
+}
+
+#[test]
+fn newlines_in_literal_part() {
+    let out = Command::new(meiksh())
+        .args(["-c", "x=abc\necho $x"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "abc");
+}
+
+#[test]
+fn tilde_user_slash_expansion_via_parts() {
+    let user = std::env::var("USER")
+        .or_else(|_| std::env::var("LOGNAME"))
+        .unwrap();
+    let out = Command::new(meiksh())
+        .args(["-c", &format!("echo ~{user}/test")])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.trim().ends_with("/test"));
+}
+
+#[test]
+fn expand_glob_in_unquoted_var() {
+    let td = TempDir::new("glob_var");
+    fs::write(td.path.join("x.txt"), "").expect("write");
+    let script = format!("cd {} && g='*.txt'; echo $g", td.path.display());
+    let out = Command::new(meiksh())
+        .args(["-c", &script])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "x.txt");
+}
+
+#[test]
+fn push_literal_glob_detection_via_star() {
+    let td = TempDir::new("glob_star");
+    fs::write(td.path.join("a.sh"), "").expect("write");
+    fs::write(td.path.join("b.sh"), "").expect("write");
+    let script = format!(
+        "cd {} && echo *.sh | tr ' ' '\\n' | sort",
+        td.path.display()
+    );
+    let out = Command::new(meiksh())
+        .args(["-c", &script])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("a.sh") && stdout.contains("b.sh"));
+}
+
+#[test]
+fn at_single_param_finish_expansion() {
+    let out = Command::new(meiksh())
+        .args(["-c", "set -- only; echo \"$@\""])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "only");
+}
+
+#[test]
+fn expand_redirect_with_parts() {
+    let td = TempDir::new("redir_parts");
+    let script = format!(
+        "x=test; echo data > {}/\"$x\".out; cat {}/test.out",
+        td.path.display(),
+        td.path.display()
+    );
+    let out = Command::new(meiksh())
+        .args(["-c", &script])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "data");
+}
+
+#[test]
+fn expand_word_text_via_parts() {
+    let out = Command::new(meiksh())
+        .args([
+            "-c",
+            "x='hello world'; [ \"$x\" = 'hello world' ] && echo ok",
+        ])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ok");
+}
+
+#[test]
+fn expand_assignment_value_with_parts() {
+    let out = Command::new(meiksh())
+        .args(["-c", "x=$(echo val); echo $x"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "val");
+}
+
+#[test]
+fn at_expansion_produces_fields_in_finish() {
+    let out = Command::new(meiksh())
+        .args(["-c", "set -- a b c; for x in \"$@\"; do echo $x; done"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let lines: Vec<&str> = stdout.trim().lines().collect();
+    assert_eq!(lines, vec!["a", "b", "c"]);
+}
+
+#[test]
+fn parameter_plus_op_set_returns_word() {
+    let out = Command::new(meiksh())
+        .args(["-c", "x=''; echo \"${x+yes}\""])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "yes");
+}
+
+#[test]
+fn parameter_plus_op_unset_returns_empty() {
+    let out = Command::new(meiksh())
+        .args(["-c", "unset x; echo \"${x+yes}end\""])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "end");
+}
+
+#[test]
+fn parameter_colon_plus_op_empty_returns_empty() {
+    let out = Command::new(meiksh())
+        .args(["-c", "x=''; echo \"${x:+yes}end\""])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "end");
+}
+
+#[test]
+fn scan_raw_word_backslash_newline_at_start() {
+    let out = Command::new(meiksh())
+        .args(["-c", "cat <<\\\nEOF\nhello\nEOF"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "hello");
+}
+
+#[test]
+fn scan_raw_word_backslash_escape() {
+    let out = Command::new(meiksh())
+        .args(["-c", "cat <<E\\ F\nhello\nE F"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "hello");
+}
+
+#[test]
+fn redirect_with_glob_expansion() {
+    let td = TempDir::new("redir_glob");
+    fs::write(td.path.join("target.txt"), "").expect("write");
+    let script = format!(
+        "echo data > {}/target.txt; cat {}/target.txt",
+        td.path.display(),
+        td.path.display()
+    );
+    let out = Command::new(meiksh())
+        .args(["-c", &script])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "data");
+}
+
+#[test]
+fn expand_word_text_with_parts_and_expansion() {
+    let out = Command::new(meiksh())
+        .args([
+            "-c",
+            "x=world; case \"hello $x\" in 'hello world') echo match;; esac",
+        ])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "match");
+}
+
+#[test]
+fn assignment_with_braced_expansion() {
+    let out = Command::new(meiksh())
+        .args(["-c", "x=hello; y=\"${x} world\"; echo $y"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "hello world");
+}
+
+#[test]
+fn tilde_home_trailing_slash_in_expand_raw() {
+    let out = Command::new(meiksh())
+        .args(["-c", "HOME=/root/; MYPATH=~/foo; echo $MYPATH"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "/root/foo");
+}
+
+#[test]
+fn newlines_in_word_parts() {
+    let out = Command::new(meiksh())
+        .args(["-c", "echo 'line1\nline2' | wc -l"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+}
+
+#[test]
+fn heredoc_backslash_newline_continuation() {
+    let out = Command::new(meiksh())
+        .args(["-c", "cat <<\\\nEOF\nhello\nEOF"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "hello");
+}
+
+#[test]
+fn heredoc_plain_word() {
+    let out = Command::new(meiksh())
+        .args(["-c", "cat <<MYEOF\nhello\nMYEOF"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "hello");
+}
+
+#[test]
+fn double_heredoc() {
+    let out = Command::new(meiksh())
+        .args(["-c", "cat <<A; cat <<B\nfirst\nA\nsecond\nB"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("first") && stdout.contains("second"));
+}
+
+#[test]
+fn command_sub_in_arg_of_simple_command() {
+    let out = Command::new(meiksh())
+        .args(["-c", "echo $(echo hi) $(echo there)"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "hi there");
+}
+
+#[test]
+fn tilde_literal_ignored_in_arithmetic() {
+    let out = Command::new(meiksh())
+        .args(["-c", "echo $((~0))"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "-1");
+}
+
+#[test]
+fn at_fields_in_braced_default() {
+    let out = Command::new(meiksh())
+        .args(["-c", "set -- a b c; unset x; printf '%s\\n' ${x:-\"$@\"}"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let lines: Vec<&str> = stdout.trim().lines().collect();
+    assert_eq!(lines, vec!["a", "b", "c"]);
+}
+
+#[test]
+fn tilde_expansion_ignored_in_pattern_build() {
+    let out = Command::new(meiksh())
+        .args(["-c", "x='a~b'; echo ${x%'~'*}"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "a");
+}
+
+#[test]
+fn push_literal_glob_via_tilde_fallback() {
+    let out = Command::new(meiksh())
+        .args(["-c", "echo ~nonexistentuser99999"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim(),
+        "~nonexistentuser99999"
+    );
+}

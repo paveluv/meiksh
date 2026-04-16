@@ -82,17 +82,6 @@ pub(crate) struct Word {
     pub(crate) line: usize,
 }
 
-impl Word {
-    #[cfg(test)]
-    pub(crate) fn from_raw(raw: &[u8]) -> Self {
-        Word {
-            raw: raw.to_vec().into_boxed_slice(),
-            parts: Box::new([]),
-            line: 0,
-        }
-    }
-}
-
 impl PartialEq for Word {
     fn eq(&self, other: &Self) -> bool {
         self.raw == other.raw
@@ -501,7 +490,8 @@ impl<'a> Parser<'a> {
         let mut redirections = Vec::new();
 
         if let Some((name, value_raw)) = split_assignment(&first_raw) {
-            let value_parts = build_assignment_value_parts(&first_raw, &first_parts, name.len() + 1);
+            let value_parts =
+                build_assignment_value_parts(&first_raw, &first_parts, name.len() + 1);
             assignments.push(Assignment {
                 name: Box::from(name),
                 value: Word {
@@ -859,15 +849,16 @@ impl<'a> Parser<'a> {
             loop {
                 self.set_argument_position();
                 let pat_line = self.current_line();
-                let (pattern_raw, pattern_parts) = if matches!(self.peek_token()?, Token::Word(_, _)) {
-                    self.take_word()
-                } else if let Some(name) = self.peek_token()?.keyword_name() {
-                    let w: Box<[u8]> = Box::from(name);
-                    self.advance_token();
-                    (w, Box::new([]) as Box<[WordPart]>)
-                } else {
-                    return Err(self.error(b"expected case pattern"));
-                };
+                let (pattern_raw, pattern_parts) =
+                    if matches!(self.peek_token()?, Token::Word(_, _)) {
+                        self.take_word()
+                    } else if let Some(name) = self.peek_token()?.keyword_name() {
+                        let w: Box<[u8]> = Box::from(name);
+                        self.advance_token();
+                        (w, Box::new([]) as Box<[WordPart]>)
+                    } else {
+                        return Err(self.error(b"expected case pattern"));
+                    };
                 patterns.push(Word {
                     raw: pattern_raw,
                     parts: pattern_parts,

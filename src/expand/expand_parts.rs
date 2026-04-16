@@ -6,7 +6,7 @@ use crate::syntax::word_parts::{BracedName, BracedOp, ExpansionKind, WordPart};
 use super::arithmetic::eval_arithmetic;
 use super::core::{Context, ExpandError};
 use super::glob::pattern_matches;
-use super::model::{is_glob_byte, render_pattern_from_segments, QuoteState, Segment};
+use super::model::{QuoteState, Segment, is_glob_byte, render_pattern_from_segments};
 use super::parameter::{lookup_param, require_set_parameter};
 use super::word::trim_trailing_newlines;
 
@@ -73,14 +73,12 @@ impl ExpandOutput {
             } else if b.is_ascii_whitespace() {
                 if !self.current.is_empty() {
                     let glob = self.current_has_glob;
-                    self.fields
-                        .push((std::mem::take(&mut self.current), glob));
+                    self.fields.push((std::mem::take(&mut self.current), glob));
                     self.current_has_glob = false;
                 }
             } else {
                 let glob = self.current_has_glob;
-                self.fields
-                    .push((std::mem::take(&mut self.current), glob));
+                self.fields.push((std::mem::take(&mut self.current), glob));
                 self.current_has_glob = false;
             }
         }
@@ -104,8 +102,7 @@ impl ExpandOutput {
                 if i > 0 {
                     self.at_field_breaks.push(self.fields.len() + 1);
                     let glob = self.current_has_glob;
-                    self.fields
-                        .push((std::mem::take(&mut self.current), glob));
+                    self.fields.push((std::mem::take(&mut self.current), glob));
                     self.current_has_glob = false;
                 }
                 self.current.extend_from_slice(field);
@@ -117,8 +114,8 @@ impl ExpandOutput {
         if self.fields.is_empty() {
             return self.current;
         }
-        let total: usize = self.fields.iter().map(|(f, _)| f.len()).sum::<usize>()
-            + self.current.len();
+        let total: usize =
+            self.fields.iter().map(|(f, _)| f.len()).sum::<usize>() + self.current.len();
         let mut result = Vec::with_capacity(total);
         for (f, _) in &self.fields {
             result.extend_from_slice(f);
@@ -165,8 +162,7 @@ impl ExpandOutput {
         }
 
         if !self.current.is_empty() {
-            self.fields
-                .push((std::mem::take(&mut self.current), false));
+            self.fields.push((std::mem::take(&mut self.current), false));
         }
 
         ExpandResult::Fields(self.fields.into_iter().map(|(f, _)| f).collect())
@@ -306,11 +302,7 @@ fn expand_kind<C: Context>(
         ExpansionKind::SpecialVar { ch } => {
             expand_special_var(ctx, *ch, ifs, quoted, output)?;
         }
-        ExpansionKind::Braced {
-            name,
-            op,
-            parts,
-        } => {
+        ExpansionKind::Braced { name, op, parts } => {
             expand_braced(ctx, raw, name, *op, parts, ifs, quoted, output)?;
         }
         ExpansionKind::Command { program } => {

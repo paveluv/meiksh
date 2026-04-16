@@ -129,7 +129,9 @@ pub(super) fn expand_dollar<C: Context>(
             }
             let name = &source[1..index];
             Ok((
-                Expansion::One(require_set_parameter(ctx, name, lookup_param(ctx, name))?.into_owned()),
+                Expansion::One(
+                    require_set_parameter(ctx, name, lookup_param(ctx, name))?.into_owned(),
+                ),
                 index,
             ))
         }
@@ -165,7 +167,10 @@ pub(super) fn expand_parameter_dollar<C: Context>(
         }
         next if next.is_ascii_digit() => {
             let value = ctx.positional_param((next - b'0') as usize);
-            Ok((require_set_parameter(ctx, &source[1..2], value)?.into_owned(), 2))
+            Ok((
+                require_set_parameter(ctx, &source[1..2], value)?.into_owned(),
+                2,
+            ))
         }
         next if next == b'_' || next.is_ascii_alphabetic() => {
             let mut index = 1usize;
@@ -509,7 +514,9 @@ pub(super) fn expand_braced_parameter<C: Context>(
     let is_null = value.as_deref().map(|s| s.is_empty()).unwrap_or(true);
 
     if op.is_none() {
-        return Ok(Expansion::One(require_set_parameter(ctx, name, value)?.into_owned()));
+        return Ok(Expansion::One(
+            require_set_parameter(ctx, name, value)?.into_owned(),
+        ));
     }
     let op_bytes = op.unwrap();
     let w = word.unwrap_or(b"");
@@ -637,9 +644,8 @@ pub(super) fn expand_braced_parameter_text<C: Context>(
     }
     let op_bytes = op.unwrap();
     let w = word.unwrap_or(b"");
-    let into_owned = |v: Option<Cow<'_, [u8]>>| -> Vec<u8> {
-        v.map(Cow::into_owned).unwrap_or_default()
-    };
+    let into_owned =
+        |v: Option<Cow<'_, [u8]>>| -> Vec<u8> { v.map(Cow::into_owned).unwrap_or_default() };
     if op_bytes == b":-" {
         if !is_set || is_null {
             expand_parameter_text_owned(ctx, w)
