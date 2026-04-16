@@ -14,24 +14,24 @@ Usage:
 import textwrap
 
 # Tunable iteration counts -- calibrated so each of the 10 sections takes
-# approximately 6 seconds on the release build of meiksh, for a total
-# benchmark runtime of ~60 seconds.
-ARITH_ITERS = 196_300
-EXPAND_ITERS = 135_600
-FUNC_ITERS = 6_400
-SPLIT_ITERS = 271_400
+# approximately 10 seconds on the release build of meiksh, for a total
+# benchmark runtime of ~100 seconds.
+ARITH_ITERS = 654_300
+EXPAND_ITERS = 308_200
+FUNC_ITERS = 32_000
+SPLIT_ITERS = 904_700
 GLOB_FILES = 500
-GLOB_ITERS = 2_800
-SUBSHELL_ITERS = 300
-IO_WRITE_ITERS = 1_000
-IO_HEREDOC_ITERS = 2_500
-IO_FD_ITERS = 2_500
-TRAP_ITERS = 307_000
+GLOB_ITERS = 7_000
+SUBSHELL_ITERS = 750
+IO_WRITE_ITERS = 1_250
+IO_HEREDOC_ITERS = 3_125
+IO_FD_ITERS = 3_125
+TRAP_ITERS = 1_023_300
 PARSE_DEPTH = 200
 CASE_ARMS = 300
 PIPELINE_CHAINS = 150
-PARSE_REPEATS = 2_600
-COMBINED_ITERS = 188_400
+PARSE_REPEATS = 16_250
+COMBINED_ITERS = 785_000
 
 
 def emit_header():

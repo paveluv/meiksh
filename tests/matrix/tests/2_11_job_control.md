@@ -859,11 +859,8 @@ begin interactive test "stopped background job produces notification at next pro
   send "sleep 30 &"
   expect "\[[[:digit:]]+\] [[:digit:]]+"
   expect "$ "
-  send "kill -STOP %1"
-  expect "$ "
-  sleep 500ms
-  send "echo trigger_prompt"
-  expect "\[[[:digit:]]+\].*(Stopped|Suspended).*(SIGSTOP)"
+  send "kill -STOP %1; sleep 1"
+  expect timeout=3s "\[[[:digit:]]+\].*(Stopped|Suspended).*(SIGSTOP)"
   expect "$ "
   send "kill -9 %1 2>/dev/null; wait 2>/dev/null"
   expect "$ "

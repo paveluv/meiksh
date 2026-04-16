@@ -20,7 +20,7 @@ BENCH_START=$(date +%s)
 
 bench_arithmetic() {
   i=0
-  while [ $i -lt 196300 ]; do
+  while [ $i -lt 654300 ]; do
     a=$(( i * 137 + 42 ))
     b=$(( a % 97 ))
     _t1=$(( a << 2 ))
@@ -52,7 +52,7 @@ bench_arithmetic() {
 bench_expansion() {
   base='the-quick-brown-fox-jumps-over-the-lazy-dog/path/to/some/file.tar.gz'
   i=0
-  while [ $i -lt 135600 ]; do
+  while [ $i -lt 308200 ]; do
     a=${base:-fallback_value}
     b=${base%.*}
     c=${base%%.*}
@@ -106,7 +106,7 @@ is_prime() {
 
 bench_functions() {
   i=0
-  while [ $i -lt 6400 ]; do
+  while [ $i -lt 32000 ]; do
     fib_iter 30
     accumulate 20
     is_prime $(( i % 997 + 2 ))
@@ -118,7 +118,7 @@ bench_functions() {
 bench_splitting() {
   data='alpha:bravo:charlie:delta:echo:foxtrot:golf:hotel:india:juliet'
   i=0
-  while [ $i -lt 271400 ]; do
+  while [ $i -lt 904700 ]; do
     old_ifs=$IFS
     IFS=:
     set -- $data
@@ -145,7 +145,7 @@ bench_globbing() {
     j=$(( j + 1 ))
   done
   i=0
-  while [ $i -lt 2800 ]; do
+  while [ $i -lt 7000 ]; do
     set -- "$gdir"/*.txt
     c1=$#
     set -- "$gdir"/*.dat
@@ -164,7 +164,7 @@ bench_globbing() {
 
 bench_subshells() {
   i=0
-  while [ $i -lt 300 ]; do
+  while [ $i -lt 750 ]; do
     a=$(echo "sub_$i" | cat)
     b=$( ( echo inner_a; echo inner_b ) | cat -n )
     c=$(printf "%d %d %d" $i $((i+1)) $((i+2)))
@@ -178,7 +178,7 @@ bench_io() {
   iofile="$BENCH_DIR/iotest.txt"
   : > "$iofile"
   i=0
-  while [ $i -lt 1000 ]; do
+  while [ $i -lt 1250 ]; do
     echo "line_$i alpha bravo charlie delta echo foxtrot golf hotel" >> "$iofile"
     i=$(( i + 1 ))
   done
@@ -189,7 +189,7 @@ bench_io() {
 
   outfile="$BENCH_DIR/ioout.txt"
   i=0
-  while [ $i -lt 2500 ]; do
+  while [ $i -lt 3125 ]; do
     cat >> "$outfile" <<HEREDOC_END
 Line $i: The quick brown fox jumps over the lazy dog.
 Expansion: var=${i} arith=$((i * 2 + 1))
@@ -199,7 +199,7 @@ HEREDOC_END
   done
   fdfile="$BENCH_DIR/fdtest.txt"
   i=0
-  while [ $i -lt 2500 ]; do
+  while [ $i -lt 3125 ]; do
     echo "fd_line_$i" 3>"$fdfile" >&3
     i=$(( i + 1 ))
   done
@@ -208,7 +208,7 @@ HEREDOC_END
 
 bench_traps() {
   i=0
-  while [ $i -lt 307000 ]; do
+  while [ $i -lt 1023300 ]; do
     trap ":" USR1
     trap ":" USR2
     trap ":" INT
@@ -1285,7 +1285,7 @@ _bench_parse_once() {
 
 bench_parse() {
   _i=0
-  while [ $_i -lt 2600 ]; do
+  while [ $_i -lt 16250 ]; do
     _bench_parse_once
     _i=$(( _i + 1 ))
   done
@@ -1294,7 +1294,7 @@ bench_parse() {
 bench_combined() {
   template='hello-world-this-is-a-benchmark-template-string'
   i=0
-  while [ $i -lt 188400 ]; do
+  while [ $i -lt 785000 ]; do
     a=${template#*-}
     b=${template%-*}
     c=$(( i * 31 + ${#template} ))
