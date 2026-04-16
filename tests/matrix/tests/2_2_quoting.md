@@ -930,7 +930,7 @@ begin test "dollar-single-quote hex escape"
   script
     printf '%s' $'\x41\x42\xA' | od -An -tx1
   expect
-    stdout " 41 42 0a"
+    stdout " *41 +42 +0a"
     stderr ""
     exit_code 0
 end test "dollar-single-quote hex escape"
@@ -1024,7 +1024,7 @@ begin test "dollar-single-quote control escapes produce expected bytes"
   script
     printf '%s' $'\a\b\e\f\r\t\v' | od -An -tx1
   expect
-    stdout " *07 08 1b 0c 0d 09 0b"
+    stdout " *07 +08 +1b +0c +0d +09 +0b"
     stderr ""
     exit_code 0
 end test "dollar-single-quote control escapes produce expected bytes"

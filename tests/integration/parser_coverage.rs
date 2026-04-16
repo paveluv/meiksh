@@ -417,11 +417,12 @@ fn build_dollar_parts_short_dollar() {
 #[test]
 fn classify_dollar_empty_braces() {
     let out = Command::new(meiksh())
-        .args(["-c", "echo ${} 2>/dev/null || echo fail"])
+        .args(["-c", "echo ${}"])
         .output()
         .expect("run");
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(!stdout.is_empty());
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("bad substitution"), "stderr: {stderr}");
 }
 
 #[test]
