@@ -26,26 +26,51 @@ pub(crate) enum WordPart {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum ExpansionKind {
-    SimpleVar { start: usize, end: usize },
-    Positional { index: u8 },
-    SpecialVar { ch: u8 },
+    SimpleVar {
+        start: usize,
+        end: usize,
+    },
+    Positional {
+        index: u8,
+    },
+    SpecialVar {
+        ch: u8,
+    },
     ShellName,
     Braced {
         name: BracedName,
         op: BracedOp,
         parts: Box<[WordPart]>,
     },
-    Command { program: Rc<Program> },
-    Arithmetic { parts: Box<[WordPart]> },
-    ArithmeticLiteral { start: usize, end: usize },
+    Command {
+        program: Rc<Program>,
+    },
+    Arithmetic {
+        parts: Box<[WordPart]>,
+    },
+    ArithmeticLiteral {
+        start: usize,
+        end: usize,
+    },
     LiteralDollar,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum BracedName {
-    Var { start: usize, end: usize },
-    Positional { start: usize, end: usize, index: u32 },
-    Special { start: usize, end: usize, ch: u8 },
+    Var {
+        start: usize,
+        end: usize,
+    },
+    Positional {
+        start: usize,
+        end: usize,
+        index: u32,
+    },
+    Special {
+        start: usize,
+        end: usize,
+        ch: u8,
+    },
 }
 
 impl BracedName {

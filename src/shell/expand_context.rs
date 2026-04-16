@@ -71,9 +71,10 @@ impl Context for Shell {
     }
 
     fn command_substitute(&mut self, program: &Rc<Program>) -> Result<Vec<u8>, ExpandError> {
-        self.capture_output_program(program).map_err(|_| ExpandError {
-            message: Box::default(),
-        })
+        self.capture_output_program(program)
+            .map_err(|_| ExpandError {
+                message: Box::default(),
+            })
     }
 
     fn home_dir_for_user(&self, name: &[u8]) -> Option<Cow<'_, [u8]>> {
@@ -191,8 +192,7 @@ mod tests {
     fn command_substitute_success() {
         run_trace(trace_entries![..capture_forked_trace(0, 1000)], || {
             let mut shell = test_shell();
-            let substituted =
-                Context::command_substitute_raw(&mut shell, b"true").expect("subst");
+            let substituted = Context::command_substitute_raw(&mut shell, b"true").expect("subst");
             assert_eq!(substituted, b"");
             assert_eq!(shell.last_status, 0);
         });
@@ -202,8 +202,7 @@ mod tests {
     fn command_substitute_sets_last_status_on_nonzero_exit() {
         run_trace(trace_entries![..capture_forked_trace(1, 1000)], || {
             let mut shell = test_shell();
-            let output =
-                Context::command_substitute_raw(&mut shell, b"false").expect("subst ok");
+            let output = Context::command_substitute_raw(&mut shell, b"false").expect("subst ok");
             assert_eq!(output, b"");
             assert_eq!(shell.last_status, 1);
         });

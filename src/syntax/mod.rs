@@ -2438,14 +2438,20 @@ mod tests {
         assert_eq!(&*Token::Bang.display_name(), b"!");
         assert_eq!(&*Token::LBrace.display_name(), b"{");
         assert_eq!(&*Token::RBrace.display_name(), b"}");
-        assert_eq!(&*Token::Word(bx(b"foo"), Box::new([])).display_name(), b"word");
+        assert_eq!(
+            &*Token::Word(bx(b"foo"), Box::new([])).display_name(),
+            b"word"
+        );
     }
 
     #[test]
     fn token_into_word_some_and_none() {
         use crate::syntax::word_parts::WordPart;
         let empty_parts: Box<[WordPart]> = Box::new([]);
-        assert_eq!(Token::Word(bx(b"hi"), Box::new([])).into_word(), Some((bx(b"hi"), empty_parts)));
+        assert_eq!(
+            Token::Word(bx(b"hi"), Box::new([])).into_word(),
+            Some((bx(b"hi"), empty_parts))
+        );
         assert_eq!(Token::Eof.into_word(), None);
         assert_eq!(Token::Semi.into_word(), None);
     }

@@ -123,14 +123,23 @@ pub(super) fn has_command_substitution(simple: &SimpleCommand) -> bool {
     fn word_has_cmd_sub(word: &crate::syntax::ast::Word) -> bool {
         use crate::syntax::word_parts::{ExpansionKind, WordPart};
         if !word.parts.is_empty() {
-            return word.parts.iter().any(|p| matches!(p,
-                WordPart::Expansion { kind: ExpansionKind::Command { .. }, .. }
-            ));
+            return word.parts.iter().any(|p| {
+                matches!(
+                    p,
+                    WordPart::Expansion {
+                        kind: ExpansionKind::Command { .. },
+                        ..
+                    }
+                )
+            });
         }
         let raw: &[u8] = &word.raw;
         raw.windows(2).any(|w| w == b"$(") || raw.contains(&b'`')
     }
-    simple.assignments.iter().any(|a| word_has_cmd_sub(&a.value))
+    simple
+        .assignments
+        .iter()
+        .any(|a| word_has_cmd_sub(&a.value))
         || simple.words.iter().any(|w| word_has_cmd_sub(w))
 }
 

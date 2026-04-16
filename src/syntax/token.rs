@@ -196,13 +196,12 @@ impl Token {
 
 impl Token {
     pub(super) fn display_name(&self) -> &'static [u8] {
-        self.keyword_name()
-            .unwrap_or(match self {
-                Token::Bang => b"!",
-                Token::LBrace => b"{",
-                Token::RBrace => b"}",
-                _ => b"word",
-            })
+        self.keyword_name().unwrap_or(match self {
+            Token::Bang => b"!",
+            Token::LBrace => b"{",
+            Token::RBrace => b"}",
+            _ => b"word",
+        })
     }
 }
 
@@ -1112,7 +1111,8 @@ impl<'a> Parser<'a> {
                     let mut raw = digits;
                     let mut parts = Vec::new();
                     let mut qbuf = Vec::new();
-                    let (_had_quote, lit_start) = self.scan_raw_word_parts(&mut raw, &mut parts, &mut qbuf, 0)?;
+                    let (_had_quote, lit_start) =
+                        self.scan_raw_word_parts(&mut raw, &mut parts, &mut qbuf, 0)?;
                     flush_literal(&raw, lit_start, raw.len(), &mut parts);
                     flush_quoted_buf(&mut qbuf, &mut parts);
                     if !raw.is_empty() {
@@ -1126,7 +1126,8 @@ impl<'a> Parser<'a> {
                     let mut raw = Vec::new();
                     let mut parts = Vec::new();
                     let mut qbuf = Vec::new();
-                    let (_had_quote, lit_start) = self.scan_raw_word_parts(&mut raw, &mut parts, &mut qbuf, 0)?;
+                    let (_had_quote, lit_start) =
+                        self.scan_raw_word_parts(&mut raw, &mut parts, &mut qbuf, 0)?;
                     flush_literal(&raw, lit_start, raw.len(), &mut parts);
                     flush_quoted_buf(&mut qbuf, &mut parts);
                     if !raw.is_empty() {
@@ -1227,7 +1228,8 @@ impl<'a> Parser<'a> {
             }
 
             let initial_lit = if parts.is_empty() { 0 } else { raw.len() };
-            let (had_quote, lit_start) = self.scan_raw_word_parts(&mut raw, &mut parts, &mut qbuf, initial_lit)?;
+            let (had_quote, lit_start) =
+                self.scan_raw_word_parts(&mut raw, &mut parts, &mut qbuf, initial_lit)?;
             flush_literal(&raw, lit_start, raw.len(), &mut parts);
             if raw.is_empty() {
                 return Ok(Token::Eof);
@@ -1266,7 +1268,10 @@ impl<'a> Parser<'a> {
             }
 
             flush_quoted_buf(&mut qbuf, &mut parts);
-            return Ok(Token::Word(raw.into_boxed_slice(), parts.into_boxed_slice()));
+            return Ok(Token::Word(
+                raw.into_boxed_slice(),
+                parts.into_boxed_slice(),
+            ));
         }
     }
 
@@ -1407,10 +1412,7 @@ impl<'a> Parser<'a> {
                 }
                 let end = raw.len();
                 if user_end > user_start || end > 1 {
-                    parts.push(WordPart::TildeLiteral {
-                        user_end,
-                        end,
-                    });
+                    parts.push(WordPart::TildeLiteral { user_end, end });
                     lit_start = raw.len();
                     if self.peek_byte().is_none()
                         || matches!(self.peek_byte(), Some(b) if is_word_break(b))
@@ -1479,7 +1481,10 @@ impl<'a> Parser<'a> {
                     let content_end = raw.len() - 1;
                     if content_start == content_end {
                         flush_quoted_buf(qbuf, parts);
-                        parts.push(WordPart::QuotedLiteral { bytes: Box::new([]), newlines: 0 });
+                        parts.push(WordPart::QuotedLiteral {
+                            bytes: Box::new([]),
+                            newlines: 0,
+                        });
                     } else {
                         qbuf.extend_from_slice(&raw[content_start..content_end]);
                     }
@@ -1495,7 +1500,10 @@ impl<'a> Parser<'a> {
                     let dq_raw = &raw[raw_before..raw.len() - 1];
                     if dq_raw.is_empty() {
                         flush_quoted_buf(qbuf, parts);
-                        parts.push(WordPart::QuotedLiteral { bytes: Box::new([]), newlines: 0 });
+                        parts.push(WordPart::QuotedLiteral {
+                            bytes: Box::new([]),
+                            newlines: 0,
+                        });
                     } else {
                         self.build_double_quote_parts(dq_raw, raw_before, parts, qbuf);
                     }
@@ -1522,7 +1530,9 @@ impl<'a> Parser<'a> {
                             self.consume_dollar_construct(raw)?;
                             let raw_end = raw.len();
                             let dollar_raw = &raw[raw_start..raw_end];
-                            self.build_dollar_parts(dollar_raw, raw_start, raw_end, parts, qbuf, false);
+                            self.build_dollar_parts(
+                                dollar_raw, raw_start, raw_end, parts, qbuf, false,
+                            );
                         }
                         Some(b'@' | b'*' | b'?' | b'$' | b'!' | b'#' | b'-') => {
                             let ch = self.peek_byte().unwrap();
@@ -1651,7 +1661,8 @@ impl<'a> Parser<'a> {
                 b'$' => {
                     flush_quoted_buf(qbuf, parts);
                     let remaining = &dq_raw[i..];
-                    let (kind, consumed) = classify_dollar_from_slice(remaining, true, abs_offset + i);
+                    let (kind, consumed) =
+                        classify_dollar_from_slice(remaining, true, abs_offset + i);
                     parts.push(WordPart::Expansion { kind, quoted: true });
                     i += consumed;
                 }
@@ -1808,9 +1819,7 @@ fn classify_dollar_from_slice(slice: &[u8], _quoted: bool, base: usize) -> (Expa
                 )
             }
         }
-        b'@' | b'*' | b'?' | b'$' | b'!' | b'#' | b'-' => {
-            (ExpansionKind::SpecialVar { ch: c1 }, 2)
-        }
+        b'@' | b'*' | b'?' | b'$' | b'!' | b'#' | b'-' => (ExpansionKind::SpecialVar { ch: c1 }, 2),
         b'0' => (ExpansionKind::ShellName, 2),
         b'1'..=b'9' => (ExpansionKind::Positional { index: c1 - b'0' }, 2),
         _ if c1 == b'_' || c1.is_ascii_alphabetic() => {
@@ -1818,7 +1827,13 @@ fn classify_dollar_from_slice(slice: &[u8], _quoted: bool, base: usize) -> (Expa
             while i < slice.len() && (slice[i] == b'_' || slice[i].is_ascii_alphanumeric()) {
                 i += 1;
             }
-            (ExpansionKind::SimpleVar { start: base + 1, end: base + i }, i)
+            (
+                ExpansionKind::SimpleVar {
+                    start: base + 1,
+                    end: base + i,
+                },
+                i,
+            )
         }
         _ => (ExpansionKind::LiteralDollar, 1),
     }
@@ -1962,11 +1977,15 @@ fn parse_braced_name_end(expr: &[u8]) -> usize {
     0
 }
 
-
 /// Builds `WordPart` entries for a sub-range of a raw byte buffer.
 /// `base` is added to all positional offsets so they reference positions
 /// in the full `Word.raw` buffer (use 0 when `raw` is already the full buffer).
-fn build_word_parts_for_slice(raw: &[u8], start: usize, end: usize, base: usize) -> Box<[WordPart]> {
+fn build_word_parts_for_slice(
+    raw: &[u8],
+    start: usize,
+    end: usize,
+    base: usize,
+) -> Box<[WordPart]> {
     let mut parts = Vec::new();
     let mut qbuf = Vec::new();
     let mut i = start;
@@ -2000,7 +2019,8 @@ fn build_word_parts_for_slice(raw: &[u8], start: usize, end: usize, base: usize)
                         }
                         b'$' => {
                             flush_quoted_buf(&mut qbuf, &mut parts);
-                            let (kind, consumed) = classify_dollar_from_slice(&raw[i..end], true, base + i);
+                            let (kind, consumed) =
+                                classify_dollar_from_slice(&raw[i..end], true, base + i);
                             parts.push(WordPart::Expansion { kind, quoted: true });
                             i += consumed;
                         }
@@ -2060,9 +2080,7 @@ fn build_word_parts_for_slice(raw: &[u8], start: usize, end: usize, base: usize)
             }
             _ => {
                 let lit_start = i;
-                while i < end
-                    && !matches!(raw[i], b'\'' | b'"' | b'\\' | b'$' | b'`')
-                {
+                while i < end && !matches!(raw[i], b'\'' | b'"' | b'\\' | b'$' | b'`') {
                     i += 1;
                 }
                 flush_quoted_buf(&mut qbuf, &mut parts);
@@ -2081,7 +2099,6 @@ fn build_word_parts_for_slice(raw: &[u8], start: usize, end: usize, base: usize)
     flush_quoted_buf(&mut qbuf, &mut parts);
     parts.into_boxed_slice()
 }
-
 
 fn find_closing_brace(raw: &[u8], start: usize, end: usize) -> usize {
     let mut i = start;
@@ -2267,7 +2284,6 @@ fn unescape_backtick(raw: &[u8], in_double_quotes: bool) -> Vec<u8> {
     result
 }
 
-
 pub(super) struct SavedAliasState {
     layers: Vec<AliasLayer<'static>>,
     depth: usize,
@@ -2381,5 +2397,297 @@ mod tests {
         assert_eq!(parse_i32_bytes(b"0"), Some(0));
         assert_eq!(parse_i32_bytes(b"42"), Some(42));
         assert_eq!(parse_i32_bytes(b"1000"), Some(1000));
+    }
+
+    #[test]
+    fn classify_dollar_literal_dollar() {
+        let (kind, consumed) = classify_dollar_from_slice(b"$", false, 0);
+        assert!(matches!(kind, ExpansionKind::LiteralDollar));
+        assert_eq!(consumed, 1);
+    }
+
+    #[test]
+    fn classify_dollar_empty_braces() {
+        let (kind, consumed) = classify_dollar_from_slice(b"${}", false, 0);
+        assert!(matches!(
+            kind,
+            ExpansionKind::Braced {
+                op: BracedOp::None,
+                ..
+            }
+        ));
+        assert_eq!(consumed, 3);
+    }
+
+    #[test]
+    fn classify_dollar_unterminated_braces() {
+        let (kind, consumed) = classify_dollar_from_slice(b"${x", false, 0);
+        assert!(matches!(kind, ExpansionKind::SimpleVar { .. }));
+        assert_eq!(consumed, 3);
+    }
+
+    #[test]
+    fn classify_dollar_arith_literal() {
+        let (kind, consumed) = classify_dollar_from_slice(b"$((42))", false, 0);
+        assert!(matches!(kind, ExpansionKind::ArithmeticLiteral { .. }));
+        assert_eq!(consumed, 7);
+    }
+
+    #[test]
+    fn classify_dollar_arith_complex() {
+        let (kind, consumed) = classify_dollar_from_slice(b"$(($x+1))", false, 0);
+        assert!(matches!(kind, ExpansionKind::Arithmetic { .. }));
+        assert_eq!(consumed, 9);
+    }
+
+    #[test]
+    fn classify_dollar_unterminated_arith() {
+        let (kind, consumed) = classify_dollar_from_slice(b"$((1+2", false, 0);
+        assert!(matches!(kind, ExpansionKind::ArithmeticLiteral { .. }));
+        assert_eq!(consumed, 6);
+    }
+
+    #[test]
+    fn classify_dollar_command_sub() {
+        let (kind, consumed) = classify_dollar_from_slice(b"$(echo hi)", false, 0);
+        assert!(matches!(kind, ExpansionKind::Command { .. }));
+        assert_eq!(consumed, 10);
+    }
+
+    #[test]
+    fn classify_dollar_unterminated_cmd() {
+        let (kind, consumed) = classify_dollar_from_slice(b"$(echo", false, 0);
+        assert!(matches!(kind, ExpansionKind::Command { .. }));
+        assert_eq!(consumed, 6);
+    }
+
+    #[test]
+    fn classify_dollar_simple_var() {
+        let (kind, consumed) = classify_dollar_from_slice(b"$abc", false, 0);
+        assert!(matches!(
+            kind,
+            ExpansionKind::SimpleVar { start: 1, end: 4 }
+        ));
+        assert_eq!(consumed, 4);
+    }
+
+    #[test]
+    fn classify_dollar_unknown_char() {
+        let (kind, consumed) = classify_dollar_from_slice(b"$.", false, 0);
+        assert!(matches!(kind, ExpansionKind::LiteralDollar));
+        assert_eq!(consumed, 1);
+    }
+
+    #[test]
+    fn classify_braced_name_empty() {
+        let n = classify_braced_name(b"", 0, 0);
+        assert!(matches!(n, BracedName::Var { start: 0, end: 0 }));
+    }
+
+    #[test]
+    fn classify_braced_name_positional() {
+        let n = classify_braced_name(b"12", 0, 2);
+        assert!(matches!(n, BracedName::Positional { index: 12, .. }));
+    }
+
+    #[test]
+    fn classify_braced_name_digit_overflow() {
+        let n = classify_braced_name(b"99999999999999999", 0, 17);
+        assert!(matches!(n, BracedName::Var { .. }));
+    }
+
+    #[test]
+    fn classify_braced_name_special() {
+        let n = classify_braced_name(b"?", 0, 1);
+        assert!(matches!(n, BracedName::Special { ch: b'?', .. }));
+    }
+
+    #[test]
+    fn parse_u32_digits_empty() {
+        assert_eq!(parse_u32_digits(b""), None);
+    }
+
+    #[test]
+    fn parse_u32_digits_non_digit() {
+        assert_eq!(parse_u32_digits(b"12x"), None);
+    }
+
+    #[test]
+    fn parse_u32_digits_overflow() {
+        assert_eq!(parse_u32_digits(b"99999999999999999"), None);
+    }
+
+    #[test]
+    fn classify_braced_op_all() {
+        assert_eq!(classify_braced_op(b"${x:-w}", 3).0, BracedOp::DefaultColon);
+        assert_eq!(classify_braced_op(b"${x:=w}", 3).0, BracedOp::AssignColon);
+        assert_eq!(classify_braced_op(b"${x:?w}", 3).0, BracedOp::ErrorColon);
+        assert_eq!(classify_braced_op(b"${x:+w}", 3).0, BracedOp::AltColon);
+        assert_eq!(classify_braced_op(b"${x-w}", 3).0, BracedOp::Default);
+        assert_eq!(classify_braced_op(b"${x=w}", 3).0, BracedOp::Assign);
+        assert_eq!(classify_braced_op(b"${x?w}", 3).0, BracedOp::Error);
+        assert_eq!(classify_braced_op(b"${x+w}", 3).0, BracedOp::Alt);
+        assert_eq!(
+            classify_braced_op(b"${x%%w}", 3).0,
+            BracedOp::TrimSuffixLong
+        );
+        assert_eq!(classify_braced_op(b"${x%w}", 3).0, BracedOp::TrimSuffix);
+        assert_eq!(
+            classify_braced_op(b"${x##w}", 3).0,
+            BracedOp::TrimPrefixLong
+        );
+        assert_eq!(classify_braced_op(b"${x#w}", 3).0, BracedOp::TrimPrefix);
+        assert_eq!(classify_braced_op(b"${x}", 3).0, BracedOp::None);
+        assert_eq!(classify_braced_op(b"${x:}", 3).0, BracedOp::None);
+    }
+
+    #[test]
+    fn parse_braced_name_end_cases() {
+        assert_eq!(parse_braced_name_end(b""), 0);
+        assert_eq!(parse_braced_name_end(b"123"), 3);
+        assert_eq!(parse_braced_name_end(b"?"), 1);
+        assert_eq!(parse_braced_name_end(b"$"), 1);
+        assert_eq!(parse_braced_name_end(b"abc_def"), 7);
+        assert_eq!(parse_braced_name_end(b"."), 0);
+    }
+
+    #[test]
+    fn build_word_parts_for_slice_dquote_with_dollar() {
+        let raw = b"${x:-\"$y\"}";
+        let parts = build_word_parts_for_slice(raw, 5, 9, 0);
+        assert!(parts.len() >= 1);
+    }
+
+    #[test]
+    fn build_word_parts_for_slice_dquote_with_backslash() {
+        let raw = b"${x:-\"a\\$b\"}";
+        let parts = build_word_parts_for_slice(raw, 5, 11, 0);
+        assert!(parts.len() >= 1);
+    }
+
+    #[test]
+    fn build_word_parts_for_slice_dquote_with_backtick() {
+        let raw = b"${x:-\"`echo y`\"}";
+        let parts = build_word_parts_for_slice(raw, 5, 15, 0);
+        assert!(parts.len() >= 1);
+    }
+
+    #[test]
+    fn build_word_parts_for_slice_top_level_backslash() {
+        let raw = b"${x:-a\\nb}";
+        let parts = build_word_parts_for_slice(raw, 5, 9, 0);
+        assert!(parts.len() >= 1);
+    }
+
+    #[test]
+    fn build_word_parts_for_slice_top_level_dollar() {
+        let raw = b"${x:-$y}";
+        let parts = build_word_parts_for_slice(raw, 5, 7, 0);
+        assert!(parts.len() >= 1);
+    }
+
+    #[test]
+    fn build_word_parts_for_slice_top_level_backtick() {
+        let raw = b"${x:-`echo z`}";
+        let parts = build_word_parts_for_slice(raw, 5, 13, 0);
+        assert!(parts.len() >= 1);
+    }
+
+    #[test]
+    fn find_closing_brace_with_nested() {
+        assert_eq!(find_closing_brace(b"${a${b}}", 2, 8), 7);
+        assert_eq!(find_closing_brace(b"${a'}'}", 2, 7), 6);
+        assert_eq!(find_closing_brace(b"${a\\'}", 2, 6), 5);
+        assert_eq!(find_closing_brace(b"${a\"b\"}", 2, 7), 6);
+    }
+
+    #[test]
+    fn find_closing_brace_with_arith_and_cmd() {
+        assert_eq!(find_closing_brace(b"${a$((1+2))}", 2, 12), 11);
+        assert_eq!(find_closing_brace(b"${a$(echo)}", 2, 11), 10);
+    }
+
+    #[test]
+    fn find_closing_brace_with_dquote_backslash() {
+        assert_eq!(find_closing_brace(b"${a\"\\\"\"}", 2, 8), 7);
+    }
+
+    #[test]
+    fn find_closing_brace_unterminated() {
+        assert_eq!(find_closing_brace(b"${a", 2, 3), 3);
+    }
+
+    #[test]
+    fn find_closing_paren_nested() {
+        assert_eq!(find_closing_paren(b"$(a(b))", 2, 7), 6);
+    }
+
+    #[test]
+    fn find_closing_paren_with_quotes() {
+        assert_eq!(find_closing_paren(b"$(a')')", 2, 7), 6);
+        assert_eq!(find_closing_paren(b"$(a\")\")", 2, 7), 6);
+        assert_eq!(find_closing_paren(b"$(a\\))", 2, 6), 5);
+    }
+
+    #[test]
+    fn find_closing_paren_with_dquote_backslash() {
+        assert_eq!(find_closing_paren(b"$(a\"\\\"\")", 2, 8), 7);
+    }
+
+    #[test]
+    fn find_closing_paren_unterminated() {
+        assert_eq!(find_closing_paren(b"$(a", 2, 3), 3);
+    }
+
+    #[test]
+    fn find_arith_end_nested() {
+        assert_eq!(find_arith_end(b"$((1+(2)))", 3, 10), 8);
+    }
+
+    #[test]
+    fn find_arith_end_with_quotes() {
+        assert_eq!(find_arith_end(b"$(('1'))", 3, 8), 6);
+        assert_eq!(find_arith_end(b"$((\"1\"))", 3, 8), 6);
+    }
+
+    #[test]
+    fn find_arith_end_with_dquote_backslash() {
+        assert_eq!(find_arith_end(b"$((\"1\\\"\"))", 3, 11), 8);
+    }
+
+    #[test]
+    fn find_arith_end_unterminated() {
+        assert_eq!(find_arith_end(b"$((1+2", 3, 6), 6);
+    }
+
+    #[test]
+    fn find_backtick_end_basic() {
+        assert_eq!(find_backtick_end(b"`echo`", 1, 6), 5);
+    }
+
+    #[test]
+    fn find_backtick_end_with_escape() {
+        assert_eq!(find_backtick_end(b"`a\\`b`", 1, 6), 5);
+    }
+
+    #[test]
+    fn find_backtick_end_unterminated() {
+        assert_eq!(find_backtick_end(b"`abc", 1, 4), 4);
+    }
+
+    #[test]
+    fn unescape_backtick_outside_dquote() {
+        assert_eq!(
+            unescape_backtick(b"a\\$b\\`c\\\\d\\e", false),
+            b"a$b`c\\d\\e"
+        );
+    }
+
+    #[test]
+    fn unescape_backtick_in_dquote() {
+        assert_eq!(
+            unescape_backtick(b"a\\$b\\`c\\\\d\\\"e\\f", true),
+            b"a$b`c\\d\"e\\f"
+        );
     }
 }
