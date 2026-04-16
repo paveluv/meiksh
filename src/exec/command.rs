@@ -60,7 +60,7 @@ pub(super) fn execute_command_inner(
         Command::Group(program) => execute_nested_program(shell, program),
         Command::FunctionDef(function) => {
             shell
-                .functions
+                .functions_mut()
                 .insert(function.name.to_vec(), Rc::clone(&function.body));
             Ok(0)
         }
@@ -404,9 +404,9 @@ mod tests {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
             shell
-                .env
+                .env_mut()
                 .insert(b"PATH".to_vec(), b"/usr/bin:/bin".to_vec());
-            shell.exported.insert(b"PATH".to_vec());
+            shell.exported_mut().insert(b"PATH".to_vec());
 
             let if_program =
                 parse_test("if true; then VALUE=yes; else VALUE=no; fi").expect("parse");
@@ -630,7 +630,7 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                shell.readonly.insert(b"item".to_vec());
+                shell.readonly_mut().insert(b"item".to_vec());
                 let err = shell
                     .execute_string(b"for item in a b; do :; done")
                     .expect_err("readonly loop var");
@@ -715,7 +715,7 @@ mod tests {
             let status = execute_program(&mut shell, &program).expect("execute");
             assert_eq!(status, 0);
             assert_eq!(shell.get_var(b"RESULT"), Some(b"ok" as &[u8]));
-            assert!(shell.functions.contains_key(&b"myfn".to_vec()));
+            assert!(shell.functions().contains_key(&b"myfn".to_vec()));
         });
     }
 }

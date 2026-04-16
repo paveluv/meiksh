@@ -506,7 +506,9 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                shell.env.insert(b"PATH".to_vec(), b"/usr/bin".to_vec());
+                shell
+                    .env_mut()
+                    .insert(b"PATH".to_vec(), b"/usr/bin".to_vec());
                 let pipeline = Pipeline {
                     negated: false,
                     timed: TimedMode::Off,
@@ -558,7 +560,9 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                shell.env.insert(b"PATH".to_vec(), b"/usr/bin".to_vec());
+                shell
+                    .env_mut()
+                    .insert(b"PATH".to_vec(), b"/usr/bin".to_vec());
                 let pipeline = Pipeline {
                     negated: true,
                     timed: TimedMode::Off,

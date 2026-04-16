@@ -6,10 +6,10 @@ use super::state::Shell;
 
 impl Shell {
     pub(crate) fn env_for_child(&self) -> Vec<(Vec<u8>, Vec<u8>)> {
-        self.exported
+        self.exported()
             .iter()
             .filter_map(|name| {
-                self.env
+                self.env()
                     .get(name)
                     .map(|value| (name.clone(), value.clone()))
             })
@@ -32,7 +32,7 @@ impl Shell {
     }
 
     pub(crate) fn get_var(&self, name: &[u8]) -> Option<&[u8]> {
-        self.env.get(name).map(Vec::as_slice)
+        self.env().get(name).map(Vec::as_slice)
     }
 
     pub(crate) fn input_is_incomplete(&self, error: &crate::syntax::ParseError) -> bool {
@@ -40,7 +40,7 @@ impl Shell {
     }
 
     pub(crate) fn history_number(&self) -> usize {
-        self.history.len() + 1
+        self.history().len() + 1
     }
 
     pub(crate) fn add_history(&mut self, line: &[u8]) {
@@ -62,27 +62,27 @@ impl Shell {
             .and_then(bstr::parse_i64)
             .and_then(|v| if v >= 0 { Some(v as usize) } else { None })
             .unwrap_or(128);
-        if self.history.len() >= histsize && histsize > 0 {
-            self.history.remove(0);
+        if self.history().len() >= histsize && histsize > 0 {
+            self.history_mut().remove(0);
         }
-        self.history.push(trimmed.into());
+        self.history_mut().push(trimmed.into());
     }
 
     pub(crate) fn set_var(&mut self, name: &[u8], value: &[u8]) -> Result<(), VarError> {
-        if self.readonly.contains(name) {
+        if self.readonly().contains(name) {
             return Err(VarError::Readonly(name.into()));
         }
         if name == b"PATH" {
-            self.path_cache.clear();
+            self.path_cache_mut().clear();
         }
-        if let Some(existing) = self.env.get_mut(name) {
+        if let Some(existing) = self.env_mut().get_mut(name) {
             existing.clear();
             existing.extend_from_slice(value);
         } else {
-            self.env.insert(name.to_vec(), value.to_vec());
+            self.env_mut().insert(name.to_vec(), value.to_vec());
         }
-        if self.options.allexport && !self.exported.contains(name) {
-            self.exported.insert(name.to_vec());
+        if self.options.allexport && !self.exported().contains(name) {
+            self.exported_mut().insert(name.to_vec());
         }
         Ok(())
     }
@@ -98,22 +98,22 @@ impl Shell {
                 self.diagnostic(1, &msg)
             })?;
         }
-        if !self.exported.contains(name) {
-            self.exported.insert(name.to_vec());
+        if !self.exported().contains(name) {
+            self.exported_mut().insert(name.to_vec());
         }
         Ok(())
     }
 
     pub(crate) fn mark_readonly(&mut self, name: &[u8]) {
-        self.readonly.insert(name.to_vec());
+        self.readonly_mut().insert(name.to_vec());
     }
 
     pub(crate) fn unset_var(&mut self, name: &[u8]) -> Result<(), VarError> {
-        if self.readonly.contains(name) {
+        if self.readonly().contains(name) {
             return Err(VarError::Readonly(name.into()));
         }
-        self.env.remove(name);
-        self.exported.remove(name);
+        self.env_mut().remove(name);
+        self.exported_mut().remove(name);
         Ok(())
     }
 
@@ -135,9 +135,9 @@ mod tests {
     fn env_for_child_filters_exported_values() {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
-            shell.env.insert(b"A".to_vec(), b"1".to_vec());
-            shell.env.insert(b"B".to_vec(), b"2".to_vec());
-            shell.exported.insert(b"A".to_vec());
+            shell.env_mut().insert(b"A".to_vec(), b"1".to_vec());
+            shell.env_mut().insert(b"B".to_vec(), b"2".to_vec());
+            shell.exported_mut().insert(b"A".to_vec());
             let env = shell.env_for_child();
             assert_eq!(
                 env.iter()
@@ -178,9 +178,9 @@ mod tests {
     fn export_without_value_marks_variable_exported() {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
-            shell.env.insert(b"NAME".to_vec(), b"value".to_vec());
+            shell.env_mut().insert(b"NAME".to_vec(), b"value".to_vec());
             shell.export_var(b"NAME", None).expect("export");
-            assert!(shell.exported.contains(b"NAME".as_slice()));
+            assert!(shell.exported().contains(b"NAME".as_slice()));
         });
     }
 
@@ -188,8 +188,8 @@ mod tests {
     fn env_for_exec_utility_overlays_and_appends() {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
-            shell.env.insert(b"A".to_vec(), b"1".to_vec());
-            shell.exported.insert(b"A".to_vec());
+            shell.env_mut().insert(b"A".to_vec(), b"1".to_vec());
+            shell.exported_mut().insert(b"A".to_vec());
             let env = shell.env_for_exec_utility(&[
                 (b"A".to_vec(), b"2".to_vec()),
                 (b"B".to_vec(), b"3".to_vec()),
@@ -204,17 +204,17 @@ mod tests {
         let mut shell = test_shell();
         shell.add_history(b"");
         shell.add_history(b"   ");
-        assert!(shell.history.is_empty());
+        assert!(shell.history().is_empty());
 
         shell.add_history(b"first");
-        assert_eq!(shell.history.len(), 1);
+        assert_eq!(shell.history().len(), 1);
 
-        shell.env.insert(b"HISTSIZE".to_vec(), b"2".to_vec());
+        shell.env_mut().insert(b"HISTSIZE".to_vec(), b"2".to_vec());
         shell.add_history(b"second");
         shell.add_history(b"third");
-        assert_eq!(shell.history.len(), 2);
-        assert_eq!(&*shell.history[0], b"second".as_slice());
-        assert_eq!(&*shell.history[1], b"third".as_slice());
+        assert_eq!(shell.history().len(), 2);
+        assert_eq!(&*shell.history()[0], b"second".as_slice());
+        assert_eq!(&*shell.history()[1], b"third".as_slice());
     }
 
     #[test]

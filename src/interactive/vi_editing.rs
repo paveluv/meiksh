@@ -1112,7 +1112,7 @@ pub(super) fn read_line(
         }
     };
 
-    let hist_len = shell.history.len();
+    let hist_len = shell.history().len();
     let mut state = ViState::new(erase_char, hist_len);
 
     loop {
@@ -1127,7 +1127,7 @@ pub(super) fn read_line(
             }
         };
 
-        let actions = state.process_byte(byte, &shell.history);
+        let actions = state.process_byte(byte, &shell.history());
         for action in actions {
             match action {
                 ViAction::Redraw => {

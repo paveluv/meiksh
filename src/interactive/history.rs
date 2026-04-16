@@ -54,7 +54,7 @@ mod tests {
             || {
                 let mut shell = test_shell();
                 shell
-                    .env
+                    .env_mut()
                     .insert(b"HISTFILE".to_vec(), b"/tmp/history.txt".to_vec());
                 append_history(&shell, b"echo hi\n").expect("append history");
             },
@@ -70,7 +70,7 @@ mod tests {
             || {
                 let mut shell = test_shell();
                 shell
-                    .env
+                    .env_mut()
                     .insert(b"HISTFILE".to_vec(), b"/tmp/history-dir".to_vec());
                 append_history(&shell, b"echo hi\n").expect("should silently succeed");
             },
@@ -87,7 +87,9 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                shell.env.insert(b"HOME".to_vec(), b"/home/user".to_vec());
+                shell
+                    .env_mut()
+                    .insert(b"HOME".to_vec(), b"/home/user".to_vec());
                 append_history(&shell, b"echo default\n").expect("default history");
             },
         );

@@ -1,10 +1,11 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::rc::Rc;
 
 use crate::sys;
 use crate::trace_entries;
 
 use super::options::ShellOptions;
-use super::state::Shell;
+use super::state::{SharedEnv, Shell};
 
 pub fn fake_handle(pid: sys::types::Pid) -> sys::types::ChildHandle {
     sys::types::ChildHandle {
@@ -23,11 +24,16 @@ pub fn test_shell() -> Shell {
     Shell {
         options: ShellOptions::default(),
         shell_name: b"meiksh"[..].into(),
-        env: HashMap::new(),
-        exported: BTreeSet::new(),
-        readonly: BTreeSet::new(),
-        aliases: HashMap::new(),
-        functions: HashMap::new(),
+        shared: Rc::new(SharedEnv {
+            env: HashMap::new(),
+            exported: BTreeSet::new(),
+            readonly: BTreeSet::new(),
+            aliases: HashMap::new(),
+            functions: HashMap::new(),
+            path_cache: HashMap::new(),
+            history: Vec::new(),
+            mail_sizes: HashMap::new(),
+        }),
         positional: Vec::new(),
         last_status: 0,
         last_background: None,
@@ -49,10 +55,7 @@ pub fn test_shell() -> Shell {
         wait_was_interrupted: false,
         pid: 0,
         lineno: 0,
-        path_cache: HashMap::new(),
-        history: Vec::new(),
         mail_last_check: 0,
-        mail_sizes: HashMap::new(),
     }
 }
 

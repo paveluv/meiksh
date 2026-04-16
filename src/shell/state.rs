@@ -21,14 +21,22 @@ pub(crate) enum PendingControl {
 }
 
 #[derive(Clone)]
-pub(crate) struct Shell {
-    pub(crate) options: ShellOptions,
-    pub(crate) shell_name: Box<[u8]>,
+pub(crate) struct SharedEnv {
     pub(crate) env: HashMap<Vec<u8>, Vec<u8>>,
     pub(crate) exported: BTreeSet<Vec<u8>>,
     pub(crate) readonly: BTreeSet<Vec<u8>>,
     pub(crate) aliases: HashMap<Box<[u8]>, Box<[u8]>>,
     pub(crate) functions: HashMap<Vec<u8>, Rc<crate::syntax::ast::Command>>,
+    pub(crate) path_cache: HashMap<Box<[u8]>, Vec<u8>>,
+    pub(crate) history: Vec<Box<[u8]>>,
+    pub(crate) mail_sizes: HashMap<Box<[u8]>, u64>,
+}
+
+#[derive(Clone)]
+pub(crate) struct Shell {
+    pub(crate) options: ShellOptions,
+    pub(crate) shell_name: Box<[u8]>,
+    pub(crate) shared: Rc<SharedEnv>,
     pub(crate) positional: Vec<Vec<u8>>,
     pub(crate) last_status: i32,
     pub(crate) last_background: Option<sys::types::Pid>,
@@ -51,10 +59,60 @@ pub(crate) struct Shell {
     pub(crate) wait_was_interrupted: bool,
     pub(crate) pid: sys::types::Pid,
     pub(crate) lineno: usize,
-    pub(crate) path_cache: HashMap<Box<[u8]>, Vec<u8>>,
-    pub(crate) history: Vec<Box<[u8]>>,
     pub(crate) mail_last_check: u64,
-    pub(crate) mail_sizes: HashMap<Box<[u8]>, u64>,
+}
+
+impl Shell {
+    pub(crate) fn env(&self) -> &HashMap<Vec<u8>, Vec<u8>> {
+        &self.shared.env
+    }
+    pub(crate) fn env_mut(&mut self) -> &mut HashMap<Vec<u8>, Vec<u8>> {
+        &mut Rc::make_mut(&mut self.shared).env
+    }
+    pub(crate) fn exported(&self) -> &BTreeSet<Vec<u8>> {
+        &self.shared.exported
+    }
+    pub(crate) fn exported_mut(&mut self) -> &mut BTreeSet<Vec<u8>> {
+        &mut Rc::make_mut(&mut self.shared).exported
+    }
+    pub(crate) fn readonly(&self) -> &BTreeSet<Vec<u8>> {
+        &self.shared.readonly
+    }
+    pub(crate) fn readonly_mut(&mut self) -> &mut BTreeSet<Vec<u8>> {
+        &mut Rc::make_mut(&mut self.shared).readonly
+    }
+    pub(crate) fn aliases(&self) -> &HashMap<Box<[u8]>, Box<[u8]>> {
+        &self.shared.aliases
+    }
+    pub(crate) fn aliases_mut(&mut self) -> &mut HashMap<Box<[u8]>, Box<[u8]>> {
+        &mut Rc::make_mut(&mut self.shared).aliases
+    }
+    pub(crate) fn functions(&self) -> &HashMap<Vec<u8>, Rc<crate::syntax::ast::Command>> {
+        &self.shared.functions
+    }
+    pub(crate) fn functions_mut(
+        &mut self,
+    ) -> &mut HashMap<Vec<u8>, Rc<crate::syntax::ast::Command>> {
+        &mut Rc::make_mut(&mut self.shared).functions
+    }
+    pub(crate) fn path_cache(&self) -> &HashMap<Box<[u8]>, Vec<u8>> {
+        &self.shared.path_cache
+    }
+    pub(crate) fn path_cache_mut(&mut self) -> &mut HashMap<Box<[u8]>, Vec<u8>> {
+        &mut Rc::make_mut(&mut self.shared).path_cache
+    }
+    pub(crate) fn history(&self) -> &Vec<Box<[u8]>> {
+        &self.shared.history
+    }
+    pub(crate) fn history_mut(&mut self) -> &mut Vec<Box<[u8]>> {
+        &mut Rc::make_mut(&mut self.shared).history
+    }
+    pub(crate) fn mail_sizes(&self) -> &HashMap<Box<[u8]>, u64> {
+        &self.shared.mail_sizes
+    }
+    pub(crate) fn mail_sizes_mut(&mut self) -> &mut HashMap<Box<[u8]>, u64> {
+        &mut Rc::make_mut(&mut self.shared).mail_sizes
+    }
 }
 
 #[cfg(test)]

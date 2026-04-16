@@ -5,7 +5,7 @@ use crate::shell::state::Shell;
 
 pub(super) fn alias(shell: &mut Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutcome, ShellError> {
     if argv.len() == 1 {
-        let mut items: Vec<_> = shell.aliases.iter().collect();
+        let mut items: Vec<_> = shell.aliases().iter().collect();
         items.sort_by(|a, b| a.0.cmp(b.0));
         for (name, value) in items {
             let line = format_alias_definition(name, value);
@@ -16,8 +16,8 @@ pub(super) fn alias(shell: &mut Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutcom
     let mut status = 0;
     for item in &argv[1..] {
         if let Some((name, value)) = item.split_once_byte(b'=') {
-            shell.aliases.insert(name.into(), value.into());
-        } else if let Some(value) = shell.aliases.get(item.as_slice()) {
+            shell.aliases_mut().insert(name.into(), value.into());
+        } else if let Some(value) = shell.aliases().get(item.as_slice()) {
             let line = format_alias_definition(item, value);
             write_stdout_line(&line);
         } else {
@@ -84,7 +84,7 @@ pub(super) fn unalias(shell: &mut Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutc
         return Err(shell.diagnostic(1, b"unalias: name required"));
     }
     if argv.len() == 2 && argv[1] == b"-a" {
-        shell.aliases.clear();
+        shell.aliases_mut().clear();
         return Ok(BuiltinOutcome::Status(0));
     }
     if argv[1].first() == Some(&b'-') && argv[1] != b"-" && argv[1] != b"--" {
@@ -100,7 +100,7 @@ pub(super) fn unalias(shell: &mut Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutc
     }
     let mut status = 0;
     for item in &argv[start..] {
-        if shell.aliases.remove(item.as_slice()).is_none() {
+        if shell.aliases_mut().remove(item.as_slice()).is_none() {
             let msg = ByteWriter::new()
                 .bytes(b"unalias: ")
                 .bytes(item)
@@ -143,7 +143,7 @@ mod tests {
                 invoke(&mut shell, &[b"alias".to_vec(), b"ll=ls -l".to_vec()]).expect("alias");
                 invoke(&mut shell, &[b"alias".to_vec(), b"la=ls -a".to_vec()]).expect("alias");
                 assert_eq!(
-                    shell.aliases.get(b"ll" as &[u8]).map(|s| &**s),
+                    shell.aliases().get(b"ll" as &[u8]).map(|s| &**s),
                     Some(b"ls -l" as &[u8])
                 );
 
@@ -156,14 +156,14 @@ mod tests {
                 assert!(matches!(outcome, BuiltinOutcome::Status(1)));
 
                 invoke(&mut shell, &[b"unalias".to_vec(), b"ll".to_vec()]).expect("unalias");
-                assert!(!shell.aliases.contains_key(b"ll" as &[u8]));
+                assert!(!shell.aliases().contains_key(b"ll" as &[u8]));
                 let outcome = invoke(&mut shell, &[b"unalias".to_vec(), b"missing".to_vec()])
                     .expect("unalias missing");
                 assert!(matches!(outcome, BuiltinOutcome::Status(1)));
                 let outcome = invoke(&mut shell, &[b"unalias".to_vec(), b"-a".to_vec()])
                     .expect("unalias all");
                 assert!(matches!(outcome, BuiltinOutcome::Status(0)));
-                assert!(shell.aliases.is_empty());
+                assert!(shell.aliases().is_empty());
 
                 let error = invoke(&mut shell, &[b"unalias".to_vec()]).expect_err("missing alias");
                 assert_eq!(error.exit_status(), 1);
@@ -204,7 +204,9 @@ mod tests {
             ) -> auto,],
             || {
                 let mut shell = test_shell();
-                shell.aliases.insert(b"ll"[..].into(), b"ls -la"[..].into());
+                shell
+                    .aliases_mut()
+                    .insert(b"ll"[..].into(), b"ls -la"[..].into());
                 let outcome =
                     invoke(&mut shell, &[b"alias".to_vec(), b"ll".to_vec()]).expect("alias ll");
                 assert!(matches!(outcome, BuiltinOutcome::Status(0)));
@@ -221,7 +223,9 @@ mod tests {
             ) -> auto,],
             || {
                 let mut shell = test_shell();
-                shell.aliases.insert(b"ll"[..].into(), b"ls -la"[..].into());
+                shell
+                    .aliases_mut()
+                    .insert(b"ll"[..].into(), b"ls -la"[..].into());
                 let outcome = invoke(&mut shell, &[b"alias".to_vec()]).expect("alias");
                 assert!(matches!(outcome, BuiltinOutcome::Status(0)));
             },
@@ -246,11 +250,13 @@ mod tests {
     fn unalias_dash_a() {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
-            shell.aliases.insert(b"ll"[..].into(), b"ls -la"[..].into());
+            shell
+                .aliases_mut()
+                .insert(b"ll"[..].into(), b"ls -la"[..].into());
             let outcome =
                 invoke(&mut shell, &[b"unalias".to_vec(), b"-a".to_vec()]).expect("unalias -a");
             assert!(matches!(outcome, BuiltinOutcome::Status(0)));
-            assert!(shell.aliases.is_empty());
+            assert!(shell.aliases().is_empty());
         });
     }
 

@@ -108,7 +108,9 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                shell.env.insert(b"PWD".to_vec(), b"/home/user".to_vec());
+                shell
+                    .env_mut()
+                    .insert(b"PWD".to_vec(), b"/home/user".to_vec());
                 let outcome = invoke(&mut shell, &[b"pwd".to_vec()]).expect("pwd");
                 assert!(matches!(outcome, BuiltinOutcome::Status(0)));
             },
@@ -141,7 +143,9 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                shell.env.insert(b"PWD".to_vec(), b"/home/link".to_vec());
+                shell
+                    .env_mut()
+                    .insert(b"PWD".to_vec(), b"/home/link".to_vec());
                 let outcome = invoke(&mut shell, &[b"pwd".to_vec()]).expect("pwd");
                 assert!(matches!(outcome, BuiltinOutcome::Status(0)));
             },

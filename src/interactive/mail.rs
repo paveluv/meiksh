@@ -43,13 +43,17 @@ pub(super) fn check_mail(shell: &mut Shell) {
             continue;
         }
         let size = sys::fs::stat_path(&path).map(|st| st.size).unwrap_or(0);
-        let prev = shell.mail_sizes.get(path.as_slice()).copied().unwrap_or(0);
+        let prev = shell
+            .mail_sizes()
+            .get(path.as_slice())
+            .copied()
+            .unwrap_or(0);
         if size > prev {
             let msg = custom_msg.unwrap_or_else(|| b"you have mail".to_vec());
             let _ = sys::fd_io::write_all_fd(sys::constants::STDERR_FILENO, &msg);
             let _ = sys::fd_io::write_all_fd(sys::constants::STDERR_FILENO, b"\n");
         }
-        shell.mail_sizes.insert(path.into(), size);
+        shell.mail_sizes_mut().insert(path.into(), size);
     }
 }
 

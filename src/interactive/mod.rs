@@ -29,11 +29,9 @@ pub(crate) fn load_env_file(shell: &mut Shell) -> Result<(), ShellError> {
     clippy::disallowed_methods
 )]
 pub(super) mod test_support {
-    use crate::shell::options::ShellOptions;
     use crate::shell::state::Shell;
     use crate::sys;
     use crate::sys::test_support::{ArgMatcher, TraceEntry, TraceResult, t};
-    use std::collections::{BTreeMap, BTreeSet, HashMap};
 
     pub(crate) fn read_line_trace(input: &[u8]) -> Vec<TraceEntry> {
         input
@@ -52,39 +50,6 @@ pub(super) mod test_support {
     }
 
     pub(crate) fn test_shell() -> Shell {
-        Shell {
-            options: ShellOptions::default(),
-            shell_name: b"meiksh"[..].into(),
-            env: HashMap::new(),
-            exported: BTreeSet::new(),
-            readonly: BTreeSet::new(),
-            aliases: HashMap::new(),
-            functions: HashMap::new(),
-            positional: Vec::new(),
-            last_status: 0,
-            last_background: None,
-            running: true,
-            jobs: Vec::new(),
-            known_pid_statuses: HashMap::new(),
-            known_job_statuses: HashMap::new(),
-            trap_actions: BTreeMap::new(),
-            ignored_on_entry: BTreeSet::new(),
-            subshell_saved_traps: None,
-            loop_depth: 0,
-            function_depth: 0,
-            source_depth: 0,
-            pending_control: None,
-            interactive: false,
-            errexit_suppressed: false,
-            owns_terminal: false,
-            in_subshell: false,
-            wait_was_interrupted: false,
-            pid: 0,
-            lineno: 0,
-            path_cache: std::collections::HashMap::new(),
-            history: Vec::new(),
-            mail_last_check: 0,
-            mail_sizes: std::collections::HashMap::new(),
-        }
+        crate::shell::test_support::test_shell()
     }
 }
