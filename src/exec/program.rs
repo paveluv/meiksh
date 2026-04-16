@@ -202,7 +202,7 @@ mod tests {
     #[test]
     fn lineno_expand_error_on_line_3() {
         run_trace(
-            trace_entries![..vec![t_stderr("meiksh: line 3: must be set")]],
+            trace_entries![..vec![t_stderr("meiksh: line 3: NOVAR: must be set")]],
             || {
                 let mut shell = test_shell();
                 let _ = shell.execute_string(b"true\ntrue\n: ${NOVAR?must be set}");

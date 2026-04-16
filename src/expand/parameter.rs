@@ -65,7 +65,7 @@ pub(super) fn expand_dollar<C: Context>(
                         depth -= 1;
                         if depth == 0 {
                             let command = source[2..index].to_vec();
-                            let output = ctx.command_substitute(&command)?;
+                            let output = ctx.command_substitute_raw(&command)?;
                             let trimmed = trim_trailing_newlines(&output).to_vec();
                             return Ok((Expansion::One(trimmed), index + 1));
                         }
@@ -182,6 +182,78 @@ pub(super) fn expand_parameter_dollar<C: Context>(
         }
         _ => Ok((b"$".to_vec(), 1)),
     }
+}
+
+pub(crate) fn parse_dollar_single_quoted_body(body: &[u8]) -> Vec<u8> {
+    let mut result = Vec::new();
+    let mut index = 0;
+    while index < body.len() {
+        match body[index] {
+            b'\\' => {
+                index += 1;
+                if index >= body.len() {
+                    break;
+                }
+                let ch = body[index];
+                match ch {
+                    b'"' => result.push(b'"'),
+                    b'\'' => result.push(b'\''),
+                    b'\\' => result.push(b'\\'),
+                    b'a' => result.push(0x07),
+                    b'b' => result.push(0x08),
+                    b'e' => result.push(0x1b),
+                    b'f' => result.push(0x0c),
+                    b'n' => result.push(b'\n'),
+                    b'r' => result.push(b'\r'),
+                    b't' => result.push(b'\t'),
+                    b'v' => result.push(0x0b),
+                    b'c' => {
+                        index += 1;
+                        if index >= body.len() {
+                            break;
+                        }
+                        if body[index] == b'\\' && index + 1 < body.len() {
+                            index += 1;
+                            result.push(control_escape(body[index]));
+                        } else {
+                            result.push(control_escape(body[index]));
+                        }
+                    }
+                    b'x' => {
+                        let (value, consumed) =
+                            parse_variable_base_escape(&body[(index + 1)..], 16, 2);
+                        if consumed == 0 {
+                            result.push(b'x');
+                        } else {
+                            result.push(value);
+                            index += consumed;
+                        }
+                    }
+                    b'0'..=b'7' => {
+                        let mut digits = vec![ch];
+                        let mut consumed = 0usize;
+                        while consumed < 2
+                            && index + 1 + consumed < body.len()
+                            && matches!(body[index + 1 + consumed], b'0'..=b'7')
+                        {
+                            digits.push(body[index + 1 + consumed]);
+                            consumed += 1;
+                        }
+                        let value = parse_octal_digits(&digits);
+                        result.push(value);
+                        index += consumed;
+                    }
+                    other => result.push(other),
+                }
+                index += 1;
+            }
+            _ => {
+                result.push(body[index]);
+                index += 1;
+            }
+        }
+    }
+    result
 }
 
 pub(super) fn parse_dollar_single_quoted(source: &[u8]) -> Result<(Vec<u8>, usize), ExpandError> {
@@ -983,6 +1055,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"${10}".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -994,6 +1067,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"$10".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 }
             )
@@ -1005,6 +1079,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"${#10}".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -1017,6 +1092,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"$*".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 }
             )
@@ -1039,6 +1115,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"\"$*\"".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -1050,6 +1127,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"${UNSET-word}".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -1061,6 +1139,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"${UNSET:-word}".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -1072,6 +1151,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"${EMPTY-word}".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -1083,6 +1163,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"${EMPTY:-word}".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -1094,6 +1175,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"${USER:+alt}".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -1105,6 +1187,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"${UNSET+alt}".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -1116,6 +1199,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"${NEW:=value}".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -1131,6 +1215,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"${#}".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 }
             )
@@ -1142,6 +1227,7 @@ mod tests {
             &mut ctx,
             &Word {
                 raw: b"${UNSET:?boom}".as_ref().into(),
+                parts: Box::new([]),
                 line: 0,
             },
         )
@@ -1152,6 +1238,7 @@ mod tests {
             &mut ctx,
             &Word {
                 raw: b"${UNSET:?$'unterminated}".as_ref().into(),
+                parts: Box::new([]),
                 line: 0,
             },
         )
@@ -1162,6 +1249,7 @@ mod tests {
             &mut ctx,
             &Word {
                 raw: b"${MISSING?$'unterminated}".as_ref().into(),
+                parts: Box::new([]),
                 line: 0,
             },
         )
@@ -1178,6 +1266,7 @@ mod tests {
             &mut ctx,
             &Word {
                 raw: b"$UNSET".as_ref().into(),
+                parts: Box::new([]),
                 line: 0,
             },
         )
@@ -1188,6 +1277,7 @@ mod tests {
             &mut ctx,
             &Word {
                 raw: b"${UNSET}".as_ref().into(),
+                parts: Box::new([]),
                 line: 0,
             },
         )
@@ -1198,6 +1288,7 @@ mod tests {
             &mut ctx,
             &Word {
                 raw: b"$9".as_ref().into(),
+                parts: Box::new([]),
                 line: 0,
             },
         )
@@ -1209,6 +1300,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"${UNSET-word}".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -1220,6 +1312,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"\"$*\"".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -1556,6 +1649,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"${PATHNAME#*/}".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -1567,6 +1661,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"${PATHNAME##*/}".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -1578,6 +1673,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"${PATHNAME%/*}".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -1589,6 +1685,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"${PATHNAME%%/*}".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -1600,6 +1697,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"${PATHNAME#\"src/\"}".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -1611,6 +1709,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"${DOTTED#*.}".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -1622,6 +1721,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"${DOTTED##*.}".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -1633,6 +1733,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"${DOTTED%.*}".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -1644,6 +1745,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"${DOTTED%%.*}".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -1655,6 +1757,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"${DOTTED#\"*.\"}".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -1666,6 +1769,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"${DOTTED%}".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -1677,6 +1781,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"${MISSING%%*.}".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -1695,6 +1800,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"${VAR:-\"a}b\"}".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -1707,6 +1813,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"${VAR:-$(echo ok)}".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -1719,6 +1826,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"${VAR:-$((1+2))}".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -1732,6 +1840,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"${VAR:-${INNER}}".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -1744,6 +1853,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"${VAR:-`echo hi`}".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -1756,6 +1866,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"${VAR:-'a}b'}".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -1768,6 +1879,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"${VAR:-\\}}".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -1783,6 +1895,7 @@ mod tests {
             &mut ctx,
             &Word {
                 raw: b"${UNSET:?custom error}".as_ref().into(),
+                parts: Box::new([]),
                 line: 0,
             },
         )
@@ -1793,6 +1906,7 @@ mod tests {
             &mut ctx,
             &Word {
                 raw: b"${UNSET?also error}".as_ref().into(),
+                parts: Box::new([]),
                 line: 0,
             },
         )
@@ -1816,6 +1930,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"${VAR:-$((2+3))}".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -1828,6 +1943,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"${VAR:-$(echo deep)}".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -1840,6 +1956,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"${VAR:-`echo bt`}".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -1852,6 +1969,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"${VAR:-\"inside\"}".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -1869,6 +1987,7 @@ mod tests {
             &mut ctx,
             &Word {
                 raw: b"${EMPTY:?null or unset}".as_ref().into(),
+                parts: Box::new([]),
                 line: 0,
             },
         )
@@ -1879,6 +1998,7 @@ mod tests {
             &mut ctx,
             &Word {
                 raw: b"\"${EMPTY?not an error}\"".as_ref().into(),
+                parts: Box::new([]),
                 line: 0,
             },
         )
@@ -1889,6 +2009,7 @@ mod tests {
             &mut ctx,
             &Word {
                 raw: b"${NOEXIST?custom msg}".as_ref().into(),
+                parts: Box::new([]),
                 line: 0,
             },
         )
@@ -1906,6 +2027,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"${V:-$((1+(2*3)))}".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -1918,6 +2040,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"${V:-$(echo (hi))}".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -1930,6 +2053,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"${V:-`echo \\\\x`}".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -1942,6 +2066,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"${V:-\"q\\}x\"}".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )

@@ -199,6 +199,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"$WORDS".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -210,6 +211,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"$DELIMS".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -221,6 +223,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"$EMPTY".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -380,6 +383,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"$@".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 }
             )
@@ -393,6 +397,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"$@".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 }
             )
@@ -424,6 +429,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"$WS".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 }
             )
@@ -441,6 +447,7 @@ mod tests {
             &mut ctx,
             &Word {
                 raw: b"\"$@\"".as_ref().into(),
+                parts: Box::new([]),
                 line: 0,
             },
         )
@@ -468,6 +475,7 @@ mod tests {
             &mut ctx,
             &Word {
                 raw: b"\"$@\"".as_ref().into(),
+                parts: Box::new([]),
                 line: 0,
             },
         )
@@ -479,6 +487,7 @@ mod tests {
             &mut ctx,
             &Word {
                 raw: b"\"$@\"".as_ref().into(),
+                parts: Box::new([]),
                 line: 0,
             },
         )
@@ -495,6 +504,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"$V".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0,
                 },
             )

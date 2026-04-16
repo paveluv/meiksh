@@ -4,6 +4,7 @@ use crate::bstr;
 use crate::syntax::ast::Word;
 
 use super::core::{Context, ExpandError};
+use super::expand_parts::{ExpandOutput, ExpandResult, expand_parts};
 use super::model::{
     ExpandedWord, Expansion, Field, QuoteState, Segment, flatten_segments, is_glob_byte,
     push_segment, push_segment_slice, render_pattern_from_segments, split_fields_from_segments,
@@ -31,6 +32,7 @@ pub(crate) fn expand_word_as_declaration_assignment<C: Context>(
     let name = &word.raw[..word.raw.len() - value_raw.len()];
     let value_word = Word {
         raw: value_raw.into(),
+        parts: Box::new([]),
         line: word.line,
     };
     let expanded_value = expand_word_text_assignment(ctx, &value_word, true)?;
@@ -71,6 +73,35 @@ pub(crate) fn expand_word<C: Context>(
     word: &Word,
 ) -> Result<Vec<Vec<u8>>, ExpandError> {
     ctx.set_lineno(word.line);
+
+    if !word.parts.is_empty() {
+        let ifs = ctx
+            .env_var(b"IFS")
+            .map(|c| c.into_owned())
+            .unwrap_or_else(|| b" \t\n".to_vec());
+        let output = expand_parts(ctx, &word.raw, &word.parts, &ifs, false)?;
+        let result = output.finish();
+        return match result {
+            ExpandResult::Fields(fields) => Ok(fields),
+            ExpandResult::FieldsWithGlob(entries) => {
+                let mut result = Vec::new();
+                for entry in entries {
+                    if entry.has_glob && ctx.pathname_expansion_enabled() {
+                        let matches = expand_pathname(&entry.text);
+                        if matches.is_empty() {
+                            result.push(entry.text);
+                        } else {
+                            result.extend(matches);
+                        }
+                    } else {
+                        result.push(entry.text);
+                    }
+                }
+                Ok(result)
+            }
+        };
+    }
+
     let expanded = expand_raw(ctx, &word.raw)?;
 
     if expanded.has_at_expansion {
@@ -126,6 +157,25 @@ pub(crate) fn expand_redirect_word<C: Context>(
     word: &Word,
 ) -> Result<Vec<u8>, ExpandError> {
     ctx.set_lineno(word.line);
+
+    if !word.parts.is_empty() {
+        let ifs = ctx
+            .env_var(b"IFS")
+            .map(|c| c.into_owned())
+            .unwrap_or_else(|| b" \t\n".to_vec());
+        let output = expand_parts(ctx, &word.raw, &word.parts, &ifs, false)?;
+        let result = output.finish();
+        return Ok(match result {
+            ExpandResult::Fields(fields) => bstr::join_bstrings(&fields, b" "),
+            ExpandResult::FieldsWithGlob(entries) => {
+                bstr::join_bstrings(
+                    &entries.into_iter().map(|e| e.text).collect::<Vec<_>>(),
+                    b" ",
+                )
+            }
+        });
+    }
+
     let expanded = expand_raw(ctx, &word.raw)?;
 
     if expanded.segments.is_empty() {
@@ -203,6 +253,18 @@ pub(crate) fn expand_word_text<C: Context>(
     word: &Word,
 ) -> Result<Vec<u8>, ExpandError> {
     ctx.set_lineno(word.line);
+
+    if !word.parts.is_empty() {
+        let mut output = ExpandOutput::new();
+        super::expand_parts::expand_parts_into(ctx, &word.raw, &word.parts, b"", true, &mut output)?;
+        let mut result = Vec::new();
+        for f in &output.fields {
+            result.extend_from_slice(f);
+        }
+        result.extend_from_slice(&output.current);
+        return Ok(result);
+    }
+
     expand_word_text_assignment(ctx, word, false)
 }
 
@@ -211,6 +273,12 @@ pub(crate) fn expand_word_pattern<C: Context>(
     word: &Word,
 ) -> Result<Vec<u8>, ExpandError> {
     ctx.set_lineno(word.line);
+
+    if !word.parts.is_empty() {
+        let expanded = expand_raw(ctx, &word.raw)?;
+        return Ok(render_pattern_from_segments(&expanded.segments));
+    }
+
     let expanded = expand_raw(ctx, &word.raw)?;
     Ok(render_pattern_from_segments(&expanded.segments))
 }
@@ -220,6 +288,18 @@ pub(crate) fn expand_assignment_value<C: Context>(
     word: &Word,
 ) -> Result<Vec<u8>, ExpandError> {
     ctx.set_lineno(word.line);
+
+    if !word.parts.is_empty() {
+        let mut output = ExpandOutput::new();
+        super::expand_parts::expand_parts_into(ctx, &word.raw, &word.parts, b"", true, &mut output)?;
+        let mut result = Vec::new();
+        for f in &output.fields {
+            result.extend_from_slice(f);
+        }
+        result.extend_from_slice(&output.current);
+        return Ok(result);
+    }
+
     expand_word_text_assignment(ctx, word, true)
 }
 
@@ -465,7 +545,7 @@ pub(super) fn expand_raw<C: Context>(ctx: &mut C, raw: &[u8]) -> Result<Expanded
                             }
                             index += 1;
                             let command = scan_backtick_command(raw, &mut index, true)?;
-                            let output = ctx.command_substitute(&command)?;
+                            let output = ctx.command_substitute_raw(&command)?;
                             let trimmed = trim_trailing_newlines(&output).to_vec();
                             push_segment(&mut segments, trimmed, QuoteState::Quoted);
                         }
@@ -521,7 +601,7 @@ pub(super) fn expand_raw<C: Context>(ctx: &mut C, raw: &[u8]) -> Result<Expanded
             b'`' => {
                 index += 1;
                 let command = scan_backtick_command(raw, &mut index, false)?;
-                let output = ctx.command_substitute(&command)?;
+                let output = ctx.command_substitute_raw(&command)?;
                 let trimmed = trim_trailing_newlines(&output).to_vec();
                 push_segment(&mut segments, trimmed, QuoteState::Expanded);
             }
@@ -668,7 +748,7 @@ pub(crate) fn expand_here_document<C: Context>(
             b'`' => {
                 index += 1;
                 let command = scan_backtick_command(text, &mut index, true)?;
-                let output = ctx.command_substitute(&command)?;
+                let output = ctx.command_substitute_raw(&command)?;
                 result.extend_from_slice(trim_trailing_newlines(&output));
             }
             _ => {
@@ -702,6 +782,7 @@ mod tests {
             &mut ctx,
             &Word {
                 raw: b"~/$USER".as_ref().into(),
+                parts: Box::new([]),
                 line: 0,
             },
         )
@@ -717,6 +798,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"$((1 + 2 * 3))".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -734,10 +816,12 @@ mod tests {
                 &[
                     Word {
                         raw: b"$WORDS".as_ref().into(),
+                        parts: Box::new([]),
                         line: 0
                     },
                     Word {
                         raw: b"$(printf hi)".as_ref().into(),
+                        parts: Box::new([]),
                         line: 0
                     },
                 ],
@@ -761,6 +845,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"\"$0 $1\"".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -772,6 +857,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"\\$HOME".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -783,6 +869,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"a\\ b".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -794,6 +881,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"'literal text'".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -805,6 +893,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"\"cost:\\$USER\"".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -816,6 +905,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"$'a b'".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -827,6 +917,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"$'line\\nnext'".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -838,6 +929,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"\"$'a b'\"".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -865,6 +957,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: raw.into(),
+                    parts: Box::new([]),
                     line: 0,
                 },
             )
@@ -881,6 +974,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: raw.into(),
+                    parts: Box::new([]),
                     line: 0,
                 },
             )
@@ -966,6 +1060,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"\"$@\"".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -979,6 +1074,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"\"$@\"".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -992,6 +1088,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"\"$@\"".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -1009,6 +1106,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"\"pre$@suf\"".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -1022,6 +1120,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"\"[$@]\"".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -1035,6 +1134,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"\"pre$@suf\"".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -1052,6 +1152,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"\"$@$@\"".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -1070,6 +1171,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"\"$*\"".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -1083,6 +1185,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"\"$*\"".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -1096,6 +1199,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"\"$*\"".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -1112,6 +1216,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"`echo hello`".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -1123,6 +1228,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"\"`echo hello`\"".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -1139,6 +1245,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"`echo \\$USER`".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -1150,6 +1257,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"\"`echo \\$USER`\"".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -1175,6 +1283,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"\"\"\"$@\"".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -1191,6 +1300,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"\"hello `echo world`\"".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -1238,6 +1348,7 @@ mod tests {
             &mut ctx,
             &Word {
                 raw: b"${NULL:?is null}".as_ref().into(),
+                parts: Box::new([]),
                 line: 0,
             },
         )
@@ -1249,6 +1360,7 @@ mod tests {
             &mut ctx,
             &Word {
                 raw: b"${NULL:?$NOVAR}".as_ref().into(),
+                parts: Box::new([]),
                 line: 0,
             },
         )
@@ -1259,6 +1371,7 @@ mod tests {
             &mut ctx,
             &Word {
                 raw: b"${NOEXIST?$NOVAR}".as_ref().into(),
+                parts: Box::new([]),
                 line: 0,
             },
         )
@@ -1273,6 +1386,7 @@ mod tests {
             &mut ctx,
             &Word {
                 raw: b"${NOVAR?}".as_ref().into(),
+                parts: Box::new([]),
                 line: 0,
             },
         )
@@ -1285,6 +1399,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"${SET:?no error}".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -1296,6 +1411,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"${SET?no error}".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -1307,6 +1423,7 @@ mod tests {
             &mut ctx,
             &Word {
                 raw: b"${NOVAR:?}".as_ref().into(),
+                parts: Box::new([]),
                 line: 0,
             },
         )
@@ -1324,6 +1441,7 @@ mod tests {
             &mut ctx,
             &Word {
                 raw: b"\"\\a\\b\\c\"".as_ref().into(),
+                parts: Box::new([]),
                 line: 0,
             },
         )
@@ -1339,6 +1457,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"\"\\$\"".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -1350,6 +1469,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"\"\\\\\"".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -1361,6 +1481,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"\"\\\"\"".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -1372,6 +1493,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"\"\\`\"".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0,
                 },
             )
@@ -1387,6 +1509,7 @@ mod tests {
             &mut ctx,
             &Word {
                 raw: b"\"ab\\\ncd\"".as_ref().into(),
+                parts: Box::new([]),
                 line: 0,
             },
         )
@@ -1401,6 +1524,7 @@ mod tests {
             &mut ctx,
             &Word {
                 raw: b"~testuser/bin".as_ref().into(),
+                parts: Box::new([]),
                 line: 0,
             },
         )
@@ -1415,6 +1539,7 @@ mod tests {
             &mut ctx,
             &Word {
                 raw: b"~nosuchuser/dir".as_ref().into(),
+                parts: Box::new([]),
                 line: 0,
             },
         )
@@ -1429,6 +1554,7 @@ mod tests {
             &mut ctx,
             &Word {
                 raw: b"~testuser".as_ref().into(),
+                parts: Box::new([]),
                 line: 0,
             },
         )
@@ -1443,6 +1569,7 @@ mod tests {
             &mut ctx,
             &Word {
                 raw: b"~/bin:~testuser/lib".as_ref().into(),
+                parts: Box::new([]),
                 line: 0,
             },
         )
@@ -1481,6 +1608,7 @@ mod tests {
             &mut ctx,
             &Word {
                 raw: b"\"abc\\".as_ref().into(),
+                parts: Box::new([]),
                 line: 0,
             },
         );
@@ -1494,6 +1622,7 @@ mod tests {
             &mut ctx,
             &Word {
                 raw: b"~'user'".as_ref().into(),
+                parts: Box::new([]),
                 line: 0,
             },
         )
@@ -1508,6 +1637,7 @@ mod tests {
             &mut ctx,
             &Word {
                 raw: b"~/a:'literal:colon'".as_ref().into(),
+                parts: Box::new([]),
                 line: 0,
             },
         )
@@ -1525,6 +1655,7 @@ mod tests {
                     &mut ctx,
                     &Word {
                         raw: b"''\"$@\"".as_ref().into(),
+                        parts: Box::new([]),
                         line: 0
                     },
                 )
@@ -1542,6 +1673,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"$UNSET_VAR".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0,
                 },
             )
@@ -1586,6 +1718,7 @@ mod tests {
             &mut ctx,
             &Word {
                 raw: b"'hello\nworld'".as_ref().into(),
+                parts: Box::new([]),
                 line: 1,
             },
         )
@@ -1600,6 +1733,7 @@ mod tests {
             &mut ctx,
             &Word {
                 raw: b"\"hello\nworld\"".as_ref().into(),
+                parts: Box::new([]),
                 line: 1,
             },
         )
@@ -1614,6 +1748,7 @@ mod tests {
             &mut ctx,
             &Word {
                 raw: b"\"a\\\nb\"".as_ref().into(),
+                parts: Box::new([]),
                 line: 1,
             },
         )
@@ -1628,6 +1763,7 @@ mod tests {
             &mut ctx,
             &Word {
                 raw: b"\\a\\b".as_ref().into(),
+                parts: Box::new([]),
                 line: 1,
             },
         )
@@ -1642,6 +1778,7 @@ mod tests {
             &mut ctx,
             &Word {
                 raw: b"a\\\nb".as_ref().into(),
+                parts: Box::new([]),
                 line: 1,
             },
         )
@@ -1657,6 +1794,7 @@ mod tests {
             &mut ctx,
             &Word {
                 raw: b"a\\".as_ref().into(),
+                parts: Box::new([]),
                 line: 1,
             },
         )
@@ -1671,6 +1809,7 @@ mod tests {
             &mut ctx,
             &Word {
                 raw: b"hello\nworld".as_ref().into(),
+                parts: Box::new([]),
                 line: 1,
             },
         )
@@ -1687,6 +1826,7 @@ mod tests {
             &mut ctx,
             &Word {
                 raw: b"$((nosuch_var))".as_ref().into(),
+                parts: Box::new([]),
                 line: 0,
             },
         );

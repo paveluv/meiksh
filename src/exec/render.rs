@@ -348,6 +348,7 @@ mod tests {
             let simple = SimpleCommand {
                 words: vec![Word {
                     raw: b"echo".to_vec().into(),
+                    parts: Box::new([]),
                     line: 0,
                 }]
                 .into_boxed_slice(),
@@ -357,6 +358,7 @@ mod tests {
                         kind: RedirectionKind::ReadWrite,
                         target: Word {
                             raw: b"rw".to_vec().into(),
+                            parts: Box::new([]),
                             line: 0,
                         },
                         here_doc: None,
@@ -366,6 +368,7 @@ mod tests {
                         kind: RedirectionKind::DupInput,
                         target: Word {
                             raw: b"5".to_vec().into(),
+                            parts: Box::new([]),
                             line: 0,
                         },
                         here_doc: None,
@@ -375,6 +378,7 @@ mod tests {
                         kind: RedirectionKind::DupOutput,
                         target: Word {
                             raw: b"-".to_vec().into(),
+                            parts: Box::new([]),
                             line: 0,
                         },
                         here_doc: None,
@@ -402,6 +406,7 @@ mod tests {
                             commands: vec![Command::Simple(SimpleCommand {
                                 words: vec![Word {
                                     raw: b"true".to_vec().into(),
+                                    parts: Box::new([]),
                                     line: 0,
                                 }]
                                 .into_boxed_slice(),
@@ -447,12 +452,14 @@ mod tests {
                     name: b"X".to_vec().into(),
                     value: Word {
                         raw: b"1".to_vec().into(),
+                        parts: Box::new([]),
                         line: 0,
                     },
                 }]
                 .into_boxed_slice(),
                 words: vec![Word {
                     raw: b"echo".to_vec().into(),
+                    parts: Box::new([]),
                     line: 0,
                 }]
                 .into_boxed_slice(),
@@ -461,6 +468,7 @@ mod tests {
                     kind: RedirectionKind::Write,
                     target: Word {
                         raw: b"out".to_vec().into(),
+                        parts: Box::new([]),
                         line: 0,
                     },
                     here_doc: None,
@@ -475,6 +483,7 @@ mod tests {
                         name: b"A".to_vec().into(),
                         value: Word {
                             raw: b"1".to_vec().into(),
+                            parts: Box::new([]),
                             line: 0,
                         },
                     },
@@ -482,6 +491,7 @@ mod tests {
                         name: b"B".to_vec().into(),
                         value: Word {
                             raw: b"2".to_vec().into(),
+                            parts: Box::new([]),
                             line: 0,
                         },
                     },
@@ -522,6 +532,7 @@ mod tests {
                                 commands: vec![Command::Simple(SimpleCommand {
                                     words: vec![Word {
                                         raw: b"true".to_vec().into(),
+                                        parts: Box::new([]),
                                         line: 0,
                                     }]
                                     .into_boxed_slice(),
@@ -542,6 +553,7 @@ mod tests {
                                 commands: vec![Command::Simple(SimpleCommand {
                                     words: vec![Word {
                                         raw: b"false".to_vec().into(),
+                                        parts: Box::new([]),
                                         line: 0,
                                     }]
                                     .into_boxed_slice(),
@@ -575,6 +587,7 @@ mod tests {
                     commands: vec![Command::Simple(SimpleCommand {
                         words: vec![Word {
                             raw: b"true".to_vec().into(),
+                            parts: Box::new([]),
                             line: 0,
                         }]
                         .into_boxed_slice(),
@@ -590,6 +603,7 @@ mod tests {
                         commands: vec![Command::Simple(SimpleCommand {
                             words: vec![Word {
                                 raw: b"false".to_vec().into(),
+                                parts: Box::new([]),
                                 line: 0,
                             }]
                             .into_boxed_slice(),
@@ -660,6 +674,7 @@ mod tests {
                     commands: vec![Command::Simple(SimpleCommand {
                         words: vec![Word {
                             raw: b"false".to_vec().into(),
+                            parts: Box::new([]),
                             line: 0,
                         }]
                         .into_boxed_slice(),
@@ -675,6 +690,7 @@ mod tests {
                         commands: vec![Command::Simple(SimpleCommand {
                             words: vec![Word {
                                 raw: b"true".to_vec().into(),
+                                parts: Box::new([]),
                                 line: 0,
                             }]
                             .into_boxed_slice(),
@@ -697,6 +713,7 @@ mod tests {
                 items: Some(
                     vec![Word {
                         raw: b"a".to_vec().into(),
+                        parts: Box::new([]),
                         line: 0,
                     }]
                     .into_boxed_slice(),
@@ -710,6 +727,7 @@ mod tests {
                                 commands: vec![Command::Simple(SimpleCommand {
                                     words: vec![Word {
                                         raw: b"echo".to_vec().into(),
+                                        parts: Box::new([]),
                                         line: 0,
                                     }]
                                     .into_boxed_slice(),
@@ -731,11 +749,13 @@ mod tests {
             let case_cmd = Command::Case(CaseCommand {
                 word: Word {
                     raw: b"val".to_vec().into(),
+                    parts: Box::new([]),
                     line: 0,
                 },
                 arms: vec![crate::syntax::ast::CaseArm {
                     patterns: vec![Word {
                         raw: b"a".to_vec().into(),
+                        parts: Box::new([]),
                         line: 0,
                     }]
                     .into_boxed_slice(),
@@ -748,6 +768,7 @@ mod tests {
                                     commands: vec![Command::Simple(SimpleCommand {
                                         words: vec![Word {
                                             raw: b"echo".to_vec().into(),
+                                            parts: Box::new([]),
                                             line: 0,
                                         }]
                                         .into_boxed_slice(),
@@ -783,6 +804,7 @@ mod tests {
                             commands: vec![Command::Simple(SimpleCommand {
                                 words: vec![Word {
                                     raw: b"true".to_vec().into(),
+                                    parts: Box::new([]),
                                     line: 0,
                                 }]
                                 .into_boxed_slice(),
@@ -828,6 +850,7 @@ mod tests {
                             commands: vec![Command::Simple(SimpleCommand {
                                 words: vec![Word {
                                     raw: b"false".to_vec().into(),
+                                    parts: Box::new([]),
                                     line: 0,
                                 }]
                                 .into_boxed_slice(),
@@ -865,6 +888,7 @@ mod tests {
                             commands: vec![Command::Simple(SimpleCommand {
                                 words: vec![Word {
                                     raw: b"echo".to_vec().into(),
+                                    parts: Box::new([]),
                                     line: 0,
                                 }]
                                 .into_boxed_slice(),
@@ -886,14 +910,17 @@ mod tests {
                     vec![
                         Word {
                             raw: b"a".to_vec().into(),
+                            parts: Box::new([]),
                             line: 0,
                         },
                         Word {
                             raw: b"b".to_vec().into(),
+                            parts: Box::new([]),
                             line: 0,
                         },
                         Word {
                             raw: b"c".to_vec().into(),
+                            parts: Box::new([]),
                             line: 0,
                         },
                     ]
@@ -926,6 +953,7 @@ mod tests {
                             commands: vec![Command::Simple(SimpleCommand {
                                 words: vec![Word {
                                     raw: b"echo".to_vec().into(),
+                                    parts: Box::new([]),
                                     line: 0,
                                 }]
                                 .into_boxed_slice(),
@@ -943,6 +971,7 @@ mod tests {
             let case_cmd = CaseCommand {
                 word: Word {
                     raw: b"val".to_vec().into(),
+                    parts: Box::new([]),
                     line: 0,
                 },
                 arms: vec![
@@ -950,10 +979,12 @@ mod tests {
                         patterns: vec![
                             Word {
                                 raw: b"a".to_vec().into(),
+                                parts: Box::new([]),
                                 line: 0,
                             },
                             Word {
                                 raw: b"b".to_vec().into(),
+                                parts: Box::new([]),
                                 line: 0,
                             },
                         ]
@@ -964,6 +995,7 @@ mod tests {
                     crate::syntax::ast::CaseArm {
                         patterns: vec![Word {
                             raw: b"c".to_vec().into(),
+                            parts: Box::new([]),
                             line: 0,
                         }]
                         .into_boxed_slice(),
@@ -992,6 +1024,7 @@ mod tests {
                 kind: RedirectionKind::Read,
                 target: Word {
                     raw: b"input.txt".to_vec().into(),
+                    parts: Box::new([]),
                     line: 0,
                 },
                 here_doc: None,
@@ -1005,6 +1038,7 @@ mod tests {
                 kind: RedirectionKind::ClobberWrite,
                 target: Word {
                     raw: b"out.txt".to_vec().into(),
+                    parts: Box::new([]),
                     line: 0,
                 },
                 here_doc: None,
@@ -1018,6 +1052,7 @@ mod tests {
                 kind: RedirectionKind::Append,
                 target: Word {
                     raw: b"log".to_vec().into(),
+                    parts: Box::new([]),
                     line: 0,
                 },
                 here_doc: None,
@@ -1031,6 +1066,7 @@ mod tests {
                 kind: RedirectionKind::HereDoc,
                 target: Word {
                     raw: b"EOF".to_vec().into(),
+                    parts: Box::new([]),
                     line: 0,
                 },
                 here_doc: Some(HereDoc {
@@ -1050,6 +1086,7 @@ mod tests {
                 kind: RedirectionKind::HereDoc,
                 target: Word {
                     raw: b"END".to_vec().into(),
+                    parts: Box::new([]),
                     line: 0,
                 },
                 here_doc: Some(HereDoc {
@@ -1095,6 +1132,7 @@ mod tests {
             let simple = SimpleCommand {
                 words: vec![Word {
                     raw: b"cat".to_vec().into(),
+                    parts: Box::new([]),
                     line: 0,
                 }]
                 .into_boxed_slice(),
@@ -1104,6 +1142,7 @@ mod tests {
                         kind: RedirectionKind::HereDoc,
                         target: Word {
                             raw: b"EOF1".to_vec().into(),
+                            parts: Box::new([]),
                             line: 0,
                         },
                         here_doc: Some(HereDoc {
@@ -1119,6 +1158,7 @@ mod tests {
                         kind: RedirectionKind::HereDoc,
                         target: Word {
                             raw: b"EOF2".to_vec().into(),
+                            parts: Box::new([]),
                             line: 0,
                         },
                         here_doc: Some(HereDoc {
@@ -1151,6 +1191,7 @@ mod tests {
                     Command::Simple(SimpleCommand {
                         words: vec![Word {
                             raw: b"cat".to_vec().into(),
+                            parts: Box::new([]),
                             line: 0,
                         }]
                         .into_boxed_slice(),
@@ -1159,6 +1200,7 @@ mod tests {
                     Command::Simple(SimpleCommand {
                         words: vec![Word {
                             raw: b"grep".to_vec().into(),
+                            parts: Box::new([]),
                             line: 0,
                         }]
                         .into_boxed_slice(),
@@ -1179,6 +1221,7 @@ mod tests {
                 Box::new(Command::Simple(SimpleCommand {
                     words: vec![Word {
                         raw: b"echo".to_vec().into(),
+                        parts: Box::new([]),
                         line: 0,
                     }]
                     .into_boxed_slice(),
@@ -1189,6 +1232,7 @@ mod tests {
                     kind: RedirectionKind::Write,
                     target: Word {
                         raw: b"out.txt".to_vec().into(),
+                        parts: Box::new([]),
                         line: 0,
                     },
                     here_doc: None,
@@ -1211,6 +1255,7 @@ mod tests {
                     kind: RedirectionKind::Append,
                     target: Word {
                         raw: b"err.log".to_vec().into(),
+                        parts: Box::new([]),
                         line: 0,
                     },
                     here_doc: None,

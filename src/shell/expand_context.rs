@@ -1,7 +1,9 @@
 use std::borrow::Cow;
+use std::rc::Rc;
 
 use crate::bstr;
 use crate::expand::core::{Context, ExpandError};
+use crate::syntax::ast::Program;
 use crate::sys;
 
 use super::error::var_error_message;
@@ -68,8 +70,8 @@ impl Context for Shell {
         &self.shell_name
     }
 
-    fn command_substitute(&mut self, command: &[u8]) -> Result<Vec<u8>, ExpandError> {
-        self.capture_output(command).map_err(|_| ExpandError {
+    fn command_substitute(&mut self, program: &Rc<Program>) -> Result<Vec<u8>, ExpandError> {
+        self.capture_output_program(program).map_err(|_| ExpandError {
             message: Vec::new().into(),
         })
     }
@@ -189,7 +191,8 @@ mod tests {
     fn command_substitute_success() {
         run_trace(trace_entries![..capture_forked_trace(0, 1000)], || {
             let mut shell = test_shell();
-            let substituted = Context::command_substitute(&mut shell, b"true").expect("subst");
+            let substituted =
+                Context::command_substitute_raw(&mut shell, b"true").expect("subst");
             assert_eq!(substituted, b"");
             assert_eq!(shell.last_status, 0);
         });
@@ -199,7 +202,8 @@ mod tests {
     fn command_substitute_sets_last_status_on_nonzero_exit() {
         run_trace(trace_entries![..capture_forked_trace(1, 1000)], || {
             let mut shell = test_shell();
-            let output = Context::command_substitute(&mut shell, b"false").expect("subst ok");
+            let output =
+                Context::command_substitute_raw(&mut shell, b"false").expect("subst ok");
             assert_eq!(output, b"");
             assert_eq!(shell.last_status, 1);
         });
@@ -214,7 +218,7 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                let result = Context::command_substitute(&mut shell, b"true");
+                let result = Context::command_substitute_raw(&mut shell, b"true");
                 assert!(result.is_err());
             },
         );
