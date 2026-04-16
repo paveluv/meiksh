@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use crate::syntax::ast::RedirectionKind;
 use crate::sys;
 
@@ -199,16 +197,14 @@ pub(super) fn apply_shell_redirections<R: RedirectionRef>(
     noclobber: bool,
 ) -> Result<ShellRedirectionGuard, sys::error::SysError> {
     let mut guard = ShellRedirectionGuard { saved: Vec::new() };
-    let mut saved = HashMap::new();
 
     for redirection in redirections {
-        if let std::collections::hash_map::Entry::Vacant(entry) = saved.entry(redirection.fd()) {
+        if !guard.saved.iter().any(|(fd, _)| *fd == redirection.fd()) {
             let original = match sys::fd_io::duplicate_fd_to_new(redirection.fd()) {
                 Ok(fd) => Some(fd),
                 Err(error) if error.is_ebadf() => None,
                 Err(error) => return Err(error),
             };
-            entry.insert(original);
             guard.saved.push((redirection.fd(), original));
         }
         apply_shell_redirection(redirection, noclobber)?;

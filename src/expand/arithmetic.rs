@@ -16,6 +16,7 @@ pub(super) fn expand_arithmetic_expression<C: Context>(
             let (expansion, consumed) = expand_dollar(ctx, &expression[i..], true)?;
             match expansion {
                 Expansion::One(s) => result.extend_from_slice(&s),
+                Expansion::Static(s) => result.extend_from_slice(s),
                 Expansion::AtFields(fields) => {
                     result.extend_from_slice(&bstr::join_bstrings(&fields, b" "));
                 }

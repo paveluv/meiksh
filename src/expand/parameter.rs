@@ -14,7 +14,7 @@ pub(super) fn expand_dollar<C: Context>(
     quoted: bool,
 ) -> Result<(Expansion, usize), ExpandError> {
     if source.len() < 2 {
-        return Ok((Expansion::One(b"$".to_vec()), 1));
+        return Ok((Expansion::Static(b"$"), 1));
     }
 
     let c1 = source[1];
@@ -135,7 +135,7 @@ pub(super) fn expand_dollar<C: Context>(
                 index,
             ))
         }
-        _ => Ok((Expansion::One(b"$".to_vec()), 1)),
+        _ => Ok((Expansion::Static(b"$"), 1)),
     }
 }
 

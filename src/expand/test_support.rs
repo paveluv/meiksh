@@ -165,8 +165,9 @@ impl Context for DefaultPathContext {
 
 pub(super) fn expect_one(result: Result<(Expansion, usize), ExpandError>) -> (Vec<u8>, usize) {
     let (expansion, consumed) = result.expect("expansion");
-    let Expansion::One(s) = expansion else {
-        panic!("expected One, got AtFields")
-    };
-    (s, consumed)
+    match expansion {
+        Expansion::One(s) => (s, consumed),
+        Expansion::Static(s) => (s.to_vec(), consumed),
+        Expansion::AtFields(_) => panic!("expected One/Static, got AtFields"),
+    }
 }

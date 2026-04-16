@@ -110,9 +110,9 @@ impl ExpandOutput {
         }
     }
 
-    pub(super) fn into_single_vec(self) -> Vec<u8> {
+    pub(super) fn drain_single_vec(&mut self) -> Vec<u8> {
         if self.fields.is_empty() {
-            return self.current;
+            return std::mem::take(&mut self.current);
         }
         let total: usize =
             self.fields.iter().map(|(f, _)| f.len()).sum::<usize>() + self.current.len();
@@ -121,10 +121,23 @@ impl ExpandOutput {
             result.extend_from_slice(f);
         }
         result.extend_from_slice(&self.current);
+        self.fields.clear();
+        self.current.clear();
         result
     }
 
-    pub(super) fn finish(mut self) -> ExpandResult {
+    pub(super) fn clear(&mut self) {
+        self.fields.clear();
+        self.current.clear();
+        self.current_has_glob = false;
+        self.had_quoted_content = false;
+        self.has_at_expansion = false;
+        self.had_quoted_null_outside_at = false;
+        self.at_field_breaks.clear();
+        self.at_empty = false;
+    }
+
+    pub(super) fn finish(&mut self) -> ExpandResult {
         if self.has_at_expansion {
             return self.finish_at_expansion();
         }
@@ -138,34 +151,34 @@ impl ExpandOutput {
 
         if !self.current.is_empty() || self.fields.is_empty() {
             let glob = self.current_has_glob;
-            self.fields.push((self.current, glob));
+            self.fields.push((std::mem::take(&mut self.current), glob));
         }
 
         ExpandResult::FieldsWithGlob(
             self.fields
-                .into_iter()
+                .drain(..)
                 .map(|(text, has_glob)| FieldEntry { text, has_glob })
                 .collect(),
         )
     }
 
-    fn finish_at_expansion(mut self) -> ExpandResult {
+    fn finish_at_expansion(&mut self) -> ExpandResult {
         if self.at_empty && self.at_field_breaks.is_empty() {
             if !self.current.is_empty() || self.had_quoted_null_outside_at {
-                return ExpandResult::Fields(vec![self.into_single_vec()]);
+                return ExpandResult::Fields(vec![self.drain_single_vec()]);
             }
             return ExpandResult::Fields(Vec::new());
         }
 
         if self.at_field_breaks.is_empty() {
-            return ExpandResult::Fields(vec![self.into_single_vec()]);
+            return ExpandResult::Fields(vec![self.drain_single_vec()]);
         }
 
         if !self.current.is_empty() {
             self.fields.push((std::mem::take(&mut self.current), false));
         }
 
-        ExpandResult::Fields(self.fields.into_iter().map(|(f, _)| f).collect())
+        ExpandResult::Fields(self.fields.drain(..).map(|(f, _)| f).collect())
     }
 }
 
@@ -181,7 +194,7 @@ pub(super) struct FieldEntry {
     pub(super) has_glob: bool,
 }
 
-pub(super) fn expand_parts<C: Context>(
+pub(super) fn expand_parts_into_new<C: Context>(
     ctx: &mut C,
     raw: &[u8],
     parts: &[WordPart],
@@ -349,13 +362,13 @@ fn expand_special_var<C: Context>(
             }
         }
         b'*' => {
-            let ifs_val = ctx.env_var(b"IFS");
-            let sep = match ifs_val.as_deref() {
-                None => b" ".to_vec(),
-                Some(b"") => Vec::new(),
-                Some(s) => vec![s[0]],
+            let ifs_cow = ctx.env_var(b"IFS");
+            let sep: &[u8] = match &ifs_cow {
+                None => b" ",
+                Some(s) if s.is_empty() => b"",
+                Some(s) => &s[..1],
             };
-            let value = bstr::join_bstrings(ctx.positional_params(), &sep);
+            let value = bstr::join_bstrings(ctx.positional_params(), sep);
             output.push_value(&value, quoted, ifs);
         }
         _ => {
@@ -527,7 +540,7 @@ fn expand_braced_word_text<C: Context>(
 ) -> Result<Vec<u8>, ExpandError> {
     let mut out = ExpandOutput::new();
     expand_parts_into(ctx, raw, word_parts, b"", true, &mut out)?;
-    Ok(out.into_single_vec())
+    Ok(out.drain_single_vec())
 }
 
 fn expand_braced_word_pattern<C: Context>(
@@ -558,7 +571,7 @@ fn build_pattern_segments<C: Context>(
             WordPart::Expansion { kind, quoted } => {
                 let mut temp = ExpandOutput::new();
                 expand_kind(ctx, raw, kind, b"", *quoted, &mut temp)?;
-                let text = temp.into_single_vec();
+                let text = temp.drain_single_vec();
                 let state = if *quoted {
                     QuoteState::Quoted
                 } else {
@@ -592,7 +605,7 @@ fn expand_arithmetic<C: Context>(
             WordPart::Expansion { kind, .. } => {
                 let mut temp = ExpandOutput::new();
                 expand_kind(ctx, raw, kind, b"", true, &mut temp)?;
-                let flat = temp.into_single_vec();
+                let flat = temp.drain_single_vec();
                 expr_text.extend_from_slice(&flat);
             }
             WordPart::TildeLiteral { .. } => {}

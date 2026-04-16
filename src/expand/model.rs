@@ -15,6 +15,7 @@ pub(super) enum Segment {
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum Expansion {
     One(Vec<u8>),
+    Static(&'static [u8]),
     AtFields(Vec<Vec<u8>>),
 }
 
