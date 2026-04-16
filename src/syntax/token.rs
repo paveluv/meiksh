@@ -1460,7 +1460,11 @@ impl<'a> Parser<'a> {
                 }
                 let end = raw.len();
                 if user_end > user_start || end > 1 {
-                    parts.push(WordPart::TildeLiteral { user_end, end });
+                    parts.push(WordPart::TildeLiteral {
+                        tilde_pos: 0,
+                        user_end,
+                        end,
+                    });
                     lit_start = raw.len();
                     if self.peek_byte().is_none()
                         || matches!(self.peek_byte(), Some(b) if is_word_break(b))
@@ -1469,6 +1473,7 @@ impl<'a> Parser<'a> {
                     }
                 } else {
                     parts.push(WordPart::TildeLiteral {
+                        tilde_pos: 0,
                         user_end: 1,
                         end: 1,
                     });
@@ -1816,7 +1821,7 @@ fn classify_dollar_from_slice(slice: &[u8], _quoted: bool, base: usize) -> (Expa
                 );
             }
             let (op, word_rel_start) = classify_braced_op(slice, rel_name_end);
-            if op == BracedOp::None {
+            if op == BracedOp::None && word_rel_start >= brace_end {
                 if let BracedName::Var { start, end } = braced_name {
                     if start != end {
                         return (ExpansionKind::SimpleVar { start, end }, consumed);
@@ -1845,7 +1850,7 @@ fn classify_dollar_from_slice(slice: &[u8], _quoted: bool, base: usize) -> (Expa
                 } else {
                     slice.len()
                 };
-                let arith_parts = build_word_parts_for_slice(slice, 3, arith_end, base);
+                let arith_parts = build_word_parts_impl(slice, 3, arith_end, base, false);
                 if arith_parts.len() == 1 {
                     if let WordPart::Literal { start, end, .. } = arith_parts[0] {
                         return (ExpansionKind::ArithmeticLiteral { start, end }, consumed);
@@ -2030,15 +2035,57 @@ fn parse_braced_name_end(expr: &[u8]) -> usize {
 /// Builds `WordPart` entries for a sub-range of a raw byte buffer.
 /// `base` is added to all positional offsets so they reference positions
 /// in the full `Word.raw` buffer (use 0 when `raw` is already the full buffer).
+fn is_tilde_user_break(b: u8) -> bool {
+    matches!(b, b'/' | b'\'' | b'"' | b'\\' | b'$' | b'`' | b':')
+}
+
 fn build_word_parts_for_slice(
     raw: &[u8],
     start: usize,
     end: usize,
     base: usize,
 ) -> Box<[WordPart]> {
+    build_word_parts_impl(raw, start, end, base, true)
+}
+
+fn build_word_parts_impl(
+    raw: &[u8],
+    start: usize,
+    end: usize,
+    base: usize,
+    allow_tilde: bool,
+) -> Box<[WordPart]> {
     let mut parts = Vec::new();
     let mut qbuf = Vec::new();
     let mut i = start;
+    if allow_tilde && i < end && raw[i] == b'~' {
+        let tilde_pos = base + i;
+        i += 1;
+        while i < end && !is_tilde_user_break(raw[i]) {
+            i += 1;
+        }
+        let user_end = base + i;
+        if i < end && raw[i] == b'/' {
+            i += 1;
+            while i < end && !matches!(raw[i], b'\'' | b'"' | b'\\' | b'$' | b'`') {
+                i += 1;
+            }
+        }
+        let tilde_end = base + i;
+        if user_end > tilde_pos + 1 || tilde_end > tilde_pos + 1 {
+            parts.push(WordPart::TildeLiteral {
+                tilde_pos,
+                user_end,
+                end: tilde_end,
+            });
+        } else {
+            parts.push(WordPart::TildeLiteral {
+                tilde_pos,
+                user_end: tilde_pos + 1,
+                end: tilde_pos + 1,
+            });
+        }
+    }
     while i < end {
         match raw[i] {
             b'\'' => {
@@ -2544,6 +2591,15 @@ mod tests {
     }
 
     #[test]
+    fn classify_dollar_braced_trailing_junk_is_not_simple_var() {
+        let (kind, _consumed) = classify_dollar_from_slice(b"${x!y}", false, 0);
+        assert!(
+            matches!(kind, ExpansionKind::Braced { .. }),
+            "${{x!y}} with trailing junk must stay Braced, got {kind:?}"
+        );
+    }
+
+    #[test]
     fn classify_braced_name_empty() {
         let n = classify_braced_name(b"", 0, 0);
         assert!(matches!(n, BracedName::Var { start: 0, end: 0 }));
@@ -2614,6 +2670,28 @@ mod tests {
         assert_eq!(parse_braced_name_end(b"$"), 1);
         assert_eq!(parse_braced_name_end(b"abc_def"), 7);
         assert_eq!(parse_braced_name_end(b"."), 0);
+    }
+
+    #[test]
+    fn build_word_parts_for_slice_tilde_at_start() {
+        let raw = b"${x:-~/path}";
+        let parts = build_word_parts_for_slice(raw, 5, 11, 0);
+        assert!(
+            matches!(parts[0], WordPart::TildeLiteral { .. }),
+            "tilde at start of braced word should produce TildeLiteral, got {:?}",
+            parts[0]
+        );
+    }
+
+    #[test]
+    fn build_word_parts_for_slice_bare_tilde() {
+        let raw = b"${x:-~}";
+        let parts = build_word_parts_for_slice(raw, 5, 6, 0);
+        assert!(
+            matches!(parts[0], WordPart::TildeLiteral { .. }),
+            "bare tilde should produce TildeLiteral, got {:?}",
+            parts[0]
+        );
     }
 
     #[test]

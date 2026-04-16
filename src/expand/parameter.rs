@@ -2167,16 +2167,74 @@ mod tests {
     }
 
     #[test]
+    fn quoted_alt_expansion_unset_preserves_empty_field() {
+        assert_no_syscalls(|| {
+            let mut ctx = FakeContext::new();
+            let fields = expand_word(&mut ctx, &parsed_word(b"echo \"${missing+SET}\"\n"))
+                .expect("expand must succeed");
+            assert_eq!(
+                fields.len(),
+                1,
+                "quoted unset +word should produce one empty field"
+            );
+            assert_eq!(fields[0], b"");
+        });
+    }
+
+    #[test]
+    fn tilde_expanded_in_braced_default_word() {
+        assert_no_syscalls(|| {
+            let mut ctx = FakeContext::new();
+            ctx.env.insert(b"HOME".to_vec(), b"/my_home".to_vec());
+            let w = parsed_word(b"echo ${missing:-~}\n");
+            let text = expand_word_text(&mut ctx, &w).expect("expand_word_text must succeed");
+            assert_eq!(text, b"/my_home");
+        });
+    }
+
+    #[test]
+    fn colon_equals_rejects_positional_parameter() {
+        assert_no_syscalls(|| {
+            let mut ctx = FakeContext::new();
+            ctx.positional = vec![b"arg".to_vec()];
+            let err = expand_word_text(&mut ctx, &parsed_word(b"echo ${2:=foo}\n"))
+                .expect_err("${2:=foo} must error");
+            assert!(!err.message.is_empty());
+        });
+    }
+
+    #[test]
+    fn colon_equals_rejects_special_parameter() {
+        assert_no_syscalls(|| {
+            let mut ctx = FakeContext::new();
+            ctx.positional.clear();
+            let err = expand_word_text(&mut ctx, &parsed_word(b"echo ${*:=foo}\n"))
+                .expect_err("${*:=foo} must error");
+            assert!(!err.message.is_empty());
+        });
+    }
+
+    #[test]
     fn braced_expansion_with_invalid_name_errors() {
         assert_no_syscalls(|| {
             let mut ctx = FakeContext::new();
-            let err = expand_word(&mut ctx, &parsed_word(b"echo ${/}\n"))
-                .expect_err("${/} must error");
+            let err =
+                expand_word(&mut ctx, &parsed_word(b"echo ${/}\n")).expect_err("${/} must error");
             assert!(!err.message.is_empty());
 
             let err =
                 expand_word(&mut ctx, &parsed_word(b"echo ${}\n")).expect_err("${} must error");
             assert!(!err.message.is_empty());
+        });
+    }
+
+    #[test]
+    fn braced_expansion_with_trailing_junk_errors() {
+        assert_no_syscalls(|| {
+            let mut ctx = FakeContext::new();
+            let err = expand_word_text(&mut ctx, &parsed_word(b"echo ${x!y}\n"))
+                .expect_err("${x!y} must error");
+            assert_eq!(&*err.message, b"bad substitution");
         });
     }
 }

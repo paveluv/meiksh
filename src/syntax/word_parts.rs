@@ -15,6 +15,7 @@ pub(crate) enum WordPart {
         newlines: u16,
     },
     TildeLiteral {
+        tilde_pos: usize,
         user_end: usize,
         end: usize,
     },

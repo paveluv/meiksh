@@ -7,7 +7,7 @@ use super::arithmetic::eval_arithmetic;
 use super::core::{Context, ExpandError};
 use super::glob::pattern_matches;
 use super::model::{QuoteState, Segment, is_glob_byte, render_pattern_from_segments};
-use super::parameter::{lookup_param, require_set_parameter};
+use super::parameter::{is_name, lookup_param, require_set_parameter};
 use super::word::trim_trailing_newlines;
 
 #[derive(Debug)]
@@ -234,8 +234,12 @@ pub(super) fn expand_parts_into<C: Context>(
                 }
                 output.push_quoted(bytes);
             }
-            WordPart::TildeLiteral { user_end, end } => {
-                let user = &raw[1..*user_end];
+            WordPart::TildeLiteral {
+                tilde_pos,
+                user_end,
+                end,
+            } => {
+                let user = &raw[tilde_pos + 1..*user_end];
                 let slash_follows = *user_end < *end && raw[*user_end] == b'/';
                 expand_tilde(ctx, user, slash_follows, output);
                 if *user_end < *end {
@@ -430,6 +434,11 @@ fn expand_braced<C: Context>(
             output.push_value(&len, quoted, ifs);
         }
         BracedOp::None => {
+            if !word_parts.is_empty() {
+                return Err(ExpandError {
+                    message: b"bad substitution".as_ref().into(),
+                });
+            }
             let value = lookup_braced_param(ctx, raw, braced_name);
             let value = require_set_parameter(ctx, name, value)?;
             output.push_value(value.as_bytes(), quoted, ifs);
@@ -459,6 +468,13 @@ fn expand_braced<C: Context>(
                 _ => false,
             };
             if use_word {
+                if !is_name(name) {
+                    let mut msg = name.to_vec();
+                    msg.extend_from_slice(b": cannot assign in this way");
+                    return Err(ExpandError {
+                        message: msg.into(),
+                    });
+                }
                 let expanded = expand_braced_word_text(ctx, raw, word_parts)?;
                 ctx.set_var(name, &expanded)?;
                 output.push_value(&expanded, quoted, ifs);
@@ -502,6 +518,8 @@ fn expand_braced<C: Context>(
             };
             if use_word {
                 expand_braced_word(ctx, raw, word_parts, ifs, quoted, output)?;
+            } else if quoted {
+                output.push_quoted(b"");
             }
         }
         BracedOp::TrimSuffix | BracedOp::TrimSuffixLong => {
