@@ -195,7 +195,7 @@ impl Token {
 }
 
 impl Token {
-    pub(super) fn display_name(&self) -> Box<[u8]> {
+    pub(super) fn display_name(&self) -> &'static [u8] {
         self.keyword_name()
             .unwrap_or(match self {
                 Token::Bang => b"!",
@@ -203,8 +203,6 @@ impl Token {
                 Token::RBrace => b"}",
                 _ => b"word",
             })
-            .to_vec()
-            .into_boxed_slice()
     }
 }
 
@@ -1768,8 +1766,9 @@ fn find_backtick_end_in_slice(raw: &[u8], start: usize) -> usize {
 fn flush_quoted_buf(qbuf: &mut Vec<u8>, parts: &mut Vec<WordPart>) {
     if !qbuf.is_empty() {
         parts.push(WordPart::QuotedLiteral {
-            bytes: std::mem::take(qbuf).into_boxed_slice(),
+            bytes: Box::from(qbuf.as_slice()),
         });
+        qbuf.clear();
     }
 }
 

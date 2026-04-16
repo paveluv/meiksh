@@ -72,7 +72,7 @@ impl Context for Shell {
 
     fn command_substitute(&mut self, program: &Rc<Program>) -> Result<Vec<u8>, ExpandError> {
         self.capture_output_program(program).map_err(|_| ExpandError {
-            message: Vec::new().into(),
+            message: Box::default(),
         })
     }
 
