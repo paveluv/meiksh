@@ -3096,8 +3096,8 @@ begin interactive test "vi v command invokes editor and executes result"
   expect "$ "
   send "set -o vi"
   expect "$ "
-  # Create a fake vi that performs sed substitution on the temp file
-  send "printf '#!%s\nsed -i s/placeholder/from_editor/ \"$1\"\n' \"${SHELL%% *}\" > $HOME/vi && chmod +x $HOME/vi"
+  # Create a fake vi that rewrites the temp file (avoids non-portable sed -i)
+  send "printf '#!%s\nt=$(sed s/placeholder/from_editor/ \"$1\") && printf \"%%s\\n\" \"$t\" > \"$1\"\n' \"${SHELL%% *}\" > $HOME/vi && chmod +x $HOME/vi"
   expect "$ "
   send "export PATH=$HOME:$PATH"
   expect "$ "

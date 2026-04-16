@@ -417,7 +417,7 @@ fn expand_braced<C: Context>(
     output: &mut ExpandOutput,
 ) -> Result<(), ExpandError> {
     let name = braced_name_bytes(raw, braced_name);
-    if name.is_empty() && op != BracedOp::None {
+    if name.is_empty() {
         return Err(ExpandError {
             message: b"bad substitution".as_ref().into(),
         });

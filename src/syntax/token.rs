@@ -1818,7 +1818,9 @@ fn classify_dollar_from_slice(slice: &[u8], _quoted: bool, base: usize) -> (Expa
             let (op, word_rel_start) = classify_braced_op(slice, rel_name_end);
             if op == BracedOp::None {
                 if let BracedName::Var { start, end } = braced_name {
-                    return (ExpansionKind::SimpleVar { start, end }, consumed);
+                    if start != end {
+                        return (ExpansionKind::SimpleVar { start, end }, consumed);
+                    }
                 }
             }
             let word_parts = if word_rel_start < brace_end {
@@ -2524,6 +2526,21 @@ mod tests {
         let (kind, consumed) = classify_dollar_from_slice(b"$.", false, 0);
         assert!(matches!(kind, ExpansionKind::LiteralDollar));
         assert_eq!(consumed, 1);
+    }
+
+    #[test]
+    fn classify_dollar_braced_invalid_name_is_not_simple_var() {
+        let (kind, _consumed) = classify_dollar_from_slice(b"${/}", false, 0);
+        assert!(
+            matches!(kind, ExpansionKind::Braced { .. }),
+            "${{\"/\"}} with invalid name char must stay Braced, got {kind:?}"
+        );
+
+        let (kind, _consumed) = classify_dollar_from_slice(b"${}", false, 0);
+        assert!(
+            matches!(kind, ExpansionKind::Braced { .. }),
+            "empty ${{}} must stay Braced, got {kind:?}"
+        );
     }
 
     #[test]

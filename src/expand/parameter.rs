@@ -2155,4 +2155,28 @@ mod tests {
     fn is_name_empty_input() {
         assert!(!is_name(b""));
     }
+
+    fn parsed_word(source: &[u8]) -> crate::syntax::ast::Word {
+        let prog = crate::syntax::parse(source).expect("parse");
+        let item = &prog.items[0];
+        let cmd = &item.and_or.first.commands[0];
+        match cmd {
+            crate::syntax::ast::Command::Simple(sc) => sc.words[1].clone(),
+            _ => panic!("expected simple command"),
+        }
+    }
+
+    #[test]
+    fn braced_expansion_with_invalid_name_errors() {
+        assert_no_syscalls(|| {
+            let mut ctx = FakeContext::new();
+            let err = expand_word(&mut ctx, &parsed_word(b"echo ${/}\n"))
+                .expect_err("${/} must error");
+            assert!(!err.message.is_empty());
+
+            let err =
+                expand_word(&mut ctx, &parsed_word(b"echo ${}\n")).expect_err("${} must error");
+            assert!(!err.message.is_empty());
+        });
+    }
 }
