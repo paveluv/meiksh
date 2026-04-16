@@ -1371,13 +1371,23 @@ fn replay_cmd(
     }
 }
 
+#[cfg(target_os = "linux")]
+const fn glob_tilde() -> libc::c_int {
+    libc::GLOB_TILDE
+}
+
+#[cfg(not(target_os = "linux"))]
+const fn glob_tilde() -> libc::c_int {
+    0x0800
+}
+
 fn glob_expand(pattern: &[u8]) -> Result<Vec<Vec<u8>>, ()> {
     let c_pattern = std::ffi::CString::new(pattern.to_vec()).map_err(|_| ())?;
     let mut glob_buf: libc::glob_t = unsafe { std::mem::zeroed() };
     let ret = unsafe {
         libc::glob(
             c_pattern.as_ptr(),
-            libc::GLOB_TILDE | libc::GLOB_MARK,
+            glob_tilde() | libc::GLOB_MARK,
             None,
             &mut glob_buf,
         )
