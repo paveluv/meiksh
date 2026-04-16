@@ -697,7 +697,7 @@ fn ulimit_get_and_set() {
     assert!(!out.status.success());
 
     let out = Command::new(meiksh())
-        .args(["-c", "ulimit -Hn 1 2>/dev/null; echo $?"])
+        .args(["-c", "ulimit -Hn unlimited 2>/dev/null; echo $?"])
         .output()
         .expect("run");
     assert!(out.status.success());
