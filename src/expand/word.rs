@@ -1,8 +1,10 @@
+use std::borrow::Cow;
+
 use crate::bstr;
 use crate::syntax::ast::Word;
 
 use super::core::{Context, ExpandError};
-use super::expand_parts::{ExpandOutput, ExpandResult, expand_parts};
+use super::expand_parts::{ExpandOutput, ExpandResult, expand_parts_into_new};
 use super::model::{
     ExpandedWord, Expansion, QuoteState, Segment, flatten_segments, is_glob_byte, push_segment,
     push_segment_slice, render_pattern_from_segments,
@@ -16,16 +18,17 @@ pub(crate) fn expand_words<C: Context>(
 ) -> Result<Vec<Vec<u8>>, ExpandError> {
     let ifs = resolve_ifs(ctx);
     let mut result = Vec::new();
+    let mut scratch = ExpandOutput::new();
     for word in words {
-        result.extend(expand_word_with_ifs(ctx, word, &ifs)?);
+        result.extend(expand_word_reuse(ctx, word, &ifs, &mut scratch)?);
     }
     Ok(result)
 }
 
-fn resolve_ifs<C: Context>(ctx: &C) -> Vec<u8> {
+fn resolve_ifs<C: Context>(ctx: &C) -> Cow<'static, [u8]> {
     match ctx.env_var(b"IFS") {
-        Some(c) => c.into_owned(),
-        None => b" \t\n".to_vec(),
+        Some(c) => Cow::Owned(c.into_owned()),
+        None => Cow::Borrowed(b" \t\n"),
     }
 }
 
@@ -79,19 +82,22 @@ pub(crate) fn expand_word<C: Context>(
     word: &Word,
 ) -> Result<Vec<Vec<u8>>, ExpandError> {
     let ifs = resolve_ifs(ctx);
-    expand_word_with_ifs(ctx, word, &ifs)
+    let mut scratch = ExpandOutput::new();
+    expand_word_reuse(ctx, word, &ifs, &mut scratch)
 }
 
-fn expand_word_with_ifs<C: Context>(
+fn expand_word_reuse<C: Context>(
     ctx: &mut C,
     word: &Word,
     ifs: &[u8],
+    scratch: &mut ExpandOutput,
 ) -> Result<Vec<Vec<u8>>, ExpandError> {
     ctx.set_lineno(word.line);
 
     if !word.parts.is_empty() {
-        let output = expand_parts(ctx, &word.raw, &word.parts, ifs, false)?;
-        let result = output.finish();
+        scratch.clear();
+        super::expand_parts::expand_parts_into(ctx, &word.raw, &word.parts, ifs, false, scratch)?;
+        let result = scratch.finish();
         return match result {
             ExpandResult::Fields(fields) => Ok(fields),
             ExpandResult::FieldsWithGlob(entries) => {
@@ -253,7 +259,7 @@ pub(crate) fn expand_redirect_word<C: Context>(
     let ifs = resolve_ifs(ctx);
 
     if !word.parts.is_empty() {
-        let output = expand_parts(ctx, &word.raw, &word.parts, &ifs, false)?;
+        let mut output = expand_parts_into_new(ctx, &word.raw, &word.parts, &ifs, false)?;
         let result = output.finish();
         return Ok(match result {
             ExpandResult::Fields(fields) => bstr::join_bstrings(&fields, b" "),
@@ -284,7 +290,7 @@ pub(crate) fn expand_word_text<C: Context>(
             true,
             &mut output,
         )?;
-        return Ok(output.into_single_vec());
+        return Ok(output.drain_single_vec());
     }
 
     expand_word_text_assignment(ctx, word, false)
@@ -315,7 +321,7 @@ pub(crate) fn expand_assignment_value<C: Context>(
             true,
             &mut output,
         )?;
-        return Ok(output.into_single_vec());
+        return Ok(output.drain_single_vec());
     }
 
     expand_word_text_assignment(ctx, word, true)
@@ -453,6 +459,7 @@ pub(super) fn expand_parameter_text_owned<C: Context>(
 pub(super) fn flatten_expansion(expansion: Expansion) -> Vec<u8> {
     match expansion {
         Expansion::One(s) => s,
+        Expansion::Static(s) => s.to_vec(),
         Expansion::AtFields(fields) => bstr::join_bstrings(&fields, b" "),
     }
 }
@@ -470,6 +477,7 @@ pub(super) fn apply_expansion(
     };
     match expansion {
         Expansion::One(s) => push_segment(segments, s, state),
+        Expansion::Static(s) => push_segment_slice(segments, s, state),
         Expansion::AtFields(params) => {
             *has_at = true;
             if params.is_empty() {

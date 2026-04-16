@@ -267,23 +267,25 @@ pub(super) fn resolve_command_path(
         .or_else(|| sys::env::env_var(b"PATH"))
         .unwrap_or_default();
 
-    split_bytes(&path, b':')
-        .map(|segment| {
-            let base = if segment.is_empty() {
-                b".".as_slice()
-            } else {
-                segment
-            };
-            let mut candidate = base.to_vec();
-            candidate.push(b'/');
-            candidate.extend_from_slice(program);
-            candidate
-        })
-        .find(|candidate| {
-            sys::fs::stat_path(candidate)
-                .map(|stat| stat.is_regular_file() && stat.is_executable())
-                .unwrap_or(false)
-        })
+    let mut candidate = Vec::new();
+    for segment in split_bytes(&path, b':') {
+        let base = if segment.is_empty() {
+            b".".as_slice()
+        } else {
+            segment
+        };
+        candidate.clear();
+        candidate.extend_from_slice(base);
+        candidate.push(b'/');
+        candidate.extend_from_slice(program);
+        let found = sys::fs::stat_path(&candidate)
+            .map(|stat| stat.is_regular_file() && stat.is_executable())
+            .unwrap_or(false);
+        if found {
+            return Some(candidate);
+        }
+    }
+    None
 }
 
 pub(super) fn split_bytes(data: &[u8], sep: u8) -> impl Iterator<Item = &[u8]> {
