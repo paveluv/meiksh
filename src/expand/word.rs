@@ -257,12 +257,7 @@ pub(crate) fn expand_word_text<C: Context>(
     if !word.parts.is_empty() {
         let mut output = ExpandOutput::new();
         super::expand_parts::expand_parts_into(ctx, &word.raw, &word.parts, b"", true, &mut output)?;
-        let mut result = Vec::new();
-        for f in &output.fields {
-            result.extend_from_slice(f);
-        }
-        result.extend_from_slice(&output.current);
-        return Ok(result);
+        return Ok(output.into_single_vec());
     }
 
     expand_word_text_assignment(ctx, word, false)
@@ -286,12 +281,7 @@ pub(crate) fn expand_assignment_value<C: Context>(
     if !word.parts.is_empty() {
         let mut output = ExpandOutput::new();
         super::expand_parts::expand_parts_into(ctx, &word.raw, &word.parts, b"", true, &mut output)?;
-        let mut result = Vec::new();
-        for f in &output.fields {
-            result.extend_from_slice(f);
-        }
-        result.extend_from_slice(&output.current);
-        return Ok(result);
+        return Ok(output.into_single_vec());
     }
 
     expand_word_text_assignment(ctx, word, true)
@@ -612,12 +602,17 @@ pub(super) fn expand_raw<C: Context>(ctx: &mut C, raw: &[u8]) -> Result<Expanded
                 let user = &raw[at_start..index];
                 let broke_on_non_login =
                     index == at_start && index < raw.len() && raw[index] != b'/';
+                let slash_follows = index < raw.len() && raw[index] == b'/';
                 if broke_on_non_login {
                     push_segment_slice(&mut segments, b"~", QuoteState::Literal);
                 } else if user.is_empty() {
                     match ctx.env_var(b"HOME") {
                         Some(home) if !home.is_empty() => {
-                            push_segment(&mut segments, home.into_owned(), QuoteState::Quoted);
+                            let mut h = home.into_owned();
+                            if slash_follows && h.ends_with(b"/") {
+                                h.pop();
+                            }
+                            push_segment(&mut segments, h, QuoteState::Quoted);
                         }
                         Some(_) => {
                             segments.push(Segment::Text(Vec::new(), QuoteState::Quoted));
@@ -627,7 +622,11 @@ pub(super) fn expand_raw<C: Context>(ctx: &mut C, raw: &[u8]) -> Result<Expanded
                         }
                     }
                 } else if let Some(dir) = ctx.home_dir_for_user(user) {
-                    push_segment(&mut segments, dir.into_owned(), QuoteState::Quoted);
+                    let mut d = dir.into_owned();
+                    if slash_follows && d.ends_with(b"/") {
+                        d.pop();
+                    }
+                    push_segment(&mut segments, d, QuoteState::Quoted);
                 } else {
                     push_segment_slice(&mut segments, b"~", QuoteState::Literal);
                     push_segment_slice(&mut segments, user, QuoteState::Literal);

@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 
 use crate::bstr;
-use crate::syntax::word_parts::{BracedOp, ExpansionKind, WordPart};
+use crate::syntax::word_parts::{BracedName, BracedOp, ExpansionKind, WordPart};
 
 use super::arithmetic::eval_arithmetic;
 use super::core::{Context, ExpandError};
@@ -12,7 +12,7 @@ use super::word::trim_trailing_newlines;
 
 #[derive(Debug)]
 pub(super) struct ExpandOutput {
-    pub(super) fields: Vec<Vec<u8>>,
+    pub(super) fields: Vec<(Vec<u8>, bool)>,
     pub(super) current: Vec<u8>,
     current_has_glob: bool,
     had_quoted_content: bool,
@@ -34,6 +34,13 @@ impl ExpandOutput {
             at_field_breaks: Vec::new(),
             at_empty: false,
         }
+    }
+
+    pub(super) fn push_literal_with_glob(&mut self, bytes: &[u8], has_glob: bool) {
+        if has_glob {
+            self.current_has_glob = true;
+        }
+        self.current.extend_from_slice(bytes);
     }
 
     pub(super) fn push_literal(&mut self, bytes: &[u8]) {
@@ -65,13 +72,25 @@ impl ExpandOutput {
                 self.current.push(b);
             } else if b.is_ascii_whitespace() {
                 if !self.current.is_empty() {
-                    self.fields.push(std::mem::take(&mut self.current));
+                    let glob = self.current_has_glob;
+                    self.fields
+                        .push((std::mem::take(&mut self.current), glob));
                     self.current_has_glob = false;
                 }
             } else {
-                self.fields.push(std::mem::take(&mut self.current));
+                let glob = self.current_has_glob;
+                self.fields
+                    .push((std::mem::take(&mut self.current), glob));
                 self.current_has_glob = false;
             }
+        }
+    }
+
+    pub(super) fn push_value(&mut self, bytes: &[u8], quoted: bool, ifs: &[u8]) {
+        if quoted {
+            self.push_quoted(bytes);
+        } else {
+            self.push_expanded(bytes, ifs);
         }
     }
 
@@ -84,12 +103,28 @@ impl ExpandOutput {
             for (i, field) in fields.iter().enumerate() {
                 if i > 0 {
                     self.at_field_breaks.push(self.fields.len() + 1);
-                    self.fields.push(std::mem::take(&mut self.current));
+                    let glob = self.current_has_glob;
+                    self.fields
+                        .push((std::mem::take(&mut self.current), glob));
                     self.current_has_glob = false;
                 }
                 self.current.extend_from_slice(field);
             }
         }
+    }
+
+    pub(super) fn into_single_vec(self) -> Vec<u8> {
+        if self.fields.is_empty() {
+            return self.current;
+        }
+        let total: usize = self.fields.iter().map(|(f, _)| f.len()).sum::<usize>()
+            + self.current.len();
+        let mut result = Vec::with_capacity(total);
+        for (f, _) in &self.fields {
+            result.extend_from_slice(f);
+        }
+        result.extend_from_slice(&self.current);
+        result
     }
 
     pub(super) fn finish(mut self) -> ExpandResult {
@@ -105,16 +140,14 @@ impl ExpandOutput {
         }
 
         if !self.current.is_empty() || self.fields.is_empty() {
-            self.fields.push(self.current);
+            let glob = self.current_has_glob;
+            self.fields.push((self.current, glob));
         }
 
         ExpandResult::FieldsWithGlob(
             self.fields
                 .into_iter()
-                .map(|f| FieldEntry {
-                    text: f,
-                    has_glob: self.current_has_glob,
-                })
+                .map(|(text, has_glob)| FieldEntry { text, has_glob })
                 .collect(),
         )
     }
@@ -122,30 +155,21 @@ impl ExpandOutput {
     fn finish_at_expansion(mut self) -> ExpandResult {
         if self.at_empty && self.at_field_breaks.is_empty() {
             if !self.current.is_empty() || self.had_quoted_null_outside_at {
-                let mut text = Vec::new();
-                for f in &self.fields {
-                    text.extend_from_slice(f);
-                }
-                text.extend_from_slice(&self.current);
-                return ExpandResult::Fields(vec![text]);
+                return ExpandResult::Fields(vec![self.into_single_vec()]);
             }
             return ExpandResult::Fields(Vec::new());
         }
 
         if self.at_field_breaks.is_empty() {
-            let mut text = Vec::new();
-            for f in &self.fields {
-                text.extend_from_slice(f);
-            }
-            text.extend_from_slice(&self.current);
-            return ExpandResult::Fields(vec![text]);
+            return ExpandResult::Fields(vec![self.into_single_vec()]);
         }
 
         if !self.current.is_empty() {
-            self.fields.push(std::mem::take(&mut self.current));
+            self.fields
+                .push((std::mem::take(&mut self.current), false));
         }
 
-        ExpandResult::Fields(self.fields)
+        ExpandResult::Fields(self.fields.into_iter().map(|(f, _)| f).collect())
     }
 }
 
@@ -183,38 +207,33 @@ pub(super) fn expand_parts_into<C: Context>(
 ) -> Result<(), ExpandError> {
     for part in parts {
         match part {
-            WordPart::Literal { start, end } => {
+            WordPart::Literal {
+                start,
+                end,
+                has_glob,
+                newlines,
+            } => {
                 let bytes = &raw[*start..*end];
-                let is_tilde_candidate = bytes.starts_with(b"~")
-                    && *start == 0
-                    && !quoted
-                    && (bytes.len() > 1 || parts.len() == 1);
-                if is_tilde_candidate {
-                    expand_tilde_in_literal(ctx, bytes, output);
-                } else if bytes.contains(&b'\n') {
-                    for &b in bytes {
-                        if b == b'\n' {
-                            ctx.inc_lineno();
-                        }
-                    }
-                    output.push_literal(bytes);
-                } else {
-                    output.push_literal(bytes);
+                for _ in 0..*newlines {
+                    ctx.inc_lineno();
                 }
+                output.push_literal_with_glob(bytes, *has_glob);
             }
-            WordPart::QuotedLiteral { bytes } => {
-                for &b in bytes.iter() {
-                    if b == b'\n' {
-                        ctx.inc_lineno();
-                    }
+            WordPart::QuotedLiteral { bytes, newlines } => {
+                for _ in 0..*newlines {
+                    ctx.inc_lineno();
                 }
                 output.push_quoted(bytes);
             }
-            WordPart::Tilde { end } => {
-                let user = &raw[1..*end];
-                expand_tilde(ctx, user, output);
+            WordPart::TildeLiteral { user_end, end } => {
+                let user = &raw[1..*user_end];
+                let slash_follows = *user_end < *end && raw[*user_end] == b'/';
+                expand_tilde(ctx, user, slash_follows, output);
+                if *user_end < *end {
+                    output.push_literal(&raw[*user_end..*end]);
+                }
             }
-            WordPart::Expand { kind, quoted: q } => {
+            WordPart::Expansion { kind, quoted: q } => {
                 let effective_quoted = quoted || *q;
                 expand_kind(ctx, raw, kind, ifs, effective_quoted, output)?;
             }
@@ -223,11 +242,21 @@ pub(super) fn expand_parts_into<C: Context>(
     Ok(())
 }
 
-fn expand_tilde<C: Context>(ctx: &mut C, user: &[u8], output: &mut ExpandOutput) {
+fn expand_tilde<C: Context>(
+    ctx: &mut C,
+    user: &[u8],
+    slash_follows: bool,
+    output: &mut ExpandOutput,
+) {
     if user.is_empty() {
         match ctx.env_var(b"HOME") {
             Some(home) if !home.is_empty() => {
-                output.push_quoted(&home);
+                let h = if slash_follows && home.ends_with(b"/") {
+                    &home[..home.len() - 1]
+                } else {
+                    &home
+                };
+                output.push_quoted(h);
             }
             Some(_) => {
                 output.push_quoted(b"");
@@ -237,24 +266,15 @@ fn expand_tilde<C: Context>(ctx: &mut C, user: &[u8], output: &mut ExpandOutput)
             }
         }
     } else if let Some(dir) = ctx.home_dir_for_user(user) {
-        output.push_quoted(&dir);
+        let d = if slash_follows && dir.ends_with(b"/") {
+            &dir[..dir.len() - 1]
+        } else {
+            &dir
+        };
+        output.push_quoted(d);
     } else {
         output.push_literal(b"~");
         output.push_literal(user);
-    }
-}
-
-fn expand_tilde_in_literal<C: Context>(ctx: &mut C, bytes: &[u8], output: &mut ExpandOutput) {
-    if !bytes.starts_with(b"~") {
-        output.push_literal(bytes);
-        return;
-    }
-    let slash_pos = bytes.iter().position(|&b| b == b'/');
-    let user_end = slash_pos.unwrap_or(bytes.len());
-    let user = &bytes[1..user_end];
-    expand_tilde(ctx, user, output);
-    if user_end < bytes.len() {
-        output.push_literal(&bytes[user_end..]);
     }
 }
 
@@ -271,34 +291,42 @@ fn expand_kind<C: Context>(
             let name = &raw[*start..*end];
             let value = lookup_param(ctx, name);
             let value = require_set_parameter(ctx, name, value)?;
-            if quoted {
-                output.push_quoted(value.as_bytes());
-            } else {
-                output.push_expanded(value.as_bytes(), ifs);
-            }
+            output.push_value(value.as_bytes(), quoted, ifs);
+        }
+        ExpansionKind::Positional { index } => {
+            let idx = *index as usize;
+            let value = ctx.positional_param(idx);
+            let value = require_set_parameter(ctx, &[b'0' + index], value)?;
+            output.push_value(value.as_bytes(), quoted, ifs);
+        }
+        ExpansionKind::ShellName => {
+            let name = ctx.shell_name();
+            output.push_value(name, quoted, ifs);
         }
         ExpansionKind::SpecialVar { ch } => {
             expand_special_var(ctx, *ch, ifs, quoted, output)?;
         }
         ExpansionKind::Braced {
-            name_start,
-            name_end,
+            name,
             op,
             parts,
         } => {
-            expand_braced(ctx, raw, *name_start, *name_end, *op, parts, ifs, quoted, output)?;
+            expand_braced(ctx, raw, name, *op, parts, ifs, quoted, output)?;
         }
         ExpansionKind::Command { program } => {
             let out = ctx.command_substitute(program)?;
             let trimmed = trim_trailing_newlines(&out);
-            if quoted {
-                output.push_quoted(trimmed);
-            } else {
-                output.push_expanded(trimmed, ifs);
-            }
+            output.push_value(trimmed, quoted, ifs);
         }
         ExpansionKind::Arithmetic { parts } => {
             expand_arithmetic(ctx, raw, parts, ifs, quoted, output)?;
+        }
+        ExpansionKind::ArithmeticLiteral { start, end } => {
+            let saved_line = ctx.lineno();
+            let value = eval_arithmetic(ctx, &raw[*start..*end])?;
+            ctx.set_lineno(saved_line);
+            let buf = bstr::I64Buf::new(value);
+            output.push_value(buf.as_bytes(), quoted, ifs);
         }
         ExpansionKind::LiteralDollar => {
             if quoted {
@@ -336,55 +364,54 @@ fn expand_special_var<C: Context>(
                 Some(s) => vec![s[0]],
             };
             let value = bstr::join_bstrings(ctx.positional_params(), &sep);
-            if quoted {
-                output.push_quoted(&value);
-            } else {
-                output.push_expanded(&value, ifs);
-            }
-        }
-        b'0' => {
-            let name = ctx.shell_name();
-            if quoted {
-                output.push_quoted(name);
-            } else {
-                output.push_expanded(name, ifs);
-            }
-        }
-        b'1'..=b'9' => {
-            let index = (ch - b'0') as usize;
-            let value = ctx.positional_param(index);
-            let value = require_set_parameter(ctx, &[ch], value)?;
-            if quoted {
-                output.push_quoted(value.as_bytes());
-            } else {
-                output.push_expanded(value.as_bytes(), ifs);
-            }
+            output.push_value(&value, quoted, ifs);
         }
         _ => {
             let value = ctx.special_param(ch);
             let value = require_set_parameter(ctx, &[ch], value)?;
-            if quoted {
-                output.push_quoted(value.as_bytes());
-            } else {
-                output.push_expanded(value.as_bytes(), ifs);
-            }
+            output.push_value(value.as_bytes(), quoted, ifs);
         }
     }
     Ok(())
 }
 
+fn lookup_braced_param<'a, C: Context>(
+    ctx: &'a C,
+    raw: &[u8],
+    braced_name: &BracedName,
+) -> Option<Cow<'a, [u8]>> {
+    match braced_name {
+        BracedName::Var { start, end } => {
+            let name = &raw[*start..*end];
+            lookup_param(ctx, name)
+        }
+        BracedName::Positional { index, .. } => ctx.positional_param(*index as usize),
+        BracedName::Special { ch, .. } => {
+            if *ch == b'#' {
+                ctx.special_param(*ch)
+            } else {
+                ctx.special_param(*ch)
+            }
+        }
+    }
+}
+
+fn braced_name_bytes<'a>(raw: &'a [u8], braced_name: &BracedName) -> &'a [u8] {
+    let (start, end) = braced_name.name_range();
+    &raw[start..end]
+}
+
 fn expand_braced<C: Context>(
     ctx: &mut C,
     raw: &[u8],
-    name_start: usize,
-    name_end: usize,
+    braced_name: &BracedName,
     op: BracedOp,
     word_parts: &[WordPart],
     ifs: &[u8],
     quoted: bool,
     output: &mut ExpandOutput,
 ) -> Result<(), ExpandError> {
-    let name = &raw[name_start..name_end];
+    let name = braced_name_bytes(raw, braced_name);
     if name.is_empty() && op != BracedOp::None {
         return Err(ExpandError {
             message: b"bad substitution".as_ref().into(),
@@ -392,26 +419,18 @@ fn expand_braced<C: Context>(
     }
     match op {
         BracedOp::Length => {
-            let value = lookup_param(ctx, name);
+            let value = lookup_braced_param(ctx, raw, braced_name);
             let value = require_set_parameter(ctx, name, value)?;
             let len = bstr::u64_to_bytes(value.len() as u64);
-            if quoted {
-                output.push_quoted(&len);
-            } else {
-                output.push_expanded(&len, ifs);
-            }
+            output.push_value(&len, quoted, ifs);
         }
         BracedOp::None => {
-            let value = lookup_param(ctx, name);
+            let value = lookup_braced_param(ctx, raw, braced_name);
             let value = require_set_parameter(ctx, name, value)?;
-            if quoted {
-                output.push_quoted(value.as_bytes());
-            } else {
-                output.push_expanded(value.as_bytes(), ifs);
-            }
+            output.push_value(value.as_bytes(), quoted, ifs);
         }
         BracedOp::Default | BracedOp::DefaultColon => {
-            let value = lookup_param(ctx, name);
+            let value = lookup_braced_param(ctx, raw, braced_name);
             let use_word = match &value {
                 None => true,
                 Some(v) if op == BracedOp::DefaultColon && v.is_empty() => true,
@@ -424,15 +443,11 @@ fn expand_braced<C: Context>(
                 expand_braced_word(ctx, raw, word_parts, ifs, quoted, output)?;
             } else {
                 let val = value.unwrap();
-                if quoted {
-                    output.push_quoted(val.as_bytes());
-                } else {
-                    output.push_expanded(val.as_bytes(), ifs);
-                }
+                output.push_value(val.as_bytes(), quoted, ifs);
             }
         }
         BracedOp::Assign | BracedOp::AssignColon => {
-            let value = lookup_param(ctx, name);
+            let value = lookup_braced_param(ctx, raw, braced_name);
             let use_word = match &value {
                 None => true,
                 Some(v) if op == BracedOp::AssignColon && v.is_empty() => true,
@@ -441,22 +456,14 @@ fn expand_braced<C: Context>(
             if use_word {
                 let expanded = expand_braced_word_text(ctx, raw, word_parts)?;
                 ctx.set_var(name, &expanded)?;
-                if quoted {
-                    output.push_quoted(&expanded);
-                } else {
-                    output.push_expanded(&expanded, ifs);
-                }
+                output.push_value(&expanded, quoted, ifs);
             } else {
                 let val = value.unwrap();
-                if quoted {
-                    output.push_quoted(val.as_bytes());
-                } else {
-                    output.push_expanded(val.as_bytes(), ifs);
-                }
+                output.push_value(val.as_bytes(), quoted, ifs);
             }
         }
         BracedOp::Error | BracedOp::ErrorColon => {
-            let value = lookup_param(ctx, name);
+            let value = lookup_braced_param(ctx, raw, braced_name);
             let trigger = match &value {
                 None => true,
                 Some(v) if op == BracedOp::ErrorColon && v.is_empty() => true,
@@ -479,14 +486,10 @@ fn expand_braced<C: Context>(
                 });
             }
             let val = value.unwrap();
-            if quoted {
-                output.push_quoted(val.as_bytes());
-            } else {
-                output.push_expanded(val.as_bytes(), ifs);
-            }
+            output.push_value(val.as_bytes(), quoted, ifs);
         }
         BracedOp::Alt | BracedOp::AltColon => {
-            let value = lookup_param(ctx, name);
+            let value = lookup_braced_param(ctx, raw, braced_name);
             let use_word = match &value {
                 None => false,
                 Some(v) if op == BracedOp::AltColon && v.is_empty() => false,
@@ -497,26 +500,18 @@ fn expand_braced<C: Context>(
             }
         }
         BracedOp::TrimSuffix | BracedOp::TrimSuffixLong => {
-            let value = lookup_param(ctx, name);
+            let value = lookup_braced_param(ctx, raw, braced_name);
             let value = require_set_parameter(ctx, name, value)?.into_owned();
             let pattern = expand_braced_word_pattern(ctx, raw, word_parts)?;
             let trimmed = trim_suffix(&value, &pattern, op == BracedOp::TrimSuffixLong);
-            if quoted {
-                output.push_quoted(trimmed);
-            } else {
-                output.push_expanded(trimmed, ifs);
-            }
+            output.push_value(trimmed, quoted, ifs);
         }
         BracedOp::TrimPrefix | BracedOp::TrimPrefixLong => {
-            let value = lookup_param(ctx, name);
+            let value = lookup_braced_param(ctx, raw, braced_name);
             let value = require_set_parameter(ctx, name, value)?.into_owned();
             let pattern = expand_braced_word_pattern(ctx, raw, word_parts)?;
             let trimmed = trim_prefix(&value, &pattern, op == BracedOp::TrimPrefixLong);
-            if quoted {
-                output.push_quoted(trimmed);
-            } else {
-                output.push_expanded(trimmed, ifs);
-            }
+            output.push_value(trimmed, quoted, ifs);
         }
     }
     Ok(())
@@ -540,12 +535,7 @@ fn expand_braced_word_text<C: Context>(
 ) -> Result<Vec<u8>, ExpandError> {
     let mut out = ExpandOutput::new();
     expand_parts_into(ctx, raw, word_parts, b"", true, &mut out)?;
-    let mut result = Vec::new();
-    for f in &out.fields {
-        result.extend_from_slice(f);
-    }
-    result.extend_from_slice(&out.current);
-    Ok(result)
+    Ok(out.into_single_vec())
 }
 
 fn expand_braced_word_pattern<C: Context>(
@@ -566,21 +556,17 @@ fn build_pattern_segments<C: Context>(
 ) -> Result<(), ExpandError> {
     for part in parts {
         match part {
-            WordPart::Literal { start, end } => {
+            WordPart::Literal { start, end, .. } => {
                 let bytes = &raw[*start..*end];
                 segments.push(Segment::Text(bytes.to_vec(), QuoteState::Literal));
             }
-            WordPart::QuotedLiteral { bytes } => {
+            WordPart::QuotedLiteral { bytes, .. } => {
                 segments.push(Segment::Text(bytes.to_vec(), QuoteState::Quoted));
             }
-            WordPart::Expand { kind, quoted } => {
+            WordPart::Expansion { kind, quoted } => {
                 let mut temp = ExpandOutput::new();
                 expand_kind(ctx, raw, kind, b"", *quoted, &mut temp)?;
-                let mut text = Vec::new();
-                for f in &temp.fields {
-                    text.extend_from_slice(f);
-                }
-                text.extend_from_slice(&temp.current);
+                let text = temp.into_single_vec();
                 let state = if *quoted {
                     QuoteState::Quoted
                 } else {
@@ -588,7 +574,7 @@ fn build_pattern_segments<C: Context>(
                 };
                 segments.push(Segment::Text(text, state));
             }
-            WordPart::Tilde { .. } => {}
+            WordPart::TildeLiteral { .. } => {}
         }
     }
     Ok(())
@@ -605,32 +591,26 @@ fn expand_arithmetic<C: Context>(
     let mut expr_text = Vec::new();
     for part in parts {
         match part {
-            WordPart::Literal { start, end } => {
+            WordPart::Literal { start, end, .. } => {
                 expr_text.extend_from_slice(&raw[*start..*end]);
             }
-            WordPart::QuotedLiteral { bytes } => {
+            WordPart::QuotedLiteral { bytes, .. } => {
                 expr_text.extend_from_slice(bytes);
             }
-            WordPart::Expand { kind, .. } => {
+            WordPart::Expansion { kind, .. } => {
                 let mut temp = ExpandOutput::new();
                 expand_kind(ctx, raw, kind, b"", true, &mut temp)?;
-                for f in &temp.fields {
-                    expr_text.extend_from_slice(f);
-                }
-                expr_text.extend_from_slice(&temp.current);
+                let flat = temp.into_single_vec();
+                expr_text.extend_from_slice(&flat);
             }
-            WordPart::Tilde { .. } => {}
+            WordPart::TildeLiteral { .. } => {}
         }
     }
     let saved_line = ctx.lineno();
     let value = eval_arithmetic(ctx, &expr_text)?;
     ctx.set_lineno(saved_line);
     let buf = bstr::I64Buf::new(value);
-    if quoted {
-        output.push_quoted(buf.as_bytes());
-    } else {
-        output.push_expanded(buf.as_bytes(), ifs);
-    }
+    output.push_value(buf.as_bytes(), quoted, ifs);
     Ok(())
 }
 

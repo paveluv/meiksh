@@ -124,7 +124,7 @@ pub(super) fn has_command_substitution(simple: &SimpleCommand) -> bool {
         use crate::syntax::word_parts::{ExpansionKind, WordPart};
         if !word.parts.is_empty() {
             return word.parts.iter().any(|p| matches!(p,
-                WordPart::Expand { kind: ExpansionKind::Command { .. }, .. }
+                WordPart::Expansion { kind: ExpansionKind::Command { .. }, .. }
             ));
         }
         let raw: &[u8] = &word.raw;
