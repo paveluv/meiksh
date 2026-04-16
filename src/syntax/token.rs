@@ -2690,4 +2690,131 @@ mod tests {
             b"a$b`c\\d\"e\\f"
         );
     }
+
+    fn bx(s: &[u8]) -> Box<[u8]> {
+        s.to_vec().into_boxed_slice()
+    }
+
+    #[test]
+    fn heredoc_delimiter_helpers() {
+        assert_eq!(parse_here_doc_delimiter(b"\"EOF\""), (bx(b"EOF"), false));
+        assert_eq!(parse_here_doc_delimiter(b"\\EOF"), (bx(b"EOF"), false));
+    }
+
+    #[test]
+    fn heredoc_delimiter_backslash_inside_double_quotes() {
+        assert_eq!(
+            parse_here_doc_delimiter(b"\"ab\\\"cd\""),
+            (bx(b"ab\"cd"), false)
+        );
+        assert_eq!(
+            parse_here_doc_delimiter(b"\"a\\\\b\""),
+            (bx(b"a\\b"), false)
+        );
+        assert_eq!(parse_here_doc_delimiter(b"\"a\\$b\""), (bx(b"a$b"), false));
+    }
+
+    #[test]
+    fn heredoc_delimiter_dollar_single_quote() {
+        assert_eq!(parse_here_doc_delimiter(b"$'EOF'"), (bx(b"EOF"), false));
+        assert_eq!(
+            parse_here_doc_delimiter(b"$'ab\\'cd'"),
+            (bx(b"ab'cd"), false)
+        );
+    }
+
+    #[test]
+    fn heredoc_delimiter_backslash_preserves_non_special_in_dquotes() {
+        assert_eq!(
+            parse_here_doc_delimiter(b"\"E\\OF\""),
+            (bx(b"E\\OF"), false)
+        );
+        assert_eq!(
+            parse_here_doc_delimiter(b"\"a\\nb\""),
+            (bx(b"a\\nb"), false)
+        );
+
+        assert_eq!(parse_here_doc_delimiter(b"\"a\\$b\""), (bx(b"a$b"), false));
+        assert_eq!(
+            parse_here_doc_delimiter(b"\"a\\\\b\""),
+            (bx(b"a\\b"), false)
+        );
+        assert_eq!(
+            parse_here_doc_delimiter(b"\"a\\\"b\""),
+            (bx(b"a\"b"), false)
+        );
+        assert_eq!(parse_here_doc_delimiter(b"\"a\\`b\""), (bx(b"a`b"), false));
+    }
+
+    #[test]
+    fn heredoc_delimiter_parse_dollar_single_quote() {
+        let (delim, expand) = parse_here_doc_delimiter(b"$'EOF'");
+        assert_eq!(&*delim, b"EOF");
+        assert!(!expand);
+    }
+
+    #[test]
+    fn heredoc_delimiter_parse_double_quoted() {
+        let (delim, expand) = parse_here_doc_delimiter(b"\"EOF\"");
+        assert_eq!(&*delim, b"EOF");
+        assert!(!expand);
+    }
+
+    #[test]
+    fn heredoc_delimiter_parse_backslash_escape() {
+        let (delim, expand) = parse_here_doc_delimiter(b"E\\OF");
+        assert_eq!(&*delim, b"EOF");
+        assert!(!expand);
+    }
+
+    #[test]
+    fn heredoc_delimiter_double_quote_with_backslash() {
+        let (delim, expand) = parse_here_doc_delimiter(b"\"E\\$OF\"");
+        assert_eq!(&*delim, b"E$OF");
+        assert!(!expand);
+    }
+
+    #[test]
+    fn heredoc_delimiter_dollar_single_quote_with_escape() {
+        let (delim, expand) = parse_here_doc_delimiter(b"$'E\\'OF'");
+        assert_eq!(&*delim, b"E'OF");
+        assert!(!expand);
+    }
+
+    #[test]
+    fn display_name_for_keywords_and_word() {
+        assert_eq!(&*Token::If.display_name(), b"if");
+        assert_eq!(&*Token::Then.display_name(), b"then");
+        assert_eq!(&*Token::Else.display_name(), b"else");
+        assert_eq!(&*Token::Elif.display_name(), b"elif");
+        assert_eq!(&*Token::Fi.display_name(), b"fi");
+        assert_eq!(&*Token::Do.display_name(), b"do");
+        assert_eq!(&*Token::Done.display_name(), b"done");
+        assert_eq!(&*Token::Case.display_name(), b"case");
+        assert_eq!(&*Token::Esac.display_name(), b"esac");
+        assert_eq!(&*Token::In.display_name(), b"in");
+        assert_eq!(&*Token::While.display_name(), b"while");
+        assert_eq!(&*Token::Until.display_name(), b"until");
+        assert_eq!(&*Token::For.display_name(), b"for");
+        assert_eq!(&*Token::Function.display_name(), b"function");
+        assert_eq!(&*Token::Bang.display_name(), b"!");
+        assert_eq!(&*Token::LBrace.display_name(), b"{");
+        assert_eq!(&*Token::RBrace.display_name(), b"}");
+        assert_eq!(
+            &*Token::Word(bx(b"foo"), Box::new([])).display_name(),
+            b"word"
+        );
+    }
+
+    #[test]
+    fn token_into_word_some_and_none() {
+        use crate::syntax::word_parts::WordPart;
+        let empty_parts: Box<[WordPart]> = Box::new([]);
+        assert_eq!(
+            Token::Word(bx(b"hi"), Box::new([])).into_word(),
+            Some((bx(b"hi"), empty_parts))
+        );
+        assert_eq!(Token::Eof.into_word(), None);
+        assert_eq!(Token::Semi.into_word(), None);
+    }
 }
