@@ -1,7 +1,9 @@
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::rc::Rc;
 
 use super::ParseError;
+use super::word_parts::{BracedOp, ExpansionKind, WordPart};
 
 struct AliasLayer<'a> {
     text: Cow<'a, [u8]>,
@@ -110,7 +112,7 @@ fn parse_i32_bytes(b: &[u8]) -> Option<i32> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum Token {
-    Word(Box<[u8]>),
+    Word(Box<[u8]>, Box<[WordPart]>),
     IoNumber(i32),
 
     Pipe,
@@ -183,9 +185,9 @@ impl Token {
 }
 
 impl Token {
-    pub(super) fn into_word(self) -> Option<Box<[u8]>> {
-        if let Token::Word(w) = self {
-            Some(w)
+    pub(super) fn into_word(self) -> Option<(Box<[u8]>, Box<[WordPart]>)> {
+        if let Token::Word(w, p) = self {
+            Some((w, p))
         } else {
             None
         }
@@ -833,7 +835,7 @@ impl<'a> Parser<'a> {
             self.alias_trailing_blank_pending = false;
         }
 
-        if let Token::Word(w) = tok {
+        if let Token::Word(w, p) = tok {
             if check_keyword {
                 if let Some(kw_tok) = word_to_keyword_token(&w) {
                     return Ok(kw_tok);
@@ -859,7 +861,7 @@ impl<'a> Parser<'a> {
                     }
                 }
             }
-            Ok(Token::Word(w))
+            Ok(Token::Word(w, p))
         } else {
             Ok(tok)
         }
@@ -1110,18 +1112,30 @@ impl<'a> Parser<'a> {
                         }
                     }
                     let mut raw = digits;
-                    self.scan_raw_word(&mut raw)?;
+                    let mut parts = Vec::new();
+                    let mut qbuf = Vec::new();
+                    let (_had_quote, lit_start) = self.scan_raw_word_parts(&mut raw, &mut parts, &mut qbuf, 0)?;
+                    flush_literal(&raw, lit_start, raw.len(), &mut parts);
+                    flush_quoted_buf(&mut qbuf, &mut parts);
                     if !raw.is_empty() {
-                        queued_items
-                            .push(HereDocLineItem::Token(Token::Word(raw.into_boxed_slice())));
+                        queued_items.push(HereDocLineItem::Token(Token::Word(
+                            raw.into_boxed_slice(),
+                            parts.into_boxed_slice(),
+                        )));
                     }
                 }
                 _ => {
                     let mut raw = Vec::new();
-                    self.scan_raw_word(&mut raw)?;
+                    let mut parts = Vec::new();
+                    let mut qbuf = Vec::new();
+                    let (_had_quote, lit_start) = self.scan_raw_word_parts(&mut raw, &mut parts, &mut qbuf, 0)?;
+                    flush_literal(&raw, lit_start, raw.len(), &mut parts);
+                    flush_quoted_buf(&mut qbuf, &mut parts);
                     if !raw.is_empty() {
-                        queued_items
-                            .push(HereDocLineItem::Token(Token::Word(raw.into_boxed_slice())));
+                        queued_items.push(HereDocLineItem::Token(Token::Word(
+                            raw.into_boxed_slice(),
+                            parts.into_boxed_slice(),
+                        )));
                     }
                 }
             }
@@ -1204,6 +1218,8 @@ impl<'a> Parser<'a> {
         }
 
         let mut raw = prefix;
+        let mut parts = Vec::new();
+        let mut qbuf = Vec::new();
         loop {
             if raw.is_empty() {
                 if self.cached_byte.is_none() || matches!(self.peek_byte(), Some(b) if is_delim(b))
@@ -1212,7 +1228,9 @@ impl<'a> Parser<'a> {
                 }
             }
 
-            let had_quote = self.scan_raw_word(&mut raw)?;
+            let initial_lit = if parts.is_empty() { 0 } else { raw.len() };
+            let (had_quote, lit_start) = self.scan_raw_word_parts(&mut raw, &mut parts, &mut qbuf, initial_lit)?;
+            flush_literal(&raw, lit_start, raw.len(), &mut parts);
             if raw.is_empty() {
                 return Ok(Token::Eof);
             }
@@ -1228,6 +1246,8 @@ impl<'a> Parser<'a> {
                             let trailing_blank = alias_has_trailing_blank(value);
                             self.expanding_aliases.insert(Cow::Borrowed(&**key));
                             raw.clear();
+                            parts.clear();
+                            qbuf.clear();
                             self.alias_stack.push(AliasLayer {
                                 text: Cow::Borrowed(value),
                                 pos: 0,
@@ -1247,7 +1267,8 @@ impl<'a> Parser<'a> {
                 }
             }
 
-            return Ok(Token::Word(raw.into_boxed_slice()));
+            flush_quoted_buf(&mut qbuf, &mut parts);
+            return Ok(Token::Word(raw.into_boxed_slice(), parts.into_boxed_slice()));
         }
     }
 
@@ -1340,7 +1361,780 @@ impl<'a> Parser<'a> {
         }
         Ok(had_quote)
     }
+
+    /// Scans a word from the input, accumulating raw bytes and building WordParts.
+    /// `initial_lit_start` is the position in `raw` where the current literal
+    /// region begins (typically 0 for a fresh word, or raw.len() if a prefix was
+    /// already flushed).
+    /// Returns `(had_quote, literal_start)` where `literal_start` is the position
+    /// in `raw` from which any trailing literal bytes should be flushed by the caller.
+    fn scan_raw_word_parts(
+        &mut self,
+        raw: &mut Vec<u8>,
+        parts: &mut Vec<WordPart>,
+        qbuf: &mut Vec<u8>,
+        initial_lit_start: usize,
+    ) -> Result<(bool, usize), ParseError> {
+        let mut had_quote = false;
+        let mut lit_start = initial_lit_start;
+        loop {
+            match self.peek_byte() {
+                None => break,
+                Some(b) if is_word_break(b) => break,
+                Some(b'#') if raw.is_empty() => break,
+                Some(b'\\') => {
+                    flush_literal(raw, lit_start, raw.len(), parts);
+                    self.advance_byte();
+                    match self.peek_byte() {
+                        Some(b'\n') => {
+                            self.advance_byte();
+                            if raw.is_empty() {
+                                self.skip_blanks_and_comments();
+                                if self.cached_byte.is_none()
+                                    || matches!(self.peek_byte(), Some(b) if is_delim(b))
+                                {
+                                    lit_start = raw.len();
+                                    break;
+                                }
+                            }
+                        }
+                        Some(b) => {
+                            raw.push(b'\\');
+                            raw.push(b);
+                            self.advance_byte();
+                            had_quote = true;
+                            qbuf.push(b);
+                        }
+                        None => {
+                            raw.push(b'\\');
+                            had_quote = true;
+                        }
+                    }
+                    lit_start = raw.len();
+                }
+                Some(b'\'') => {
+                    flush_literal(raw, lit_start, raw.len(), parts);
+                    had_quote = true;
+                    raw.push(b'\'');
+                    self.advance_byte();
+                    let content_start = raw.len();
+                    self.consume_single_quote(raw)?;
+                    let content_end = raw.len() - 1;
+                    if content_start == content_end {
+                        flush_quoted_buf(qbuf, parts);
+                        parts.push(WordPart::QuotedLiteral { bytes: Box::new([]) });
+                    } else {
+                        qbuf.extend_from_slice(&raw[content_start..content_end]);
+                    }
+                    lit_start = raw.len();
+                }
+                Some(b'"') => {
+                    flush_literal(raw, lit_start, raw.len(), parts);
+                    had_quote = true;
+                    raw.push(b'"');
+                    self.advance_byte();
+                    let raw_before = raw.len();
+                    self.consume_double_quote(raw)?;
+                    let dq_raw = &raw[raw_before..raw.len() - 1];
+                    if dq_raw.is_empty() {
+                        flush_quoted_buf(qbuf, parts);
+                        parts.push(WordPart::QuotedLiteral { bytes: Box::new([]) });
+                    } else {
+                        self.build_double_quote_parts(dq_raw, raw_before, parts, qbuf);
+                    }
+                    lit_start = raw.len();
+                }
+                Some(b'$') => {
+                    flush_literal(raw, lit_start, raw.len(), parts);
+                    flush_quoted_buf(qbuf, parts);
+                    let raw_start = raw.len();
+                    raw.push(b'$');
+                    self.advance_byte();
+                    self.skip_continuations();
+                    match self.peek_byte() {
+                        Some(b'\'') => {
+                            had_quote = true;
+                            let sq_start = raw.len();
+                            self.consume_dollar_single_quote(raw)?;
+                            let body = &raw[sq_start + 1..raw.len() - 1];
+                            let decoded =
+                                crate::expand::parameter::parse_dollar_single_quoted_body(body);
+                            qbuf.extend_from_slice(&decoded);
+                        }
+                        Some(b'(' | b'{') => {
+                            self.consume_dollar_construct(raw)?;
+                            let raw_end = raw.len();
+                            let dollar_raw = &raw[raw_start..raw_end];
+                            self.build_dollar_parts(dollar_raw, raw_start, raw_end, parts, qbuf, false);
+                        }
+                        Some(b'@' | b'*' | b'?' | b'$' | b'!' | b'#' | b'-') => {
+                            let ch = self.peek_byte().unwrap();
+                            raw.push(ch);
+                            self.advance_byte();
+                            parts.push(WordPart::Expand {
+                                kind: ExpansionKind::SpecialVar { ch },
+                                quoted: false,
+                            });
+                        }
+                        Some(b'0'..=b'9') => {
+                            let ch = self.peek_byte().unwrap();
+                            raw.push(ch);
+                            self.advance_byte();
+                            parts.push(WordPart::Expand {
+                                kind: ExpansionKind::SpecialVar { ch },
+                                quoted: false,
+                            });
+                        }
+                        Some(c) if c == b'_' || c.is_ascii_alphabetic() => {
+                            let name_start = raw.len();
+                            raw.push(c);
+                            self.advance_byte();
+                            while let Some(c2) = self.peek_byte() {
+                                if c2 == b'_' || c2.is_ascii_alphanumeric() {
+                                    raw.push(c2);
+                                    self.advance_byte();
+                                } else {
+                                    break;
+                                }
+                            }
+                            let name_end = raw.len();
+                            parts.push(WordPart::Expand {
+                                kind: ExpansionKind::SimpleVar {
+                                    start: name_start,
+                                    end: name_end,
+                                },
+                                quoted: false,
+                            });
+                        }
+                        _ => {
+                            parts.push(WordPart::Expand {
+                                kind: ExpansionKind::LiteralDollar,
+                                quoted: false,
+                            });
+                        }
+                    }
+                    lit_start = raw.len();
+                }
+                Some(b'`') => {
+                    flush_literal(raw, lit_start, raw.len(), parts);
+                    flush_quoted_buf(qbuf, parts);
+                    let bt_start = raw.len();
+                    raw.push(b'`');
+                    self.advance_byte();
+                    had_quote = true;
+                    self.consume_backtick_inner(raw)?;
+                    let bt_end = raw.len();
+                    let body_raw = &raw[bt_start + 1..bt_end - 1];
+                    let body = unescape_backtick(body_raw, false);
+                    let program = crate::syntax::parse(&body).unwrap_or_default();
+                    parts.push(WordPart::Expand {
+                        kind: ExpansionKind::Command {
+                            program: Rc::new(program),
+                        },
+                        quoted: false,
+                    });
+                    lit_start = raw.len();
+                }
+                Some(_b) => {
+                    flush_quoted_buf(qbuf, parts);
+                    if self.pushed_back_byte.is_none() && self.alias_stack.len() == 1 {
+                        let layer = &mut self.alias_stack[0];
+                        let bytes = &*layer.text;
+                        let start = layer.pos;
+                        let mut pos = start + 1;
+                        while pos < bytes.len() {
+                            if BYTE_CLASS[bytes[pos] as usize] & (BC_WORD_BREAK | BC_QUOTE) != 0 {
+                                break;
+                            }
+                            pos += 1;
+                        }
+                        raw.extend_from_slice(&bytes[start..pos]);
+                        layer.pos = pos;
+                        self.cached_byte = bytes.get(pos).copied();
+                    } else {
+                        raw.push(_b);
+                        self.advance_byte();
+                    }
+                }
+            }
+        }
+        Ok((had_quote, lit_start))
+    }
+
+    fn build_double_quote_parts(
+        &self,
+        dq_raw: &[u8],
+        abs_offset: usize,
+        parts: &mut Vec<WordPart>,
+        qbuf: &mut Vec<u8>,
+    ) {
+        let mut i = 0;
+        while i < dq_raw.len() {
+            match dq_raw[i] {
+                b'\\' if i + 1 < dq_raw.len() => {
+                    let next = dq_raw[i + 1];
+                    if matches!(next, b'$' | b'`' | b'"' | b'\\' | b'\n' | b'}') {
+                        if next != b'\n' {
+                            qbuf.push(next);
+                        }
+                        i += 2;
+                    } else {
+                        qbuf.push(b'\\');
+                        i += 1;
+                    }
+                }
+                b'$' => {
+                    flush_quoted_buf(qbuf, parts);
+                    let remaining = &dq_raw[i..];
+                    let (kind, consumed) = classify_dollar_from_slice(remaining, true, abs_offset + i);
+                    parts.push(WordPart::Expand { kind, quoted: true });
+                    i += consumed;
+                }
+                b'`' => {
+                    flush_quoted_buf(qbuf, parts);
+                    let bt_end = find_backtick_end_in_slice(dq_raw, i + 1);
+                    let body_raw = &dq_raw[i + 1..bt_end];
+                    let body = unescape_backtick(body_raw, true);
+                    let program = crate::syntax::parse(&body).unwrap_or_default();
+                    parts.push(WordPart::Expand {
+                        kind: ExpansionKind::Command {
+                            program: Rc::new(program),
+                        },
+                        quoted: true,
+                    });
+                    i = if bt_end < dq_raw.len() {
+                        bt_end + 1
+                    } else {
+                        bt_end
+                    };
+                }
+                _ => {
+                    qbuf.push(dq_raw[i]);
+                    i += 1;
+                }
+            }
+        }
+    }
+
+    fn build_dollar_parts(
+        &self,
+        dollar_raw: &[u8],
+        raw_start: usize,
+        _raw_end: usize,
+        parts: &mut Vec<WordPart>,
+        qbuf: &mut Vec<u8>,
+        quoted: bool,
+    ) {
+        if dollar_raw.len() < 2 {
+            flush_quoted_buf(qbuf, parts);
+            parts.push(WordPart::Expand {
+                kind: ExpansionKind::LiteralDollar,
+                quoted,
+            });
+            return;
+        }
+        flush_quoted_buf(qbuf, parts);
+        let (kind, _consumed) = classify_dollar_from_slice(dollar_raw, quoted, raw_start);
+        parts.push(WordPart::Expand { kind, quoted });
+    }
 }
+
+/// Classifies a `$...` expansion from a byte slice.
+/// `base` is added to all position offsets in the returned `ExpansionKind`
+/// so they reference positions in the full `Word.raw` buffer.
+fn classify_dollar_from_slice(slice: &[u8], _quoted: bool, base: usize) -> (ExpansionKind, usize) {
+    if slice.len() < 2 {
+        return (ExpansionKind::LiteralDollar, 1);
+    }
+    let c1 = slice[1];
+    match c1 {
+        b'{' => {
+            let brace_end = find_closing_brace(slice, 2, slice.len());
+            let expr = &slice[2..brace_end];
+            if expr.is_empty() {
+                return (
+                    ExpansionKind::Braced {
+                        name_start: base + 2,
+                        name_end: base + 2,
+                        op: BracedOp::None,
+                        parts: Box::new([]),
+                    },
+                    if brace_end < slice.len() {
+                        brace_end + 1
+                    } else {
+                        slice.len()
+                    },
+                );
+            }
+            let is_length = expr[0] == b'#'
+                && expr.len() > 1
+                && !matches!(expr[1], b'}' | b'-' | b'=' | b'?' | b'+' | b'%' | b'#');
+            let name_offset = if is_length { 1 } else { 0 };
+            let name_rel_end = parse_braced_name_end(&expr[name_offset..]);
+            let rel_name_start = 2 + name_offset;
+            let rel_name_end = rel_name_start + name_rel_end;
+            if is_length {
+                return (
+                    ExpansionKind::Braced {
+                        name_start: base + rel_name_start,
+                        name_end: base + rel_name_end,
+                        op: BracedOp::Length,
+                        parts: Box::new([]),
+                    },
+                    if brace_end < slice.len() {
+                        brace_end + 1
+                    } else {
+                        slice.len()
+                    },
+                );
+            }
+            let (op, word_rel_start) = classify_braced_op(slice, rel_name_end);
+            let word_parts = if word_rel_start < brace_end {
+                build_word_parts_for_slice(slice, word_rel_start, brace_end, base)
+            } else {
+                Box::new([])
+            };
+            (
+                ExpansionKind::Braced {
+                    name_start: base + rel_name_start,
+                    name_end: base + rel_name_end,
+                    op,
+                    parts: word_parts,
+                },
+                if brace_end < slice.len() {
+                    brace_end + 1
+                } else {
+                    slice.len()
+                },
+            )
+        }
+        b'(' => {
+            if slice.get(2) == Some(&b'(') {
+                let arith_end = find_arith_end(slice, 3, slice.len());
+                let arith_parts = build_word_parts_for_slice(slice, 3, arith_end, base);
+                let consumed = if arith_end + 2 <= slice.len() {
+                    arith_end + 2
+                } else {
+                    slice.len()
+                };
+                (ExpansionKind::Arithmetic { parts: arith_parts }, consumed)
+            } else {
+                let paren_end = find_closing_paren(slice, 2, slice.len());
+                let body = &slice[2..paren_end];
+                let program = crate::syntax::parse(body).unwrap_or_default();
+                let consumed = if paren_end < slice.len() {
+                    paren_end + 1
+                } else {
+                    slice.len()
+                };
+                (
+                    ExpansionKind::Command {
+                        program: Rc::new(program),
+                    },
+                    consumed,
+                )
+            }
+        }
+        b'@' | b'*' | b'?' | b'$' | b'!' | b'#' | b'-' | b'0' => {
+            (ExpansionKind::SpecialVar { ch: c1 }, 2)
+        }
+        b'1'..=b'9' => (ExpansionKind::SpecialVar { ch: c1 }, 2),
+        _ if c1 == b'_' || c1.is_ascii_alphabetic() => {
+            let mut i = 2;
+            while i < slice.len() && (slice[i] == b'_' || slice[i].is_ascii_alphanumeric()) {
+                i += 1;
+            }
+            (ExpansionKind::SimpleVar { start: base + 1, end: base + i }, i)
+        }
+        _ => (ExpansionKind::LiteralDollar, 1),
+    }
+}
+
+fn find_backtick_end_in_slice(raw: &[u8], start: usize) -> usize {
+    let mut i = start;
+    while i < raw.len() {
+        if raw[i] == b'`' {
+            return i;
+        }
+        if raw[i] == b'\\' {
+            i += 2;
+        } else {
+            i += 1;
+        }
+    }
+    raw.len()
+}
+
+fn flush_quoted_buf(qbuf: &mut Vec<u8>, parts: &mut Vec<WordPart>) {
+    if !qbuf.is_empty() {
+        parts.push(WordPart::QuotedLiteral {
+            bytes: std::mem::take(qbuf).into_boxed_slice(),
+        });
+    }
+}
+
+fn flush_literal(_raw: &[u8], start: usize, end: usize, parts: &mut Vec<WordPart>) {
+    if start < end {
+        if let Some(WordPart::Literal { end: prev_end, .. }) = parts.last_mut() {
+            if *prev_end == start {
+                *prev_end = end;
+                return;
+            }
+        }
+        parts.push(WordPart::Literal { start, end });
+    }
+}
+
+fn classify_braced_op(expr: &[u8], name_end: usize) -> (BracedOp, usize) {
+    let rest = &expr[name_end..];
+    if rest.is_empty() {
+        return (BracedOp::None, name_end);
+    }
+    match rest[0] {
+        b':' if rest.len() > 1 => match rest[1] {
+            b'-' => (BracedOp::DefaultColon, name_end + 2),
+            b'=' => (BracedOp::AssignColon, name_end + 2),
+            b'?' => (BracedOp::ErrorColon, name_end + 2),
+            b'+' => (BracedOp::AltColon, name_end + 2),
+            _ => (BracedOp::None, name_end),
+        },
+        b'-' => (BracedOp::Default, name_end + 1),
+        b'=' => (BracedOp::Assign, name_end + 1),
+        b'?' => (BracedOp::Error, name_end + 1),
+        b'+' => (BracedOp::Alt, name_end + 1),
+        b'%' if rest.len() > 1 && rest[1] == b'%' => (BracedOp::TrimSuffixLong, name_end + 2),
+        b'%' => (BracedOp::TrimSuffix, name_end + 1),
+        b'#' if rest.len() > 1 && rest[1] == b'#' => (BracedOp::TrimPrefixLong, name_end + 2),
+        b'#' => (BracedOp::TrimPrefix, name_end + 1),
+        _ => (BracedOp::None, name_end),
+    }
+}
+
+fn parse_braced_name_end(expr: &[u8]) -> usize {
+    if expr.is_empty() {
+        return 0;
+    }
+    let b0 = expr[0];
+    if b0.is_ascii_digit() {
+        let mut i = 0;
+        while i < expr.len() && expr[i].is_ascii_digit() {
+            i += 1;
+        }
+        return i;
+    }
+    if matches!(b0, b'?' | b'$' | b'!' | b'#' | b'*' | b'@') {
+        return 1;
+    }
+    if b0 == b'_' || b0.is_ascii_alphabetic() {
+        let mut i = 0;
+        while i < expr.len() && (expr[i] == b'_' || expr[i].is_ascii_alphanumeric()) {
+            i += 1;
+        }
+        return i;
+    }
+    0
+}
+
+
+/// Builds `WordPart` entries for a sub-range of a raw byte buffer.
+/// `base` is added to all positional offsets so they reference positions
+/// in the full `Word.raw` buffer (use 0 when `raw` is already the full buffer).
+fn build_word_parts_for_slice(raw: &[u8], start: usize, end: usize, base: usize) -> Box<[WordPart]> {
+    let mut parts = Vec::new();
+    let mut qbuf = Vec::new();
+    let mut i = start;
+    while i < end {
+        match raw[i] {
+            b'\'' => {
+                i += 1;
+                while i < end && raw[i] != b'\'' {
+                    qbuf.push(raw[i]);
+                    i += 1;
+                }
+                if i < end {
+                    i += 1;
+                }
+            }
+            b'"' => {
+                i += 1;
+                while i < end && raw[i] != b'"' {
+                    match raw[i] {
+                        b'\\' if i + 1 < end => {
+                            let next = raw[i + 1];
+                            if matches!(next, b'$' | b'`' | b'"' | b'\\' | b'\n' | b'}') {
+                                if next != b'\n' {
+                                    qbuf.push(next);
+                                }
+                                i += 2;
+                            } else {
+                                qbuf.push(b'\\');
+                                i += 1;
+                            }
+                        }
+                        b'$' => {
+                            flush_quoted_buf(&mut qbuf, &mut parts);
+                            let (kind, consumed) = classify_dollar_from_slice(&raw[i..end], true, base + i);
+                            parts.push(WordPart::Expand { kind, quoted: true });
+                            i += consumed;
+                        }
+                        b'`' => {
+                            flush_quoted_buf(&mut qbuf, &mut parts);
+                            let bt_end = find_backtick_end(raw, i + 1, end);
+                            let body = unescape_backtick(&raw[i + 1..bt_end], true);
+                            let program = crate::syntax::parse(&body).unwrap_or_default();
+                            parts.push(WordPart::Expand {
+                                kind: ExpansionKind::Command {
+                                    program: Rc::new(program),
+                                },
+                                quoted: true,
+                            });
+                            i = if bt_end < end { bt_end + 1 } else { bt_end };
+                        }
+                        _ => {
+                            qbuf.push(raw[i]);
+                            i += 1;
+                        }
+                    }
+                }
+                if i < end {
+                    i += 1;
+                }
+            }
+            b'\\' => {
+                i += 1;
+                if i < end {
+                    if raw[i] != b'\n' {
+                        qbuf.push(raw[i]);
+                    }
+                    i += 1;
+                }
+            }
+            b'$' => {
+                flush_quoted_buf(&mut qbuf, &mut parts);
+                let (kind, consumed) = classify_dollar_from_slice(&raw[i..end], false, base + i);
+                parts.push(WordPart::Expand {
+                    kind,
+                    quoted: false,
+                });
+                i += consumed;
+            }
+            b'`' => {
+                flush_quoted_buf(&mut qbuf, &mut parts);
+                let bt_end = find_backtick_end(raw, i + 1, end);
+                let body = unescape_backtick(&raw[i + 1..bt_end], false);
+                let program = crate::syntax::parse(&body).unwrap_or_default();
+                parts.push(WordPart::Expand {
+                    kind: ExpansionKind::Command {
+                        program: Rc::new(program),
+                    },
+                    quoted: false,
+                });
+                i = if bt_end < end { bt_end + 1 } else { bt_end };
+            }
+            _ => {
+                let lit_start = i;
+                while i < end
+                    && !matches!(raw[i], b'\'' | b'"' | b'\\' | b'$' | b'`')
+                {
+                    i += 1;
+                }
+                flush_quoted_buf(&mut qbuf, &mut parts);
+                parts.push(WordPart::Literal {
+                    start: base + lit_start,
+                    end: base + i,
+                });
+            }
+        }
+    }
+    flush_quoted_buf(&mut qbuf, &mut parts);
+    parts.into_boxed_slice()
+}
+
+
+fn find_closing_brace(raw: &[u8], start: usize, end: usize) -> usize {
+    let mut i = start;
+    while i < end {
+        match raw[i] {
+            b'}' => return i,
+            b'\\' => {
+                i += 2;
+            }
+            b'\'' => {
+                i += 1;
+                while i < end && raw[i] != b'\'' {
+                    i += 1;
+                }
+                if i < end {
+                    i += 1;
+                }
+            }
+            b'"' => {
+                i += 1;
+                while i < end && raw[i] != b'"' {
+                    if raw[i] == b'\\' {
+                        i += 1;
+                    }
+                    i += 1;
+                }
+                if i < end {
+                    i += 1;
+                }
+            }
+            b'$' if i + 1 < end && raw[i + 1] == b'{' => {
+                i += 2;
+                let inner = find_closing_brace(raw, i, end);
+                i = if inner < end { inner + 1 } else { inner };
+            }
+            b'$' if i + 1 < end && raw[i + 1] == b'(' => {
+                if i + 2 < end && raw[i + 2] == b'(' {
+                    i += 3;
+                    let inner = find_arith_end(raw, i, end);
+                    i = if inner + 2 <= end { inner + 2 } else { end };
+                } else {
+                    i += 2;
+                    let inner = find_closing_paren(raw, i, end);
+                    i = if inner < end { inner + 1 } else { inner };
+                }
+            }
+            _ => {
+                i += 1;
+            }
+        }
+    }
+    end
+}
+
+fn find_closing_paren(raw: &[u8], start: usize, end: usize) -> usize {
+    let mut i = start;
+    let mut depth = 1usize;
+    while i < end {
+        match raw[i] {
+            b'(' => {
+                depth += 1;
+                i += 1;
+            }
+            b')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return i;
+                }
+                i += 1;
+            }
+            b'\'' => {
+                i += 1;
+                while i < end && raw[i] != b'\'' {
+                    i += 1;
+                }
+                if i < end {
+                    i += 1;
+                }
+            }
+            b'"' => {
+                i += 1;
+                while i < end && raw[i] != b'"' {
+                    if raw[i] == b'\\' {
+                        i += 1;
+                    }
+                    i += 1;
+                }
+                if i < end {
+                    i += 1;
+                }
+            }
+            b'\\' => {
+                i += 2;
+            }
+            _ => {
+                i += 1;
+            }
+        }
+    }
+    end
+}
+
+fn find_arith_end(raw: &[u8], start: usize, end: usize) -> usize {
+    let mut i = start;
+    let mut depth = 1usize;
+    while i < end {
+        match raw[i] {
+            b'(' => {
+                depth += 1;
+                i += 1;
+            }
+            b')' => {
+                if depth == 1 && i + 1 < end && raw[i + 1] == b')' {
+                    return i;
+                }
+                depth = depth.saturating_sub(1);
+                i += 1;
+            }
+            b'\'' => {
+                i += 1;
+                while i < end && raw[i] != b'\'' {
+                    i += 1;
+                }
+                if i < end {
+                    i += 1;
+                }
+            }
+            b'"' => {
+                i += 1;
+                while i < end && raw[i] != b'"' {
+                    if raw[i] == b'\\' {
+                        i += 1;
+                    }
+                    i += 1;
+                }
+                if i < end {
+                    i += 1;
+                }
+            }
+            _ => {
+                i += 1;
+            }
+        }
+    }
+    end
+}
+
+fn find_backtick_end(raw: &[u8], start: usize, end: usize) -> usize {
+    let mut i = start;
+    while i < end {
+        if raw[i] == b'`' {
+            return i;
+        }
+        if raw[i] == b'\\' {
+            i += 2;
+        } else {
+            i += 1;
+        }
+    }
+    end
+}
+
+fn unescape_backtick(raw: &[u8], in_double_quotes: bool) -> Vec<u8> {
+    let mut result = Vec::with_capacity(raw.len());
+    let mut i = 0;
+    while i < raw.len() {
+        if raw[i] == b'\\' && i + 1 < raw.len() {
+            let next = raw[i + 1];
+            let special = if in_double_quotes {
+                matches!(next, b'$' | b'`' | b'\\' | b'"' | b'\n')
+            } else {
+                matches!(next, b'$' | b'`' | b'\\')
+            };
+            if special {
+                result.push(next);
+                i += 2;
+                continue;
+            }
+        }
+        result.push(raw[i]);
+        i += 1;
+    }
+    result
+}
+
 
 pub(super) struct SavedAliasState {
     layers: Vec<AliasLayer<'static>>,

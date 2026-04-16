@@ -1,8 +1,9 @@
 mod arithmetic;
 pub(crate) mod core;
+pub(crate) mod expand_parts;
 pub(crate) mod glob;
 mod model;
-mod parameter;
+pub(crate) mod parameter;
 mod pathname;
 pub(crate) mod word;
 

@@ -1,5 +1,6 @@
 pub(crate) mod ast;
 mod token;
+pub(crate) mod word_parts;
 
 use std::collections::HashMap;
 
@@ -12,7 +13,6 @@ pub(crate) struct ParseError {
     pub(crate) line: Option<usize>,
 }
 
-#[cfg(test)]
 pub(crate) fn parse(source: &[u8]) -> Result<Program, ParseError> {
     parse_with_aliases(source, &HashMap::new())
 }
@@ -777,12 +777,14 @@ mod tests {
                 name: bx(b"X"),
                 value: Word {
                     raw: bx(b"1"),
+                    parts: Box::new([]),
                     line: 0,
                 },
             }]
             .into_boxed_slice(),
             words: vec![Word {
                 raw: bx(b"echo"),
+                parts: Box::new([]),
                 line: 0,
             }]
             .into_boxed_slice(),
@@ -791,6 +793,7 @@ mod tests {
                 kind: RedirectionKind::Write,
                 target: Word {
                     raw: bx(b"err"),
+                    parts: Box::new([]),
                     line: 0,
                 },
                 here_doc: None,
@@ -866,6 +869,7 @@ mod tests {
             items: Some(
                 vec![Word {
                     raw: bx(b"a"),
+                    parts: Box::new([]),
                     line: 0,
                 }]
                 .into_boxed_slice(),
@@ -879,11 +883,13 @@ mod tests {
         let case_cmd = Command::Case(CaseCommand {
             word: Word {
                 raw: bx(b"x"),
+                parts: Box::new([]),
                 line: 0,
             },
             arms: vec![CaseArm {
                 patterns: vec![Word {
                     raw: bx(b"*"),
+                    parts: Box::new([]),
                     line: 0,
                 }]
                 .into_boxed_slice(),
@@ -903,6 +909,7 @@ mod tests {
                 kind: RedirectionKind::Write,
                 target: Word {
                     raw: bx(b"out"),
+                    parts: Box::new([]),
                     line: 0,
                 },
                 here_doc: Some(HereDoc {
@@ -2431,12 +2438,14 @@ mod tests {
         assert_eq!(&*Token::Bang.display_name(), b"!");
         assert_eq!(&*Token::LBrace.display_name(), b"{");
         assert_eq!(&*Token::RBrace.display_name(), b"}");
-        assert_eq!(&*Token::Word(bx(b"foo")).display_name(), b"word");
+        assert_eq!(&*Token::Word(bx(b"foo"), Box::new([])).display_name(), b"word");
     }
 
     #[test]
     fn token_into_word_some_and_none() {
-        assert_eq!(Token::Word(bx(b"hi")).into_word(), Some(bx(b"hi")));
+        use crate::syntax::word_parts::WordPart;
+        let empty_parts: Box<[WordPart]> = Box::new([]);
+        assert_eq!(Token::Word(bx(b"hi"), Box::new([])).into_word(), Some((bx(b"hi"), empty_parts)));
         assert_eq!(Token::Eof.into_word(), None);
         assert_eq!(Token::Semi.into_word(), None);
     }

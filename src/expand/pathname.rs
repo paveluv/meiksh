@@ -96,6 +96,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"$WORDS".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 },
             )
@@ -107,6 +108,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"*".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 }
             )
@@ -143,6 +145,7 @@ mod tests {
                         &mut ctx,
                         &Word {
                             raw: b"/testdir/*.txt".as_ref().into(),
+                            parts: Box::new([]),
                             line: 0
                         },
                     )
@@ -154,6 +157,7 @@ mod tests {
                         &mut ctx,
                         &Word {
                             raw: b"\\*.txt".as_ref().into(),
+                            parts: Box::new([]),
                             line: 0
                         },
                     )
@@ -165,6 +169,7 @@ mod tests {
                         &mut ctx,
                         &Word {
                             raw: b"/testdir/.*.txt".as_ref().into(),
+                            parts: Box::new([]),
                             line: 0
                         },
                     )
@@ -186,6 +191,7 @@ mod tests {
                     &mut ctx,
                     &Word {
                         raw: pattern.as_ref().into(),
+                        parts: Box::new([]),
                         line: 0
                     },
                 )
@@ -208,7 +214,7 @@ mod tests {
         assert_eq!(ctx.env_var(b"NAME").as_deref(), Some(b"value".as_ref()));
         assert_eq!(ctx.shell_name(), b"meiksh");
         assert_eq!(
-            ctx.command_substitute(b"printf ok").expect("substitute"),
+            ctx.command_substitute_raw(b"printf ok").expect("substitute"),
             b"printf ok\n"
         );
     }
@@ -224,6 +230,7 @@ mod tests {
                         &mut ctx,
                         &Word {
                             raw: b"*.definitely-no-match".as_ref().into(),
+                            parts: Box::new([]),
                             line: 0
                         },
                     )
@@ -242,6 +249,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"file_*.txt".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0,
                 },
             )

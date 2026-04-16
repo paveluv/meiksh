@@ -1,9 +1,11 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use crate::bstr;
 use crate::expand::core::{Context, ExpandError};
 use crate::expand::model::Expansion;
+use crate::syntax::ast::Program;
 
 pub(super) struct FakeContext {
     pub(super) env: HashMap<Vec<u8>, Vec<u8>>,
@@ -77,7 +79,11 @@ impl Context for FakeContext {
         b"meiksh"
     }
 
-    fn command_substitute(&mut self, command: &[u8]) -> Result<Vec<u8>, ExpandError> {
+    fn command_substitute(&mut self, _program: &Rc<Program>) -> Result<Vec<u8>, ExpandError> {
+        Ok(b"fake_command_output\n".to_vec())
+    }
+
+    fn command_substitute_raw(&mut self, command: &[u8]) -> Result<Vec<u8>, ExpandError> {
         let mut out = command.to_vec();
         out.push(b'\n');
         Ok(out)
@@ -142,7 +148,11 @@ impl Context for DefaultPathContext {
         b"meiksh"
     }
 
-    fn command_substitute(&mut self, command: &[u8]) -> Result<Vec<u8>, ExpandError> {
+    fn command_substitute(&mut self, _program: &Rc<Program>) -> Result<Vec<u8>, ExpandError> {
+        Ok(b"fake_command_output\n".to_vec())
+    }
+
+    fn command_substitute_raw(&mut self, command: &[u8]) -> Result<Vec<u8>, ExpandError> {
         let mut out = command.to_vec();
         out.push(b'\n');
         Ok(out)

@@ -24,7 +24,7 @@ pub(super) fn expand_arithmetic_expression<C: Context>(
         } else if expression[i] == b'`' {
             i += 1;
             let command = scan_backtick_command(expression, &mut i, true)?;
-            let output = ctx.command_substitute(&command)?;
+            let output = ctx.command_substitute_raw(&command)?;
             result.extend_from_slice(trim_trailing_newlines(&output));
         } else if expression[i] == b'\n' {
             ctx.inc_lineno();
@@ -586,6 +586,7 @@ mod tests {
             &mut ctx,
             &Word {
                 raw: b"$((count + 3))".as_ref().into(),
+                parts: Box::new([]),
                 line: 0,
             },
         )
@@ -601,6 +602,7 @@ mod tests {
             &mut ctx,
             &Word {
                 raw: b"$(($n * 2))".as_ref().into(),
+                parts: Box::new([]),
                 line: 0,
             },
         )
@@ -616,6 +618,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"$((3 < 5))".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 }
             )
@@ -627,6 +630,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"$((5 < 3))".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 }
             )
@@ -638,6 +642,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"$((3 <= 3))".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 }
             )
@@ -649,6 +654,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"$((5 > 3))".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 }
             )
@@ -660,6 +666,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"$((3 >= 5))".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 }
             )
@@ -671,6 +678,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"$((3 == 3))".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 }
             )
@@ -682,6 +690,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"$((3 != 5))".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 }
             )
@@ -698,6 +707,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"$((6 & 3))".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 }
             )
@@ -709,6 +719,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"$((6 | 3))".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 }
             )
@@ -720,6 +731,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"$((6 ^ 3))".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 }
             )
@@ -731,6 +743,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"$((~0))".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 }
             )
@@ -742,6 +755,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"$((1 << 4))".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 }
             )
@@ -753,6 +767,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"$((16 >> 2))".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 }
             )
@@ -769,6 +784,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"$((1 && 1))".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 }
             )
@@ -780,6 +796,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"$((1 && 0))".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 }
             )
@@ -791,6 +808,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"$((0 || 1))".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 }
             )
@@ -802,6 +820,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"$((0 || 0))".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 }
             )
@@ -813,6 +832,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"$((!0))".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 }
             )
@@ -824,6 +844,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"$((!5))".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 }
             )
@@ -840,6 +861,7 @@ mod tests {
             &mut ctx,
             &Word {
                 raw: b"$((0 && (x = 5)))".as_ref().into(),
+                parts: Box::new([]),
                 line: 0,
             },
         )
@@ -855,6 +877,7 @@ mod tests {
             &mut ctx,
             &Word {
                 raw: b"$((1 || (x = 5)))".as_ref().into(),
+                parts: Box::new([]),
                 line: 0,
             },
         )
@@ -870,6 +893,7 @@ mod tests {
             &mut ctx,
             &Word {
                 raw: b"$((1 ? 10 : (x = 99)))".as_ref().into(),
+                parts: Box::new([]),
                 line: 0,
             },
         )
@@ -885,6 +909,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"$((1 ? 10 : 20))".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 }
             )
@@ -896,6 +921,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"$((0 ? 10 : 20))".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 }
             )
@@ -913,6 +939,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"$((x = 5))".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 }
             )
@@ -926,6 +953,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"$((x += 3))".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 }
             )
@@ -939,6 +967,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"$((x -= 2))".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 }
             )
@@ -950,6 +979,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"$((x *= 3))".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 }
             )
@@ -961,6 +991,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"$((x /= 6))".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 }
             )
@@ -972,6 +1003,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"$((x %= 2))".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 }
             )
@@ -985,6 +1017,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"$((x <<= 2))".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 }
             )
@@ -996,6 +1029,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"$((x >>= 1))".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 }
             )
@@ -1007,6 +1041,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"$((x &= 3))".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 }
             )
@@ -1020,6 +1055,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"$((x |= 2))".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 }
             )
@@ -1031,6 +1067,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"$((x ^= 3))".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 }
             )
@@ -1047,6 +1084,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"$((0xff))".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 }
             )
@@ -1058,6 +1096,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"$((0X1A))".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 }
             )
@@ -1069,6 +1108,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"$((010))".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 }
             )
@@ -1080,6 +1120,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"$((0))".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 }
             )
@@ -1096,6 +1137,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"$((+5))".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 }
             )
@@ -1112,6 +1154,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"$((nosuch))".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 }
             )
@@ -1128,6 +1171,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"$((2 + 3 * 4))".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 }
             )
@@ -1139,6 +1183,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"$(((2 + 3) * 4))".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 }
             )
@@ -1156,6 +1201,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"$((h))".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 }
             )
@@ -1173,6 +1219,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"$((o))".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 }
             )
@@ -1188,6 +1235,7 @@ mod tests {
             &mut ctx,
             &Word {
                 raw: b"$((`7` + 3))".as_ref().into(),
+                parts: Box::new([]),
                 line: 0,
             },
         )
@@ -1203,6 +1251,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"$((3 != 3))".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 }
             )
@@ -1219,6 +1268,7 @@ mod tests {
             &mut ctx,
             &Word {
                 raw: b"$((x /= 0))".as_ref().into(),
+                parts: Box::new([]),
                 line: 0,
             },
         )
@@ -1230,6 +1280,7 @@ mod tests {
             &mut ctx,
             &Word {
                 raw: b"$((x %= 0))".as_ref().into(),
+                parts: Box::new([]),
                 line: 0,
             },
         )
@@ -1246,6 +1297,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"$((x == 5))".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 }
             )
@@ -1257,6 +1309,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"$((x == 3))".as_ref().into(),
+                    parts: Box::new([]),
                     line: 0
                 }
             )
@@ -1272,6 +1325,7 @@ mod tests {
             &mut ctx,
             &Word {
                 raw: b"$((1 ? 2 3))".as_ref().into(),
+                parts: Box::new([]),
                 line: 0,
             },
         )
@@ -1286,6 +1340,7 @@ mod tests {
             &mut ctx,
             &Word {
                 raw: b"$((0x))".as_ref().into(),
+                parts: Box::new([]),
                 line: 0,
             },
         )
@@ -1301,6 +1356,7 @@ mod tests {
             &mut ctx,
             &Word {
                 raw: b"$(($@ + 2))".as_ref().into(),
+                parts: Box::new([]),
                 line: 0,
             },
         )
@@ -1329,6 +1385,7 @@ mod tests {
             &mut ctx,
             &Word {
                 raw: b"$((bad + 1))".as_ref().into(),
+                parts: Box::new([]),
                 line: 0,
             },
         )

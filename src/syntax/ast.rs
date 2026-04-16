@@ -2,6 +2,7 @@ use std::rc::Rc;
 
 use super::ParseError;
 use super::token::{Parser, Token};
+use super::word_parts::WordPart;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Program {
@@ -77,7 +78,19 @@ pub(crate) struct Assignment {
 #[derive(Clone, Debug)]
 pub(crate) struct Word {
     pub(crate) raw: Box<[u8]>,
+    pub(crate) parts: Box<[WordPart]>,
     pub(crate) line: usize,
+}
+
+impl Word {
+    #[cfg(test)]
+    pub(crate) fn from_raw(raw: &[u8]) -> Self {
+        Word {
+            raw: raw.to_vec().into_boxed_slice(),
+            parts: Box::new([]),
+            line: 0,
+        }
+    }
 }
 
 impl PartialEq for Word {
@@ -189,6 +202,14 @@ pub(super) fn split_assignment(input: &[u8]) -> Option<(&[u8], &[u8])> {
     Some((name, value))
 }
 
+fn build_assignment_value_parts(
+    _raw: &[u8],
+    _parts: &[WordPart],
+    _eq_plus_one: usize,
+) -> Box<[WordPart]> {
+    Box::new([])
+}
+
 impl<'a> Parser<'a> {
     pub(super) fn eat_keyword(&mut self, expected: Token, name: &[u8]) -> Result<(), ParseError> {
         self.set_keyword_position();
@@ -230,7 +251,7 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    fn take_word(&mut self) -> Box<[u8]> {
+    fn take_word(&mut self) -> (Box<[u8]>, Box<[WordPart]>) {
         self.next_token().into_word().unwrap()
     }
 
@@ -315,10 +336,10 @@ impl<'a> Parser<'a> {
     fn parse_pipeline(&mut self) -> Result<Pipeline, ParseError> {
         self.set_command_position();
 
-        let timed = if matches!(self.peek_token()?, Token::Word(w) if &**w == b"time") {
+        let timed = if matches!(self.peek_token()?, Token::Word(w, _) if &**w == b"time") {
             self.advance_token();
             self.set_command_position();
-            if matches!(self.peek_token()?, Token::Word(w) if &**w == b"-p") {
+            if matches!(self.peek_token()?, Token::Word(w, _) if &**w == b"-p") {
                 self.advance_token();
                 self.set_command_position();
                 TimedMode::Posix
@@ -419,8 +440,8 @@ impl<'a> Parser<'a> {
                 Ok(Command::Subshell(body))
             }
             Token::Bang => Err(self.error(b"expected command")),
-            Token::Word(_) => {
-                let raw = self.take_word();
+            Token::Word(_, _) => {
+                let (raw, parts) = self.take_word();
                 self.set_argument_position();
                 if super::is_name(&raw) && matches!(self.peek_token()?, Token::LParen) {
                     self.advance_token();
@@ -436,7 +457,7 @@ impl<'a> Parser<'a> {
                     }
                     return Err(self.error(b"syntax error near unexpected token `('"));
                 }
-                self.parse_simple_command_with_first_word(raw, line)
+                self.parse_simple_command_with_first_word(raw, parts, line)
                     .map(Command::Simple)
             }
             Token::IoNumber(_)
@@ -463,7 +484,7 @@ impl<'a> Parser<'a> {
             _ => {
                 let name = self.peek_token()?.display_name();
                 self.advance_token();
-                self.parse_simple_command_with_first_word(name, line)
+                self.parse_simple_command_with_first_word(name, Box::new([]), line)
                     .map(Command::Simple)
             }
         }
@@ -472,6 +493,7 @@ impl<'a> Parser<'a> {
     fn parse_simple_command_with_first_word(
         &mut self,
         first_raw: Box<[u8]>,
+        first_parts: Box<[WordPart]>,
         first_line: usize,
     ) -> Result<SimpleCommand, ParseError> {
         let mut assignments = Vec::new();
@@ -479,16 +501,19 @@ impl<'a> Parser<'a> {
         let mut redirections = Vec::new();
 
         if let Some((name, value_raw)) = split_assignment(&first_raw) {
+            let value_parts = build_assignment_value_parts(&first_raw, &first_parts, name.len() + 1);
             assignments.push(Assignment {
                 name: name.to_vec().into_boxed_slice(),
                 value: Word {
                     raw: value_raw.to_vec().into_boxed_slice(),
+                    parts: value_parts,
                     line: first_line,
                 },
             });
         } else {
             words.push(Word {
                 raw: first_raw,
+                parts: first_parts,
                 line: first_line,
             });
         }
@@ -546,24 +571,26 @@ impl<'a> Parser<'a> {
             }
 
             match self.peek_token()? {
-                Token::Word(_) => {}
+                Token::Word(_, _) => {}
                 _ => break,
             }
 
-            let raw = self.take_word();
+            let (raw, parts) = self.take_word();
             if words.is_empty() {
                 if let Some((name, value_raw)) = split_assignment(&raw) {
+                    let value_parts = build_assignment_value_parts(&raw, &parts, name.len() + 1);
                     assignments.push(Assignment {
                         name: name.to_vec().into_boxed_slice(),
                         value: Word {
                             raw: value_raw.to_vec().into_boxed_slice(),
+                            parts: value_parts,
                             line,
                         },
                     });
                     continue;
                 }
             }
-            words.push(Word { raw, line });
+            words.push(Word { raw, parts, line });
         }
         Ok(())
     }
@@ -606,6 +633,7 @@ impl<'a> Parser<'a> {
                 kind: RedirectionKind::HereDoc,
                 target: Word {
                     raw: delimiter.clone(),
+                    parts: Box::new([]),
                     line,
                 },
                 here_doc: Some(HereDoc {
@@ -636,13 +664,14 @@ impl<'a> Parser<'a> {
         self.set_argument_position();
         let target_line = self.current_line();
         match self.peek_token()? {
-            Token::Word(_) => {
-                let w = self.take_word();
+            Token::Word(_, _) => {
+                let (w, wp) = self.take_word();
                 Ok(Some(Redirection {
                     fd,
                     kind,
                     target: Word {
                         raw: w,
+                        parts: wp,
                         line: target_line,
                     },
                     here_doc: None,
@@ -757,8 +786,8 @@ impl<'a> Parser<'a> {
 
     fn parse_for_command(&mut self) -> Result<Command, ParseError> {
         self.set_argument_position();
-        let name = match self.peek_token()? {
-            Token::Word(_) => self.take_word(),
+        let (name, _name_parts) = match self.peek_token()? {
+            Token::Word(_, _) => self.take_word(),
             _ => return Err(self.error(b"expected for loop variable name")),
         };
         if !super::is_name(&name) {
@@ -771,11 +800,12 @@ impl<'a> Parser<'a> {
             self.advance_token();
             let mut items = Vec::new();
             self.set_argument_position();
-            while matches!(self.peek_token()?, Token::Word(_)) {
+            while matches!(self.peek_token()?, Token::Word(_, _)) {
                 let word_line = self.current_line();
-                let w = self.take_word();
+                let (w, wp) = self.take_word();
                 items.push(Word {
                     raw: w,
+                    parts: wp,
                     line: word_line,
                 });
             }
@@ -798,12 +828,13 @@ impl<'a> Parser<'a> {
     fn parse_case_command(&mut self) -> Result<Command, ParseError> {
         self.set_argument_position();
         let line = self.current_line();
-        let word_raw = match self.peek_token()? {
-            Token::Word(_) => self.take_word(),
+        let (word_raw, word_parts) = match self.peek_token()? {
+            Token::Word(_, _) => self.take_word(),
             _ => return Err(self.error(b"expected case word")),
         };
         let word = Word {
             raw: word_raw,
+            parts: word_parts,
             line,
         };
 
@@ -828,17 +859,18 @@ impl<'a> Parser<'a> {
             loop {
                 self.set_argument_position();
                 let pat_line = self.current_line();
-                let pattern_raw = if matches!(self.peek_token()?, Token::Word(_)) {
+                let (pattern_raw, pattern_parts) = if matches!(self.peek_token()?, Token::Word(_, _)) {
                     self.take_word()
                 } else if let Some(name) = self.peek_token()?.keyword_name() {
                     let w: Box<[u8]> = name.to_vec().into_boxed_slice();
                     self.advance_token();
-                    w
+                    (w, Box::new([]) as Box<[WordPart]>)
                 } else {
                     return Err(self.error(b"expected case pattern"));
                 };
                 patterns.push(Word {
                     raw: pattern_raw,
+                    parts: pattern_parts,
                     line: pat_line,
                 });
 
@@ -894,8 +926,8 @@ impl<'a> Parser<'a> {
 
     fn parse_function_keyword(&mut self) -> Result<Command, ParseError> {
         self.set_argument_position();
-        let name = match self.peek_token()? {
-            Token::Word(_) => self.take_word(),
+        let (name, _name_parts) = match self.peek_token()? {
+            Token::Word(_, _) => self.take_word(),
             _ => return Err(self.error(b"expected function name")),
         };
         if !super::is_name(&name) {

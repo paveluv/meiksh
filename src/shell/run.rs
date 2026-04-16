@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::rc::Rc;
 
 use crate::bstr::{self, ByteWriter};
 use crate::builtin::{self, BuiltinOutcome};
@@ -407,6 +408,47 @@ impl Shell {
         }
     }
 
+    pub(crate) fn capture_output_program(
+        &mut self,
+        program: &Rc<Program>,
+    ) -> Result<Vec<u8>, ShellError> {
+        let (read_fd, write_fd) =
+            sys::fd_io::create_pipe().map_err(|e| self.diagnostic_syserr(1, &e))?;
+        let pid = sys::process::fork_process().map_err(|e| self.diagnostic_syserr(1, &e))?;
+        if pid == 0 {
+            let _ = sys::fd_io::close_fd(read_fd);
+            let _ = sys::fd_io::duplicate_fd(write_fd, sys::constants::STDOUT_FILENO);
+            let _ = sys::fd_io::close_fd(write_fd);
+            let mut child_shell = self.clone();
+            child_shell.owns_terminal = false;
+            child_shell.in_subshell = true;
+            child_shell.restore_signals_for_child();
+            let _ = child_shell.reset_traps_for_subshell();
+            let status = child_shell.execute_program(program).unwrap_or(1);
+            let status = child_shell.run_exit_trap(status).unwrap_or(status);
+            sys::process::exit_process(status as sys::types::RawFd);
+        }
+        sys::fd_io::close_fd(write_fd).map_err(|e| self.diagnostic_syserr(1, &e))?;
+        let mut output = Vec::new();
+        let mut buf = [0u8; 4096];
+        loop {
+            let n = sys::fd_io::read_fd(read_fd, &mut buf)
+                .map_err(|e| self.diagnostic_syserr(1, &e))?;
+            if n == 0 {
+                break;
+            }
+            output.extend_from_slice(&buf[..n]);
+        }
+        sys::fd_io::close_fd(read_fd).map_err(|e| self.diagnostic_syserr(1, &e))?;
+        let ws = sys::process::wait_pid(pid, false)
+            .map_err(|e| self.diagnostic_syserr(1, &e))?
+            .expect("child status");
+        let status = sys::process::decode_wait_status(ws.status);
+        self.last_status = status;
+        Ok(output)
+    }
+
+    #[cfg(test)]
     pub(crate) fn capture_output(&mut self, source: &[u8]) -> Result<Vec<u8>, ShellError> {
         let (read_fd, write_fd) =
             sys::fd_io::create_pipe().map_err(|e| self.diagnostic_syserr(1, &e))?;

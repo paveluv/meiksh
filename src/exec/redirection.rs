@@ -418,6 +418,7 @@ mod tests {
                     &SimpleCommand {
                         words: vec![Word {
                             raw: b"cat".to_vec().into(),
+                            parts: Box::new([]),
                             line: 0,
                         }]
                         .into_boxed_slice(),
@@ -426,6 +427,7 @@ mod tests {
                             kind: RedirectionKind::HereDoc,
                             target: Word {
                                 raw: b"EOF".to_vec().into(),
+                                parts: Box::new([]),
                                 line: 0,
                             },
                             here_doc: None,
@@ -443,6 +445,7 @@ mod tests {
                     &SimpleCommand {
                         words: vec![Word {
                             raw: b"echo".to_vec().into(),
+                            parts: Box::new([]),
                             line: 0,
                         }]
                         .into_boxed_slice(),
@@ -451,6 +454,7 @@ mod tests {
                             kind: RedirectionKind::DupOutput,
                             target: Word {
                                 raw: b"bad".to_vec().into(),
+                                parts: Box::new([]),
                                 line: 0,
                             },
                             here_doc: None,
@@ -470,6 +474,7 @@ mod tests {
                         kind: RedirectionKind::HereDoc,
                         target: Word {
                             raw: b"EOF".to_vec().into(),
+                            parts: Box::new([]),
                             line: 0,
                         },
                         here_doc: Some(HereDoc {
@@ -496,6 +501,7 @@ mod tests {
                         kind: RedirectionKind::HereDoc,
                         target: Word {
                             raw: b"EOF".to_vec().into(),
+                            parts: Box::new([]),
                             line: 0,
                         },
                         here_doc: Some(HereDoc {
@@ -521,6 +527,7 @@ mod tests {
                         kind: RedirectionKind::HereDoc,
                         target: Word {
                             raw: b"EOF".to_vec().into(),
+                            parts: Box::new([]),
                             line: 0,
                         },
                         here_doc: None,
@@ -537,6 +544,7 @@ mod tests {
                         kind: RedirectionKind::HereDoc,
                         target: Word {
                             raw: b"EOF".to_vec().into(),
+                            parts: Box::new([]),
                             line: 0,
                         },
                         here_doc: Some(HereDoc {
@@ -562,6 +570,7 @@ mod tests {
                         kind: RedirectionKind::DupOutput,
                         target: Word {
                             raw: b"abc".to_vec().into(),
+                            parts: Box::new([]),
                             line: 0,
                         },
                         here_doc: None,
