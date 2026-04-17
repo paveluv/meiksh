@@ -93,7 +93,7 @@ pub(super) fn expand_dollar<C: Context>(
             let sep = match ifs.as_deref() {
                 None => b" ".to_vec(),
                 Some(b"") => Vec::new(),
-                Some(s) => vec![s[0]],
+                Some(s) => s[..crate::sys::locale::first_char_len(s)].to_vec(),
             };
             let value = bstr::join_bstrings(ctx.positional_params(), &sep);
             Ok((Expansion::One(value), 2))
@@ -506,7 +506,9 @@ pub(super) fn expand_braced_parameter<C: Context>(
     if expr.first() == Some(&b'#') && expr.len() > 1 {
         let name = &expr[1..];
         let value = require_set_parameter(ctx, name, lookup_param(ctx, name))?;
-        return Ok(Expansion::One(bstr::u64_to_bytes(value.len() as u64)));
+        return Ok(Expansion::One(bstr::u64_to_bytes(
+            crate::sys::locale::count_chars(&value),
+        )));
     }
 
     let (name, op, word) = parse_parameter_expression(expr)?;
@@ -632,7 +634,7 @@ pub(super) fn expand_braced_parameter_text<C: Context>(
     if expr.first() == Some(&b'#') && expr.len() > 1 {
         let name = &expr[1..];
         let value = require_set_parameter(ctx, name, lookup_param(ctx, name))?;
-        return Ok(bstr::u64_to_bytes(value.len() as u64));
+        return Ok(bstr::u64_to_bytes(crate::sys::locale::count_chars(&value)));
     }
 
     let (name, op, word) = parse_parameter_expression(expr)?;
@@ -937,9 +939,10 @@ pub(super) fn remove_parameter_pattern(
     pattern: &[u8],
     mode: PatternRemoval,
 ) -> Result<Vec<u8>, ExpandError> {
+    let offsets = super::expand_parts::char_boundary_offsets(&value);
     match mode {
         PatternRemoval::SmallestPrefix => {
-            for end in 0..=value.len() {
+            for &end in offsets.iter() {
                 if pattern_matches(&value[..end], pattern) {
                     value.drain(..end);
                     return Ok(value);
@@ -947,7 +950,7 @@ pub(super) fn remove_parameter_pattern(
             }
         }
         PatternRemoval::LargestPrefix => {
-            for end in (0..=value.len()).rev() {
+            for &end in offsets.iter().rev() {
                 if pattern_matches(&value[..end], pattern) {
                     value.drain(..end);
                     return Ok(value);
@@ -955,7 +958,7 @@ pub(super) fn remove_parameter_pattern(
             }
         }
         PatternRemoval::SmallestSuffix => {
-            for start in (0..=value.len()).rev() {
+            for &start in offsets.iter().rev() {
                 if pattern_matches(&value[start..], pattern) {
                     value.truncate(start);
                     return Ok(value);
@@ -963,7 +966,7 @@ pub(super) fn remove_parameter_pattern(
             }
         }
         PatternRemoval::LargestSuffix => {
-            for start in 0..=value.len() {
+            for &start in offsets.iter() {
                 if pattern_matches(&value[start..], pattern) {
                     value.truncate(start);
                     return Ok(value);

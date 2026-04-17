@@ -75,8 +75,11 @@ pub(super) fn printf_parse_int(s: &[u8]) -> Result<i64, Vec<u8>> {
         return Ok(0);
     }
     if s[0] == b'\'' || s[0] == b'"' {
-        let ch = s.get(1).copied().unwrap_or(0);
-        return Ok(ch as i64);
+        if s.len() <= 1 {
+            return Ok(0);
+        }
+        let (wc, _) = crate::sys::locale::decode_char(&s[1..]);
+        return Ok(wc as i64);
     }
     let (neg, s) = if let Some(rest) = s.strip_prefix(b"-") {
         (true, rest)

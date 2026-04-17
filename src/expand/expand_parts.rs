@@ -9,7 +9,7 @@ use super::glob::pattern_matches;
 use super::model::{QuoteState, Segment, render_pattern_from_segments};
 use super::parameter::{lookup_param, require_set_parameter};
 use super::word::trim_trailing_newlines;
-use crate::syntax::byte_class::{is_ascii_ws, is_glob_char, is_name};
+use crate::syntax::byte_class::{is_glob_char, is_name};
 
 #[derive(Debug)]
 pub(super) struct ExpandOutput {
@@ -65,22 +65,29 @@ impl ExpandOutput {
             return;
         }
 
-        for &b in bytes {
-            if !ifs.contains(&b) {
-                if is_glob_char(b) {
-                    self.current_has_glob = true;
-                }
-                self.current.push(b);
-            } else if is_ascii_ws(b) {
-                if !self.current.is_empty() {
+        let ifs_chars = decompose_ifs(ifs);
+        let mut i = 0;
+        while i < bytes.len() {
+            if let Some((_, byte_seq, is_ws)) = find_ifs_char_at(&ifs_chars, &bytes[i..]) {
+                if is_ws {
+                    if !self.current.is_empty() {
+                        let glob = self.current_has_glob;
+                        self.fields.push((std::mem::take(&mut self.current), glob));
+                        self.current_has_glob = false;
+                    }
+                } else {
                     let glob = self.current_has_glob;
                     self.fields.push((std::mem::take(&mut self.current), glob));
                     self.current_has_glob = false;
                 }
+                i += byte_seq.len();
             } else {
-                let glob = self.current_has_glob;
-                self.fields.push((std::mem::take(&mut self.current), glob));
-                self.current_has_glob = false;
+                let b = bytes[i];
+                if is_glob_char(b) {
+                    self.current_has_glob = true;
+                }
+                self.current.push(b);
+                i += 1;
             }
         }
     }
@@ -371,7 +378,7 @@ fn expand_special_var<C: Context>(
             let sep: &[u8] = match &ifs_cow {
                 None => b" ",
                 Some(s) if s.is_empty() => b"",
-                Some(s) => &s[..1],
+                Some(s) => &s[..crate::sys::locale::first_char_len(s)],
             };
             let value = bstr::join_bstrings(ctx.positional_params(), sep);
             output.push_value(&value, quoted, ifs);
@@ -431,7 +438,7 @@ fn expand_braced<C: Context>(
         BracedOp::Length => {
             let value = lookup_braced_param(ctx, raw, braced_name);
             let value = require_set_parameter(ctx, name, value)?;
-            let len = bstr::u64_to_bytes(value.len() as u64);
+            let len = bstr::u64_to_bytes(crate::sys::locale::count_chars(&value));
             output.push_value(&len, quoted, ifs);
         }
         BracedOp::None => {
@@ -638,15 +645,28 @@ fn expand_arithmetic<C: Context>(
     Ok(())
 }
 
+pub(super) fn char_boundary_offsets(value: &[u8]) -> Vec<usize> {
+    let mut offsets = vec![0usize];
+    let mut i = 0;
+    while i < value.len() {
+        let (_, len) = crate::sys::locale::decode_char(&value[i..]);
+        let step = if len == 0 { 1 } else { len };
+        i += step;
+        offsets.push(i);
+    }
+    offsets
+}
+
 fn trim_suffix<'a>(value: &'a [u8], pattern: &[u8], longest: bool) -> &'a [u8] {
+    let offsets = char_boundary_offsets(value);
     if longest {
-        for i in 0..=value.len() {
+        for &i in offsets.iter() {
             if pattern_matches(&value[i..], pattern) {
                 return &value[..i];
             }
         }
     } else {
-        for i in (0..=value.len()).rev() {
+        for &i in offsets.iter().rev() {
             if pattern_matches(&value[i..], pattern) {
                 return &value[..i];
             }
@@ -656,20 +676,57 @@ fn trim_suffix<'a>(value: &'a [u8], pattern: &[u8], longest: bool) -> &'a [u8] {
 }
 
 fn trim_prefix<'a>(value: &'a [u8], pattern: &[u8], longest: bool) -> &'a [u8] {
+    let offsets = char_boundary_offsets(value);
     if longest {
-        for i in (0..=value.len()).rev() {
+        for &i in offsets.iter().rev() {
             if pattern_matches(&value[..i], pattern) {
                 return &value[i..];
             }
         }
     } else {
-        for i in 0..=value.len() {
+        for &i in offsets.iter() {
             if pattern_matches(&value[..i], pattern) {
                 return &value[i..];
             }
         }
     }
     value
+}
+
+fn is_ifs_whitespace(b: u8) -> bool {
+    b == b' ' || b == b'\t' || b == b'\n'
+}
+
+pub(super) struct IfsChar {
+    pub byte_seq: Vec<u8>,
+    pub is_ws: bool,
+}
+
+pub(super) fn decompose_ifs(ifs: &[u8]) -> Vec<IfsChar> {
+    let mut result = Vec::new();
+    let mut i = 0;
+    while i < ifs.len() {
+        let (_, len) = crate::sys::locale::decode_char(&ifs[i..]);
+        let step = if len == 0 { 1 } else { len };
+        let byte_seq = ifs[i..i + step].to_vec();
+        let is_ws = step == 1 && is_ifs_whitespace(ifs[i]);
+        result.push(IfsChar { byte_seq, is_ws });
+        i += step;
+    }
+    result
+}
+
+pub(super) fn find_ifs_char_at<'a>(
+    ifs_chars: &'a [IfsChar],
+    bytes: &[u8],
+) -> Option<(u32, &'a [u8], bool)> {
+    for ic in ifs_chars {
+        if bytes.len() >= ic.byte_seq.len() && bytes[..ic.byte_seq.len()] == *ic.byte_seq {
+            let (wc, _) = crate::sys::locale::decode_char(&ic.byte_seq);
+            return Some((wc, &ic.byte_seq, ic.is_ws));
+        }
+    }
+    None
 }
 
 trait AsBytes {

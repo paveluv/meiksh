@@ -440,3 +440,75 @@ begin test "slash before closing bracket makes open bracket literal"
     exit_code 0
 end test "slash before closing bracket makes open bracket literal"
 ```
+
+#### Test: question-mark matches single multi-byte character
+
+```
+begin test "question-mark matches single multi-byte character"
+  script
+    export LC_ALL=C.UTF-8
+    v=$(printf '\303\251')
+    case "$v" in
+      (?) echo yes;;
+      (*) echo no;;
+    esac
+  expect
+    stdout "yes"
+    stderr ""
+    exit_code 0
+end test "question-mark matches single multi-byte character"
+```
+
+#### Test: question-mark does not match two multi-byte characters
+
+```
+begin test "question-mark does not match two multi-byte characters"
+  script
+    export LC_ALL=C.UTF-8
+    v=$(printf '\303\251\303\250')
+    case "$v" in
+      (?) echo yes;;
+      (*) echo no;;
+    esac
+  expect
+    stdout "no"
+    stderr ""
+    exit_code 0
+end test "question-mark does not match two multi-byte characters"
+```
+
+#### Test: bracket alpha class matches multi-byte character
+
+```
+begin test "bracket alpha class matches multi-byte character"
+  script
+    export LC_ALL=C.UTF-8
+    v=$(printf '\303\251')
+    case "$v" in
+      ([[:alpha:]]) echo yes;;
+      (*) echo no;;
+    esac
+  expect
+    stdout "yes"
+    stderr ""
+    exit_code 0
+end test "bracket alpha class matches multi-byte character"
+```
+
+#### Test: asterisk matches across multi-byte characters
+
+```
+begin test "asterisk matches across multi-byte characters"
+  script
+    export LC_ALL=C.UTF-8
+    v=$(printf 'a\303\251b')
+    case "$v" in
+      (a*b) echo yes;;
+      (*) echo no;;
+    esac
+  expect
+    stdout "yes"
+    stderr ""
+    exit_code 0
+end test "asterisk matches across multi-byte characters"
+```

@@ -695,7 +695,7 @@ Verifies that `jobs` does not crash or misbehave when locale environment variabl
 begin interactive test "jobs respects locale env vars"
   spawn -i
   expect "$ "
-  send "export LC_ALL=test_EPTY.UTF-8"
+  send "export LC_ALL=C.UTF-8"
   expect "$ "
   send "jobs"
   expect "$ "

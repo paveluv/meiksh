@@ -1103,3 +1103,16 @@ begin test "test -f resolves symlink to regular file"
     exit_code 0
 end test "test -f resolves symlink to regular file"
 ```
+
+#### Test: test string comparison uses C locale byte order
+
+```
+begin test "test string comparison uses C locale byte order"
+  script
+    test A \< a && echo yes || echo no
+  expect
+    stdout "yes"
+    stderr ""
+    exit_code 0
+end test "test string comparison uses C locale byte order"
+```

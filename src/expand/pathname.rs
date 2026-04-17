@@ -19,7 +19,7 @@ pub(super) fn expand_pathname(pattern: &[u8]) -> Vec<Vec<u8>> {
     };
     let mut matches = Vec::new();
     expand_path_segments(&base, &segments, 0, absolute, &mut matches);
-    matches.sort();
+    matches.sort_by(|a, b| crate::sys::locale::strcoll(a, b));
     matches
 }
 
@@ -57,7 +57,7 @@ pub(super) fn expand_path_segments(
     let Ok(mut names) = sys::fs::read_dir_entries(base) else {
         return;
     };
-    names.sort();
+    names.sort_by(|a, b| crate::sys::locale::strcoll(a, b));
     for name in names {
         if name.starts_with(b".") && !segment.starts_with(b".") {
             continue;

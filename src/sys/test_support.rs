@@ -446,19 +446,112 @@ fn trace_monotonic_clock_ns() -> u64 {
     }
 }
 fn trace_setup_locale() {}
+fn trace_reinit_locale() {}
 fn trace_classify_byte(class: &[u8], byte: u8) -> bool {
-    byte.is_ascii_alphabetic() && class == b"alpha"
-        || byte.is_ascii_alphanumeric() && class == b"alnum"
-        || byte.is_ascii_digit() && class == b"digit"
-        || byte.is_ascii_lowercase() && class == b"lower"
-        || byte.is_ascii_uppercase() && class == b"upper"
-        || (byte == b' ' || byte == b'\t') && class == b"blank"
-        || byte.is_ascii_whitespace() && class == b"space"
-        || byte.is_ascii_hexdigit() && class == b"xdigit"
-        || byte.is_ascii_punctuation() && class == b"punct"
-        || byte.is_ascii_graphic() && class == b"graph"
-        || (byte.is_ascii_graphic() || byte == b' ') && class == b"print"
-        || byte.is_ascii_control() && class == b"cntrl"
+    trace_classify_char(class, byte as u32)
+}
+fn trace_classify_char(class: &[u8], wc: u32) -> bool {
+    if wc <= 0x7f {
+        let byte = wc as u8;
+        return byte.is_ascii_alphabetic() && class == b"alpha"
+            || byte.is_ascii_alphanumeric() && class == b"alnum"
+            || byte.is_ascii_digit() && class == b"digit"
+            || byte.is_ascii_lowercase() && class == b"lower"
+            || byte.is_ascii_uppercase() && class == b"upper"
+            || (byte == b' ' || byte == b'\t') && class == b"blank"
+            || byte.is_ascii_whitespace() && class == b"space"
+            || byte.is_ascii_hexdigit() && class == b"xdigit"
+            || byte.is_ascii_punctuation() && class == b"punct"
+            || byte.is_ascii_graphic() && class == b"graph"
+            || (byte.is_ascii_graphic() || byte == b' ') && class == b"print"
+            || byte.is_ascii_control() && class == b"cntrl";
+    }
+    if let Some(ch) = char::from_u32(wc) {
+        match class {
+            b"alpha" => ch.is_alphabetic(),
+            b"alnum" => ch.is_alphanumeric(),
+            b"digit" => ch.is_ascii_digit(),
+            b"lower" => ch.is_lowercase(),
+            b"upper" => ch.is_uppercase(),
+            b"blank" => ch == ' ' || ch == '\t',
+            b"space" => ch.is_whitespace(),
+            b"xdigit" => ch.is_ascii_hexdigit(),
+            b"punct" => !ch.is_alphanumeric() && !ch.is_whitespace() && !ch.is_control(),
+            b"graph" => !ch.is_whitespace() && !ch.is_control(),
+            b"print" => !ch.is_control(),
+            b"cntrl" => ch.is_control(),
+            _ => false,
+        }
+    } else {
+        false
+    }
+}
+fn trace_decode_char(bytes: &[u8]) -> (u32, usize) {
+    if bytes.is_empty() {
+        return (0, 0);
+    }
+    match std::str::from_utf8(bytes) {
+        Ok(s) => {
+            if let Some(ch) = s.chars().next() {
+                (ch as u32, ch.len_utf8())
+            } else {
+                (0, 0)
+            }
+        }
+        Err(e) => {
+            let valid_up_to = e.valid_up_to();
+            if valid_up_to > 0 {
+                let s = &bytes[..valid_up_to];
+                let ch = std::str::from_utf8(s).unwrap().chars().next().unwrap();
+                (ch as u32, ch.len_utf8())
+            } else {
+                (bytes[0] as u32, 1)
+            }
+        }
+    }
+}
+fn trace_encode_char(wc: u32, buf: &mut [u8]) -> usize {
+    if let Some(ch) = char::from_u32(wc) {
+        let mut tmp = [0u8; 4];
+        let s = ch.encode_utf8(&mut tmp);
+        let n = s.len();
+        buf[..n].copy_from_slice(&tmp[..n]);
+        n
+    } else {
+        0
+    }
+}
+fn trace_mb_cur_max() -> usize {
+    4
+}
+fn trace_to_upper(wc: u32) -> u32 {
+    char::from_u32(wc)
+        .map(|c| {
+            let mut it = c.to_uppercase();
+            it.next().unwrap_or(c) as u32
+        })
+        .unwrap_or(wc)
+}
+fn trace_to_lower(wc: u32) -> u32 {
+    char::from_u32(wc)
+        .map(|c| {
+            let mut it = c.to_lowercase();
+            it.next().unwrap_or(c) as u32
+        })
+        .unwrap_or(wc)
+}
+fn trace_char_width(wc: u32) -> usize {
+    if let Some(ch) = char::from_u32(wc) {
+        if ch.is_control() { 0 } else { 1 }
+    } else {
+        0
+    }
+}
+fn trace_strcoll(a: &[u8], b: &[u8]) -> std::cmp::Ordering {
+    a.cmp(b)
+}
+fn trace_decimal_point() -> u8 {
+    b'.'
 }
 fn trace_sysconf(name: c_int) -> c_long {
     let entry = trace_dispatch("sysconf", &[ArgMatcher::Int(name as i64)]);
@@ -838,7 +931,17 @@ pub(super) fn trace_interface() -> SystemInterface {
         take_pending_signal_bits: test_take_pending_signal_bits,
         monotonic_clock_ns: trace_monotonic_clock_ns,
         setup_locale: trace_setup_locale,
+        reinit_locale: trace_reinit_locale,
         classify_byte: trace_classify_byte,
+        classify_char: trace_classify_char,
+        decode_char: trace_decode_char,
+        encode_char: trace_encode_char,
+        mb_cur_max: trace_mb_cur_max,
+        to_upper: trace_to_upper,
+        to_lower: trace_to_lower,
+        char_width: trace_char_width,
+        strcoll: trace_strcoll,
+        decimal_point: trace_decimal_point,
     }
 }
 
@@ -972,7 +1075,15 @@ pub(super) fn no_interface_table() -> SystemInterface {
     fn panic_setup_locale() {
         panic!("unexpected call 'setup_locale' in pure-logic test")
     }
+    fn noop_reinit_locale() {}
     fn ascii_classify_byte(class: &[u8], byte: u8) -> bool {
+        ascii_classify_char(class, byte as u32)
+    }
+    fn ascii_classify_char(class: &[u8], wc: u32) -> bool {
+        if wc > 0x7f {
+            return false;
+        }
+        let byte = wc as u8;
         match class {
             b"alnum" => byte.is_ascii_alphanumeric(),
             b"alpha" => byte.is_ascii_alphabetic(),
@@ -988,6 +1099,47 @@ pub(super) fn no_interface_table() -> SystemInterface {
             b"xdigit" => byte.is_ascii_hexdigit(),
             _ => false,
         }
+    }
+    fn ascii_decode_char(bytes: &[u8]) -> (u32, usize) {
+        if bytes.is_empty() {
+            (0, 0)
+        } else {
+            (bytes[0] as u32, 1)
+        }
+    }
+    fn ascii_encode_char(wc: u32, buf: &mut [u8]) -> usize {
+        if wc <= 0x7f {
+            buf[0] = wc as u8;
+            1
+        } else {
+            0
+        }
+    }
+    fn ascii_mb_cur_max() -> usize {
+        1
+    }
+    fn ascii_to_upper(wc: u32) -> u32 {
+        if wc >= b'a' as u32 && wc <= b'z' as u32 {
+            wc - 32
+        } else {
+            wc
+        }
+    }
+    fn ascii_to_lower(wc: u32) -> u32 {
+        if wc >= b'A' as u32 && wc <= b'Z' as u32 {
+            wc + 32
+        } else {
+            wc
+        }
+    }
+    fn ascii_char_width(wc: u32) -> usize {
+        if wc < 0x20 || wc == 0x7f { 0 } else { 1 }
+    }
+    fn ascii_strcoll(a: &[u8], b: &[u8]) -> std::cmp::Ordering {
+        a.cmp(b)
+    }
+    fn ascii_decimal_point() -> u8 {
+        b'.'
     }
 
     SystemInterface {
@@ -1036,7 +1188,17 @@ pub(super) fn no_interface_table() -> SystemInterface {
         take_pending_signal_bits: test_take_pending_signal_bits,
         monotonic_clock_ns: panic_monotonic_clock_ns,
         setup_locale: panic_setup_locale,
+        reinit_locale: noop_reinit_locale,
         classify_byte: ascii_classify_byte,
+        classify_char: ascii_classify_char,
+        decode_char: ascii_decode_char,
+        encode_char: ascii_encode_char,
+        mb_cur_max: ascii_mb_cur_max,
+        to_upper: ascii_to_upper,
+        to_lower: ascii_to_lower,
+        char_width: ascii_char_width,
+        strcoll: ascii_strcoll,
+        decimal_point: ascii_decimal_point,
     }
 }
 

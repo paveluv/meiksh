@@ -387,7 +387,10 @@ impl PtySession {
                 libc::close(stop_r);
             });
 
-            vlog!("PtySession::spawn: child_pid={pid}, master_fd={master}, argv={:?}", argv);
+            vlog!(
+                "PtySession::spawn: child_pid={pid}, master_fd={master}, argv={:?}",
+                argv
+            );
             Ok(PtySession {
                 master_fd: master,
                 child_pid: pid,
@@ -453,13 +456,25 @@ impl PtySession {
                 if let Some((_match_start, match_end)) = regex_find(pattern, &haystack) {
                     let consumed = haystack[..match_end].to_string();
                     lock.drain(..match_end);
-                    vlog!("expect: matched {:?} after {:.3}s", pattern_str, start.elapsed().as_secs_f64());
+                    vlog!(
+                        "expect: matched {:?} after {:.3}s",
+                        pattern_str,
+                        start.elapsed().as_secs_f64()
+                    );
                     return Ok(consumed);
                 }
                 if verbose() && last_verbose_log.elapsed() >= Duration::from_millis(50) {
-                    vlog!("expect: waiting for {:?} ({:.3}s elapsed, buf={} bytes): {:?}",
-                        pattern_str, start.elapsed().as_secs_f64(), haystack.len(),
-                        if haystack.len() > 200 { format!("{}...", &haystack[..200]) } else { haystack.clone() });
+                    vlog!(
+                        "expect: waiting for {:?} ({:.3}s elapsed, buf={} bytes): {:?}",
+                        pattern_str,
+                        start.elapsed().as_secs_f64(),
+                        haystack.len(),
+                        if haystack.len() > 200 {
+                            format!("{}...", &haystack[..200])
+                        } else {
+                            haystack.clone()
+                        }
+                    );
                     last_verbose_log = Instant::now();
                 }
                 if start.elapsed() >= timeout {
@@ -531,7 +546,11 @@ impl PtySession {
                 return Err(format!("waitpid failed: {}", io::Error::last_os_error()));
             }
         }
-        vlog!("wait_child: child {} exited, status=0x{:x}", self.child_pid, status);
+        vlog!(
+            "wait_child: child {} exited, status=0x{:x}",
+            self.child_pid,
+            status
+        );
 
         kill_session(self.child_pid);
 
@@ -585,11 +604,18 @@ impl PtySession {
             let mut status: CInt = 0;
             let ret = libc::waitpid(self.child_pid, &mut status, libc::WNOHANG);
             if ret == 0 {
-                vlog!("cleanup: child {} still alive after kill_session, sending SIGKILL directly", self.child_pid);
+                vlog!(
+                    "cleanup: child {} still alive after kill_session, sending SIGKILL directly",
+                    self.child_pid
+                );
                 libc::kill(self.child_pid, libc::SIGKILL);
                 libc::waitpid(self.child_pid, &mut status, 0);
             }
-            vlog!("cleanup: child {} reaped, status=0x{:x}", self.child_pid, status);
+            vlog!(
+                "cleanup: child {} reaped, status=0x{:x}",
+                self.child_pid,
+                status
+            );
         }
     }
 }
@@ -1783,11 +1809,7 @@ fn strip_inline_comment(line: &str) -> &str {
 
 // ── Test isolation ───────────────────────────────────────────────────────────
 
-fn baseline_env(
-    tmpdir: &str,
-    shell_str: &str,
-    locale_dir: Option<&str>,
-) -> HashMap<String, String> {
+fn baseline_env(tmpdir: &str, shell_str: &str) -> HashMap<String, String> {
     let mut env = HashMap::new();
     env.insert("PATH".into(), "/usr/bin:/bin".into());
     env.insert("HOME".into(), tmpdir.into());
@@ -1795,10 +1817,6 @@ fn baseline_env(
     env.insert("TERM".into(), "xterm".into());
     env.insert("LANG".into(), "C".into());
     env.insert("LC_ALL".into(), "C".into());
-    if let Some(dir) = locale_dir {
-        env.insert("LOCPATH".into(), dir.into());
-        env.insert("PATH_LOCALE".into(), dir.into());
-    }
     env.insert("PS1".into(), "$ ".into());
     env.insert("PS2".into(), "> ".into());
     env.insert("ENV".into(), String::new());
@@ -1809,66 +1827,6 @@ fn baseline_env(
         format!("{tmpdir}/default_%p_%m.profraw"),
     );
     env
-}
-
-fn compile_locale_variant(
-    locale_dir: &str,
-    def_path: &str,
-    charmap: &str,
-    locale_name: &str,
-) -> bool {
-    let out_path = format!("{locale_dir}/{locale_name}");
-    if std::path::Path::new(&out_path).is_dir() {
-        return true;
-    }
-
-    let output = Command::new("localedef")
-        .args(["-f", charmap, "-i", def_path, &out_path])
-        .output();
-
-    match output {
-        Ok(o) if o.status.success() || o.status.code() == Some(1) => {
-            eprintln!("expect_pty: compiled test locale to {out_path}");
-            true
-        }
-        Ok(o) => {
-            let stderr = String::from_utf8_lossy(&o.stderr);
-            eprintln!(
-                "expect_pty: localedef failed (status={:?}) for {locale_name}: {stderr}",
-                o.status.code()
-            );
-            false
-        }
-        Err(e) => {
-            eprintln!("expect_pty: localedef not found: {e}");
-            false
-        }
-    }
-}
-
-fn compile_test_locale() -> Option<String> {
-    let locale_dir = "/tmp/epty_locale";
-
-    let _ = fs::create_dir_all(locale_dir);
-
-    let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    let def_path = format!("{manifest_dir}/tests/matrix/locale/test_EPTY.def");
-
-    if !std::path::Path::new(&def_path).exists() {
-        eprintln!("expect_pty: locale definition not found at {def_path}, skipping locale setup");
-        return None;
-    }
-
-    let utf8_ok = compile_locale_variant(locale_dir, &def_path, "UTF-8", "test_EPTY.UTF-8");
-    let latin1_ok =
-        compile_locale_variant(locale_dir, &def_path, "ISO-8859-1", "test_EPTY.ISO-8859-1");
-
-    if utf8_ok || latin1_ok {
-        Some(locale_dir.to_string())
-    } else {
-        eprintln!("expect_pty: localedef not available or failed, skipping locale tests");
-        None
-    }
 }
 
 fn make_test_tmpdir() -> io::Result<String> {
@@ -1972,21 +1930,12 @@ fn run_suite_test(
     shell_argv: &[String],
     shell_str: &str,
     script_modes: &[ScriptMode],
-    locale_dir: Option<&str>,
 ) -> Result<(), String> {
     let tmpdir = make_test_tmpdir().map_err(|e| format!("failed to create tmpdir: {e}"))?;
     let workdir = format!("{tmpdir}/sandbox");
     fs::create_dir(&workdir).map_err(|e| format!("failed to create sandbox dir: {e}"))?;
 
-    let result = run_suite_test_inner(
-        test,
-        shell_argv,
-        shell_str,
-        &tmpdir,
-        &workdir,
-        script_modes,
-        locale_dir,
-    );
+    let result = run_suite_test_inner(test, shell_argv, shell_str, &tmpdir, &workdir, script_modes);
     remove_dir_all(&tmpdir);
     result
 }
@@ -1998,9 +1947,8 @@ fn run_suite_test_inner(
     tmpdir: &str,
     workdir: &str,
     script_modes: &[ScriptMode],
-    locale_dir: Option<&str>,
 ) -> Result<(), String> {
-    let mut test_env = baseline_env(tmpdir, shell_str, locale_dir);
+    let mut test_env = baseline_env(tmpdir, shell_str);
     for (k, v) in &test.env_overrides {
         test_env.insert(k.clone(), v.clone());
     }
@@ -2162,7 +2110,11 @@ fn run_suite_test_inner(
                     pattern_str,
                     timeout.as_secs_f64()
                 ));
-                vlog!("suite: expect {:?} (timeout={:.1}s)", pattern_str, timeout.as_secs_f64());
+                vlog!(
+                    "suite: expect {:?} (timeout={:.1}s)",
+                    pattern_str,
+                    timeout.as_secs_f64()
+                );
                 match sess.expect(&pattern, &pattern_str, timeout) {
                     Ok(consumed) => {
                         log.push(format!("<<< matched (consumed {} bytes)", consumed.len()));
@@ -2317,7 +2269,6 @@ fn run_test_isolated(
     shell_argv: &[String],
     shell_str: &str,
     script_modes: &[ScriptMode],
-    locale_dir: Option<&str>,
     timeout: Duration,
     cgroup_base: Option<&str>,
 ) -> TestReport {
@@ -2378,7 +2329,7 @@ fn run_test_isolated(
             let _ = move_to_cgroup(cg, std::process::id());
         }
 
-        match run_suite_test(test, shell_argv, shell_str, script_modes, locale_dir) {
+        match run_suite_test(test, shell_argv, shell_str, script_modes) {
             Ok(()) => {
                 unsafe { libc::close(pipe_w) };
                 unsafe { libc::_exit(0) };
@@ -2395,7 +2346,10 @@ fn run_test_isolated(
     }
 
     // ── Parent process ──
-    vlog!("run_test_isolated: forked isolation child_pid={child_pid} for {:?}", test.name);
+    vlog!(
+        "run_test_isolated: forked isolation child_pid={child_pid} for {:?}",
+        test.name
+    );
     unsafe { libc::close(pipe_w) };
 
     let deadline = Instant::now() + timeout;
@@ -2414,14 +2368,20 @@ fn run_test_isolated(
         }
         if verbose() && last_progress.elapsed() >= Duration::from_secs(1) {
             let remaining = deadline.saturating_duration_since(Instant::now());
-            vlog!("run_test_isolated: still waiting for child_pid={child_pid} ({:.1}s remaining)", remaining.as_secs_f64());
+            vlog!(
+                "run_test_isolated: still waiting for child_pid={child_pid} ({:.1}s remaining)",
+                remaining.as_secs_f64()
+            );
             last_progress = Instant::now();
         }
         std::thread::sleep(Duration::from_millis(10));
     }
 
     if !reaped {
-        vlog!("run_test_isolated: TIMEOUT for {:?}, killing child_pid={child_pid}", test.name);
+        vlog!(
+            "run_test_isolated: TIMEOUT for {:?}, killing child_pid={child_pid}",
+            test.name
+        );
         if let Some(ref cg) = cgroup_path {
             let _ = kill_cgroup(cg);
         } else {
@@ -2463,14 +2423,21 @@ fn run_test_isolated(
             error: None,
         }
     } else if !error_buf.is_empty() {
-        vlog!("run_test_isolated: {:?} FAILED: {}", test.name, error_buf.lines().next().unwrap_or(""));
+        vlog!(
+            "run_test_isolated: {:?} FAILED: {}",
+            test.name,
+            error_buf.lines().next().unwrap_or("")
+        );
         TestReport {
             name: test.name.clone(),
             outcome: TestOutcome::Fail,
             error: Some(error_buf),
         }
     } else {
-        vlog!("run_test_isolated: {:?} FAILED with status {status}", test.name);
+        vlog!(
+            "run_test_isolated: {:?} FAILED with status {status}",
+            test.name
+        );
         TestReport {
             name: test.name.clone(),
             outcome: TestOutcome::Fail,
@@ -2486,7 +2453,6 @@ fn run_suite(
     shell_argv: &[String],
     shell_str: &str,
     script_modes: &[ScriptMode],
-    locale_dir: Option<&str>,
     timeout: Duration,
     cgroup_base: Option<&str>,
 ) -> Vec<TestReport> {
@@ -2497,7 +2463,6 @@ fn run_suite(
             shell_argv,
             shell_str,
             script_modes,
-            locale_dir,
             timeout,
             cgroup_base,
         );
@@ -2654,10 +2619,6 @@ fn main() {
             None => Duration::from_secs(10),
         };
 
-        // Attempt to compile the test locale for locale-dependent tests
-        let locale_dir = compile_test_locale();
-        let locale_dir_ref = locale_dir.as_deref();
-
         let cgroup_base = discover_cgroup_base();
         if cgroup_base.is_none() {
             eprintln!(
@@ -2728,7 +2689,6 @@ fn main() {
                 &shell_argv,
                 &shell_str,
                 &script_modes,
-                locale_dir_ref,
                 test_timeout,
                 cgroup_base_ref,
             );

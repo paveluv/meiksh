@@ -505,3 +505,20 @@ begin interactive test "alias with trailing space chains to next word"
   wait
 end interactive test "alias with trailing space chains to next word"
 ```
+
+#### Test: alias listing sorted by collation sequence
+
+```
+begin test "alias listing sorted by collation sequence"
+  script
+    alias Bx=true
+    alias ax=true
+    alias Cx=true
+    alias bx=true
+    alias | sed 's/=.*//' | head -4
+  expect
+    stdout "Bx\nCx\nax\nbx"
+    stderr ""
+    exit_code 0
+end test "alias listing sorted by collation sequence"
+```

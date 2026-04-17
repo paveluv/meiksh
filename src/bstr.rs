@@ -324,7 +324,7 @@ pub(crate) fn push_f64_fixed(buf: &mut Vec<u8>, val: f64, precision: usize) {
 
     push_u64(buf, integer_part);
     if precision > 0 {
-        buf.push(b'.');
+        buf.push(crate::sys::locale::decimal_point());
         // frac_part must be zero-padded to `precision` digits
         let start = buf.len();
         push_u64(buf, frac_part);

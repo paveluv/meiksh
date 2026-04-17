@@ -3,6 +3,23 @@ use crate::bstr::{self, ByteWriter};
 use crate::shell::error::ShellError;
 use crate::shell::state::Shell;
 
+fn find_opt_in_optstring(opts: &[u8], target: u32) -> Option<usize> {
+    let mut i = 0;
+    while i < opts.len() {
+        if opts[i] == b':' {
+            i += 1;
+            continue;
+        }
+        let (wc, len) = crate::sys::locale::decode_char(&opts[i..]);
+        let step = if len == 0 { 1 } else { len };
+        if wc == target {
+            return Some(i);
+        }
+        i += step;
+    }
+    None
+}
+
 pub(super) fn getopts_set(
     shell: &mut Shell,
     name: &[u8],
@@ -92,11 +109,14 @@ pub(super) fn getopts_inner(
     }
 
     let ci = if charind == 0 { 1 } else { charind };
-    let opt_byte = arg_bytes[ci];
-    let next_ci = ci + 1;
+    let (opt_wc, opt_char_len) = crate::sys::locale::decode_char(&arg_bytes[ci..]);
+    let opt_char_len = if opt_char_len == 0 { 1 } else { opt_char_len };
+    let opt_bytes = &arg_bytes[ci..ci + opt_char_len];
+    let next_ci = ci + opt_char_len;
 
-    if let Some(pos) = opts.iter().position(|&b| b == opt_byte) {
-        let takes_arg = opts.get(pos + 1) == Some(&b':');
+    let opt_pos = find_opt_in_optstring(opts, opt_wc);
+    if let Some(pos) = opt_pos {
+        let takes_arg = opts.get(pos + opt_char_len) == Some(&b':');
 
         if takes_arg {
             if next_ci < arg_bytes.len() {
@@ -112,12 +132,12 @@ pub(super) fn getopts_inner(
             } else {
                 if silent {
                     getopts_set(shell, name, b":")?;
-                    getopts_set(shell, b"OPTARG", &[opt_byte])?;
+                    getopts_set(shell, b"OPTARG", opt_bytes)?;
                 } else {
                     let msg = ByteWriter::new()
                         .bytes(&shell.shell_name)
                         .bytes(b": option requires an argument -- ")
-                        .byte(opt_byte)
+                        .bytes(opt_bytes)
                         .byte(b'\n')
                         .finish();
                     write_stderr(&msg);
@@ -142,16 +162,16 @@ pub(super) fn getopts_inner(
                 shell.env_mut().remove(b"_GETOPTS_CIND" as &[u8]);
             }
         }
-        getopts_set(shell, name, &[opt_byte])?;
+        getopts_set(shell, name, opt_bytes)?;
         Ok(BuiltinOutcome::Status(0))
     } else {
         if silent {
-            getopts_set(shell, b"OPTARG", &[opt_byte])?;
+            getopts_set(shell, b"OPTARG", opt_bytes)?;
         } else {
             let msg = ByteWriter::new()
                 .bytes(&shell.shell_name)
                 .bytes(b": illegal option -- ")
-                .byte(opt_byte)
+                .bytes(opt_bytes)
                 .byte(b'\n')
                 .finish();
             write_stderr(&msg);

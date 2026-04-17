@@ -4,6 +4,18 @@ use crate::shell::error::ShellError;
 use crate::shell::state::Shell;
 use crate::sys;
 
+fn find_on_char_boundary(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    let mut i = 0;
+    while i < haystack.len() {
+        if haystack[i..].starts_with(needle) {
+            return Some(i);
+        }
+        let (_, len) = crate::sys::locale::decode_char(&haystack[i..]);
+        i += if len == 0 { 1 } else { len };
+    }
+    None
+}
+
 pub(super) fn fc_resolve_operand(history: &[Box<[u8]>], op: &[u8]) -> Option<usize> {
     if let Some(n) = bstr::parse_i64(op) {
         if n > 0 {
@@ -101,7 +113,7 @@ pub(super) fn fc(shell: &mut Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutcome, 
         };
         let mut cmd = history[idx].to_vec();
         if let Some((old, new)) = substitution {
-            if let Some(pos) = cmd.windows(old.len()).position(|w| w == old) {
+            if let Some(pos) = find_on_char_boundary(&cmd, old) {
                 let mut replaced = cmd[..pos].to_vec();
                 replaced.extend_from_slice(new);
                 replaced.extend_from_slice(&cmd[pos + old.len()..]);

@@ -319,9 +319,12 @@ mod tests {
                 assert!(pattern_matches(b"x", b"[[:x]"));
                 assert!(!pattern_matches(b"", b"[a-z]"));
 
-                assert_eq!(match_bracket(None, b"[a]", 0), None);
-                assert_eq!(match_bracket(Some(b'a'), b"[", 0), None);
-                assert_eq!(match_bracket(Some(b']'), b"[\\]]", 0), Some((true, 4)));
+                assert_eq!(match_bracket(None, 0, b"", 0, b"[a]", 0), None);
+                assert_eq!(match_bracket(Some(b'a' as u32), 1, b"a", 0, b"[", 0), None);
+                assert_eq!(
+                    match_bracket(Some(b']' as u32), 1, b"]", 0, b"[\\]]", 0),
+                    Some((true, 4))
+                );
                 assert_eq!(
                     render_pattern_from_segments(&[Segment::Text(
                         b"*".to_vec(),

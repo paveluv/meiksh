@@ -6,7 +6,7 @@ use crate::shell::state::Shell;
 pub(super) fn alias(shell: &mut Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutcome, ShellError> {
     if argv.len() == 1 {
         let mut items: Vec<_> = shell.aliases().iter().collect();
-        items.sort_by(|a, b| a.0.cmp(b.0));
+        items.sort_by(|a, b| crate::sys::locale::strcoll(a.0, b.0));
         for (name, value) in items {
             let line = format_alias_definition(name, value);
             write_stdout_line(&line);

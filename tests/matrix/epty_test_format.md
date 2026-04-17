@@ -117,7 +117,7 @@ Set an environment variable for the test's execution:
 
 ```
 begin test "locale-sensitive test"
-  setenv "LC_ALL" "test_EPTY.UTF-8"
+  setenv "LC_ALL" "C.UTF-8"
   script
     ...
   expect

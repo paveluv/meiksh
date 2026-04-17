@@ -81,7 +81,7 @@ The `]` character placed first in a bracket expression (after initial `^` if any
 
 ```
 begin test "right-bracket first in bracket expression"
-  setenv "LC_ALL" "test_EPTY.UTF-8"
+  setenv "LC_ALL" "C.UTF-8"
   script
     case "]" in
       []abc]) echo "match";;
@@ -100,7 +100,7 @@ When `]` is not the first character in a bracket expression, it terminates the e
 
 ```
 begin test "right-bracket terminates bracket expression"
-  setenv "LC_ALL" "test_EPTY.UTF-8"
+  setenv "LC_ALL" "C.UTF-8"
   script
     case "b" in
       [ab]) echo "match";;
@@ -123,7 +123,7 @@ When the bracket expression appears within a BRE, the special characters `.`, `*
 
 ```
 begin test "special BRE chars lose meaning in bracket expression"
-  setenv "LC_ALL" "test_EPTY.UTF-8"
+  setenv "LC_ALL" "C.UTF-8"
   script
     echo '.' | grep '[.*]' >/dev/null && echo "dot_match"
     echo '*' | grep '[.*]' >/dev/null && echo "star_match"
@@ -144,7 +144,7 @@ lose its anchor meaning.
 
 ```
 begin test "special ERE chars lose meaning in bracket expression"
-  setenv "LC_ALL" "test_EPTY.UTF-8"
+  setenv "LC_ALL" "C.UTF-8"
   script
     echo '(' | grep -E '[(]' >/dev/null && echo "paren_match"
     echo '+' | grep -E '[+]' >/dev/null && echo "plus_match"
@@ -164,7 +164,7 @@ Within a shell pattern bracket expression, `?`, `*`, and `[` lose their special 
 
 ```
 begin test "special shell pattern chars lose meaning in bracket expression"
-  setenv "LC_ALL" "test_EPTY.UTF-8"
+  setenv "LC_ALL" "C.UTF-8"
   script
     case '?' in
       [?*]) echo "qmark_match";;
@@ -191,7 +191,7 @@ A matching list expression matches any single character that is matched by one o
 
 ```
 begin test "matching list expression"
-  setenv "LC_ALL" "test_EPTY.UTF-8"
+  setenv "LC_ALL" "C.UTF-8"
   script
     case "3" in
       [[:digit:]a-f]) echo "match";;
@@ -218,7 +218,7 @@ An ordinary character in the list shall only match that character. `[abc]` match
 
 ```
 begin test "ordinary character in bracket expression"
-  setenv "LC_ALL" "test_EPTY.UTF-8"
+  setenv "LC_ALL" "C.UTF-8"
   script
     case "a" in
       [abc]) echo "match";;
@@ -241,7 +241,7 @@ The circumflex has its special negation meaning only when it occurs first in the
 
 ```
 begin test "circumflex only special when first"
-  setenv "LC_ALL" "test_EPTY.UTF-8"
+  setenv "LC_ALL" "C.UTF-8"
   script
     case "^" in
       [a^b]) echo "match";;
@@ -260,7 +260,7 @@ A collating symbol is a collating element enclosed within bracket-period (`[.` a
 
 ```
 begin test "collating symbol basic syntax"
-  setenv "LC_ALL" "test_EPTY.UTF-8"
+  setenv "LC_ALL" "C.UTF-8"
   script
     case "a" in
       [[.a.]]) echo "match";;
@@ -282,7 +282,7 @@ recognized.
 
 ```
 begin test "equivalence class expression syntax"
-  setenv "LC_ALL" "test_EPTY.UTF-8"
+  setenv "LC_ALL" "C.UTF-8"
   script
     case "a" in
       [[=a=]]) echo "match";;
@@ -301,7 +301,7 @@ An equivalence class can be combined with other elements in a bracket expression
 
 ```
 begin test "equivalence class bracket notation"
-  setenv "LC_ALL" "test_EPTY.UTF-8"
+  setenv "LC_ALL" "C.UTF-8"
   script
     case "a" in
       [[=a=]bc]) echo "match";;
@@ -324,7 +324,7 @@ If the collating element does not belong to an equivalence class, the equivalenc
 
 ```
 begin test "equivalence class fallback to collating symbol"
-  setenv "LC_ALL" "test_EPTY.UTF-8"
+  setenv "LC_ALL" "C.UTF-8"
   script
     case "z" in
       [[=z=]]) echo "match";;
@@ -345,7 +345,7 @@ and `xdigit` shall be recognized.
 
 ```
 begin test "all character classes recognized in locale"
-  setenv "LC_ALL" "test_EPTY.UTF-8"
+  setenv "LC_ALL" "C.UTF-8"
   script
     case "a" in [[:alnum:]]) echo "alnum_ok";; *) echo "alnum_fail";; esac
     case "a" in [[:alpha:]]) echo "alpha_ok";; *) echo "alpha_fail";; esac
@@ -416,7 +416,7 @@ A range expression is expressed as a starting point and ending point separated b
 
 ```
 begin test "range expression basic syntax"
-  setenv "LC_ALL" "test_EPTY.UTF-8"
+  setenv "LC_ALL" "C.UTF-8"
   script
     case "b" in
       [a-c]) echo "match";;
@@ -439,7 +439,7 @@ The hyphen-minus is treated as itself when it occurs first or last in a bracket 
 
 ```
 begin test "hyphen literal when first or last"
-  setenv "LC_ALL" "test_EPTY.UTF-8"
+  setenv "LC_ALL" "C.UTF-8"
   script
     case "-" in
       [-abc]) echo "first_match";;
@@ -481,7 +481,7 @@ When both `]` and `-` appear in a bracket expression, `]` shall be placed first 
 
 ```
 begin test "bracket with both ] and -"
-  setenv "LC_ALL" "test_EPTY.UTF-8"
+  setenv "LC_ALL" "C.UTF-8"
   script
     case "]" in
       []a-]) echo "bracket_match";;
@@ -667,4 +667,21 @@ begin test "bracket expression matches single character only"
     stderr ""
     exit_code 0
 end test "bracket expression matches single character only"
+```
+
+#### Test: equivalence class matches character variant
+
+```
+begin test "equivalence class matches character variant"
+  script
+    export LC_ALL=C.UTF-8
+    case e in
+      ([[=e=]]) echo yes;;
+      (*) echo no;;
+    esac
+  expect
+    stdout "yes"
+    stderr ""
+    exit_code 0
+end test "equivalence class matches character variant"
 ```
