@@ -1,18 +1,76 @@
-# Unit Test Writing Guide
+# Test Writing Guide
 
-Meiksh unit tests drive the shell or its subsystems under a **fake system
-interface** (`crate::sys::test_support`).  A trace is a list of expected
-syscalls with argument shapes and return values.  `run_trace(trace, || { … })`
-replays the trace for the closure; `fork` entries automatically expand into
-parent and child runs.
+> **Authority:** `docs/IMPLEMENTATION_POLICY.md` is the canonical source for
+> project-wide rules.  If anything in this guide conflicts with the
+> implementation policy, the policy takes priority.
 
-This document covers the **implemented** helpers, the `trace_entries!` /
-`syscall_test!` macros in `src/lib.rs` (test-only), and the conventions every
-test must follow.
+Meiksh has two levels of testing: **unit tests** (in-crate, under `src/`) and
+**integration tests** (out-of-crate, under `tests/integration/`).  Use good
+judgement to pick the right level for what you are testing.
 
 ---
 
-## Golden rule
+## Unit tests vs. integration tests
+
+| | Unit tests | Integration tests |
+|---|---|---|
+| **Location** | `#[cfg(test)] mod tests` inside each `src/` file | `tests/integration/*.rs` |
+| **Binary** | Runs inside the library crate | Spawns the `meiksh` binary as a child process |
+| **Syscalls** | Faked via `crate::sys::test_support` | Real kernel syscalls |
+| **Speed** | Fast (no process spawn) | Slower (fork + exec per test) |
+| **Run** | `cargo test --lib` | `cargo test --test integration_basic` |
+
+### When to write a unit test
+
+- Testing **internal functions** that are not reachable through the shell CLI
+  (private helpers, `pub(crate)` APIs, trait impls, parser internals).
+- Testing **exact syscall sequences** — the trace infrastructure lets you
+  assert that `open`, `read`, `write`, `close` happen in the right order with
+  the right arguments.
+- Testing **error paths** that require a specific syscall to fail (`-> err(EBADF)`).
+- Testing **pure logic** with no I/O (use `assert_no_syscalls`).
+- When the code under test uses `FakeContext`, `test_shell()`, or similar
+  in-crate test doubles.
+
+### When to write an integration test
+
+- Testing **end-to-end shell behaviour** as a user would observe it: given a
+  script, assert on stdout, stderr, and exit status.
+- Testing **POSIX compliance** — the shell must produce the same output as
+  specified by the standard for a given input.
+- Testing **interaction between subsystems** (parsing + expansion + execution +
+  redirection together).
+- Testing **edge cases in shell syntax** (heredocs, quoting, line
+  continuations, IFS splitting) that are easiest to express as a shell snippet.
+- When you need **real file system, pipes, or signal delivery** that the fake
+  syscall layer cannot easily simulate.  (Unit tests must be isolated and
+  in-memory — see `IMPLEMENTATION_POLICY.md`; integration tests are the
+  appropriate place for real OS interactions.)
+
+### Grey areas
+
+Some code paths can be tested at either level.  Prefer the level that gives
+you the **shortest, most readable test**.  If a unit test requires an
+elaborate trace with 15 syscalls just to reach the line you care about, an
+integration test with a two-line shell script is better.  Conversely, if an
+integration test requires a fragile temp-file setup to hit one branch in the
+expander, a unit test calling the function directly is better.
+
+---
+
+## Part 1 — Unit tests
+
+Unit tests drive the shell or its subsystems under a **fake system interface**
+(`crate::sys::test_support`).  A trace is a list of expected syscalls with
+argument shapes and return values.  `run_trace(trace, || { … })` replays the
+trace for the closure; `fork` entries automatically expand into parent and
+child runs.
+
+This section covers the **implemented** helpers, the `trace_entries!` /
+`syscall_test!` macros in `src/lib.rs` (test-only), and the conventions every
+unit test must follow.
+
+### Golden rule
 
 > **Every `run_trace` call MUST receive its trace from `trace_entries!`.**
 >
@@ -34,16 +92,14 @@ test must follow.
 > );
 > ```
 
----
+### Quick-start: writing a unit test
 
-## Quick-start: writing a test from scratch
-
-### 1. Choose the right test module
+#### 1. Choose the right test module
 
 Tests live in `#[cfg(test)] mod tests` blocks inside each source file.  Find
 (or create) the `mod tests` closest to the code you are testing.
 
-### 2. Add imports
+#### 2. Add imports
 
 **For sys/ modules** (testing syscall wrappers directly):
 
@@ -51,6 +107,7 @@ Tests live in `#[cfg(test)] mod tests` blocks inside each source file.  Find
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use crate::sys::test_support::{run_trace, assert_no_syscalls};
     use crate::trace_entries;
 
@@ -64,7 +121,8 @@ mod tests {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::builtin::test_support::*;   // run_trace, test_shell, invoke, diag
+
+    use crate::builtin::test_support::{diag, invoke, run_trace, test_shell};
     use crate::trace_entries;
 
     // …
@@ -77,6 +135,7 @@ mod tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use crate::shell::test_support::test_shell;
     use crate::sys::test_support::{run_trace, assert_no_syscalls};
     use crate::trace_entries;
@@ -88,7 +147,7 @@ mod tests {
 Only import what you use — `ArgMatcher`, `TraceResult`, and `t` are needed
 only when building dynamic entries for spread.
 
-### 3. Write the test
+#### 3. Write the test
 
 ```rust
 #[test]
@@ -103,7 +162,7 @@ fn setenv_success() {
 }
 ```
 
-### 4. Tests that make no syscalls
+#### 4. Tests that make no syscalls
 
 Use `assert_no_syscalls` for pure logic tests:
 
@@ -118,7 +177,7 @@ fn parse_returns_none_on_empty() {
 
 ---
 
-## Core API
+### Core API
 
 | Function | Purpose |
 |----------|---------|
@@ -133,7 +192,7 @@ it aids readability.
 
 ---
 
-## Building traces with `trace_entries!`
+### Building traces with `trace_entries!`
 
 ```rust
 use crate::trace_entries;
@@ -169,7 +228,7 @@ module.
 
 ---
 
-## End-to-end shell tests with `syscall_test!`
+### End-to-end shell tests with `syscall_test!`
 
 ```rust
 syscall_test! {
@@ -183,7 +242,7 @@ syscall_test! {
 
 ---
 
-## Argument shorthand
+### Argument shorthand
 
 In `syscall(…) -> result`, each argument is comma-separated:
 
@@ -201,7 +260,7 @@ In `syscall(…) -> result`, each argument is comma-separated:
 
 ---
 
-## Result shorthand
+### Result shorthand
 
 After `->`, one of:
 
@@ -232,7 +291,7 @@ After `->`, one of:
 
 ---
 
-## `waitpid` shorthand
+### `waitpid` shorthand
 
 These expand to `waitpid` with `(pid, Any, Any)` argument matching:
 
@@ -251,7 +310,7 @@ waitpid(int(pid), _, int(sys::WUNTRACED)) -> status(7)
 
 ---
 
-## `fork`
+### `fork`
 
 ```text
 fork() -> pid(parent_pid), child: [ /* child entries */ ]
@@ -261,7 +320,7 @@ Child traces use the same entry syntax.
 
 ---
 
-## Stdin helpers
+### Stdin helpers
 
 `pub(crate)` helpers in `crate::sys::test_support` (test-only):
 
@@ -286,7 +345,7 @@ bytes(…)` lines explicitly.
 
 ---
 
-## Shell test helpers
+### Shell test helpers
 
 | Helper | Location | Purpose |
 |--------|----------|---------|
@@ -300,15 +359,16 @@ bytes(…)` lines explicitly.
 
 ---
 
-## Complete examples
+### Unit test examples
 
-### Testing a builtin (echo write error)
+#### Testing a builtin (echo write error)
 
 ```rust
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::builtin::test_support::*;
+
+    use crate::builtin::test_support::{diag, invoke, run_trace, test_shell};
     use crate::trace_entries;
 
     #[test]
@@ -331,12 +391,13 @@ mod tests {
 }
 ```
 
-### Testing a syscall wrapper (setenv)
+#### Testing a syscall wrapper (setenv)
 
 ```rust
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use crate::sys::test_support::run_trace;
     use crate::trace_entries;
 
@@ -353,7 +414,7 @@ mod tests {
 }
 ```
 
-### Spreading dynamic entries
+#### Spreading dynamic entries
 
 When the macro doesn't support a `TraceResult` variant (e.g. `EnvMap`,
 `StrVal`, `NullStr`), build entries with `t(…)` and spread them:
@@ -380,7 +441,7 @@ fn getenv_found() {
 }
 ```
 
-### Pure logic test (no syscalls)
+#### Pure logic test (no syscalls)
 
 ```rust
 #[test]
@@ -394,7 +455,7 @@ fn parse_hex_values() {
 
 ---
 
-## When to keep `t(…)` (always inside spread)
+### When to keep `t(…)` (always inside spread)
 
 - Dynamic `Vec` construction, loops, or conditional trace lines.
 - `TraceResult` variants not covered by the macro: `EnvMap`, `StrVal`,
@@ -406,7 +467,7 @@ In all these cases, wrap the result in `..vec![…]` or `..helper_fn()` inside
 
 ---
 
-## Rules and conventions
+### Unit test rules and conventions
 
 1. **Always `trace_entries!`** — never pass `vec![t(…)]` directly to
    `run_trace`.  Spread dynamic entries with `..expr`.
@@ -433,3 +494,172 @@ In all these cases, wrap the result in `..vec![…]` or `..helper_fn()` inside
 
 8. **Run tests after writing:** `cargo test --lib <module_path>` to run a
    specific module's tests, `cargo test --lib` for the full suite.
+
+---
+
+## Part 2 — Integration tests
+
+Integration tests live in `tests/integration/` and exercise the **compiled
+`meiksh` binary** as a black box.  Each test spawns the shell, feeds it a
+script, and asserts on stdout, stderr, and exit status.
+
+### File layout
+
+```
+tests/integration/
+├── basic.rs            # entry point (mod declarations, core execution tests)
+├── common.rs           # shared helpers (meiksh(), TempDir, run_*)
+├── builtins.rs         # builtin command tests
+├── control_flow.rs     # if/while/for/case/subshell tests
+├── expansion.rs        # parameter expansion, globbing, tilde, arithmetic
+├── parser_coverage.rs  # tokenizer/parser edge cases
+├── redirection.rs      # redirections, heredocs, fd manipulation
+└── shell_options.rs    # set -e, set -u, set -f, etc.
+```
+
+`basic.rs` is the crate root (`#[test]` binary).  It declares the other files
+as modules.  All modules use `use super::common::*` to access the shared
+helpers.  (This wildcard import is permitted because `common.rs` is a small,
+purpose-built helper module for the integration test crate — it is analogous
+to `use super::*` in unit test modules.)
+
+### Shared helpers (`common.rs`)
+
+| Helper | Purpose |
+|--------|---------|
+| `meiksh()` | Returns the path to the compiled `meiksh` binary (`env!("CARGO_BIN_EXE_meiksh")`). |
+| `TempDir::new(prefix)` | Creates a temporary directory; cleaned up on `Drop`. |
+| `run_meiksh_with_stdin(script, stdin)` | Runs `meiksh -c <script>` with piped stdin, returns `Output`. |
+| `run_meiksh_with_nonblocking_stdin(stdin)` | Runs `meiksh` reading from a non-blocking stdin pipe. |
+| `run_interactive(input)` | Runs `meiksh -i` with piped input. |
+
+### Quick-start: writing an integration test
+
+#### 1. Pick the right module
+
+Place the test in the module that matches its topic:
+
+- Expansion behaviour → `expansion.rs`
+- Builtin command → `builtins.rs`
+- Redirect / heredoc → `redirection.rs`
+- Control flow (`if`, `while`, `for`, `case`) → `control_flow.rs`
+- Parser edge case → `parser_coverage.rs`
+- Shell options (`set -e`, etc.) → `shell_options.rs`
+- General / doesn't fit → `basic.rs`
+
+#### 2. Write the test
+
+The simplest pattern — run a `-c` script and assert on output:
+
+```rust
+#[test]
+fn parameter_length_operator() {
+    let out = Command::new(meiksh())
+        .args(["-c", "x=hello; printf '%s' \"${#x}\""])
+        .output()
+        .expect("run meiksh");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "5");
+}
+```
+
+#### 3. Tests that need stdin
+
+Use `run_meiksh_with_stdin` when the script reads from standard input:
+
+```rust
+#[test]
+fn read_builtin_from_stdin() {
+    let out = run_meiksh_with_stdin("read line; printf '%s' \"$line\"", b"hello\n");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "hello");
+}
+```
+
+For cases where you need to pipe raw bytes without `run_meiksh_with_stdin`
+adding `-c` (e.g. testing the shell reading a script from stdin), use
+`Command` directly:
+
+```rust
+#[test]
+fn shell_reads_script_from_stdin() {
+    let mut child = Command::new(meiksh())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn");
+    child.stdin.take().unwrap().write_all(b"printf hi\n").unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert!(out.status.success());
+    assert_eq!(out.stdout, b"hi");
+}
+```
+
+#### 4. Tests that need the file system
+
+Use `TempDir` for tests that create files or directories:
+
+```rust
+#[test]
+fn glob_expands_in_directory() {
+    let dir = TempDir::new("meiksh-glob");
+    fs::write(dir.join("a.txt"), "").unwrap();
+    fs::write(dir.join("b.txt"), "").unwrap();
+
+    let out = Command::new(meiksh())
+        .current_dir(dir.path())
+        .args(["-c", "printf '%s|' *.txt"])
+        .output()
+        .expect("run meiksh");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "a.txt|b.txt|");
+}
+```
+
+#### 5. Tests that expect failure
+
+Assert on `!out.status.success()` and/or check stderr:
+
+```rust
+#[test]
+fn syntax_error_produces_diagnostic() {
+    let out = Command::new(meiksh())
+        .args(["-c", "if"])
+        .output()
+        .expect("run meiksh");
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("syntax error"));
+}
+```
+
+---
+
+### Integration test rules and conventions
+
+1. **Use `meiksh()` for the binary path** — never hardcode a path.  The
+   helper uses `env!("CARGO_BIN_EXE_meiksh")` which Cargo sets automatically.
+
+2. **Prefer `-c` over stdin** for simple scripts.  It avoids line-buffering
+   surprises (the shell reads stdin line by line, so `\<newline>` continuations
+   at the end of a line won't see the next line until it's buffered).
+
+3. **Clean up temp files** — always use `TempDir` (auto-cleaned on drop)
+   rather than writing to fixed paths.
+
+4. **Assert on all three channels** when relevant: `status.success()`,
+   `stdout`, and `stderr`.  At minimum, always check the exit status.
+
+5. **Use `printf` over `echo`** in test scripts.  `printf '%s'` avoids
+   trailing newline ambiguity and is more portable.
+
+6. **Keep scripts minimal** — test one behaviour per test.  Long multi-line
+   scripts are harder to debug when they fail.
+
+7. **Name tests descriptively** — the name should describe the behaviour
+   being verified, not the implementation detail.  Good:
+   `parameter_plus_op_set_returns_word`.  Bad: `test_line_597`.
+
+8. **Run tests after writing:** `cargo test --test integration_basic` for the
+   integration suite, or `cargo test` for everything.
