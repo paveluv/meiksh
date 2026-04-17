@@ -59,8 +59,12 @@ pub(super) fn apply_prefix_assignments(
 }
 
 pub(super) fn restore_vars(shell: &mut Shell, saved: Vec<SavedVar>) {
+    let mut path_changed = false;
     for entry in saved {
         let name: Vec<u8> = entry.name.into();
+        if name == b"PATH" {
+            path_changed = true;
+        }
         match entry.value {
             Some(v) => {
                 shell.env_mut().insert(name.clone(), v);
@@ -74,6 +78,9 @@ pub(super) fn restore_vars(shell: &mut Shell, saved: Vec<SavedVar>) {
         } else {
             shell.exported_mut().remove(&name);
         }
+    }
+    if path_changed {
+        shell.path_cache_mut().clear();
     }
 }
 

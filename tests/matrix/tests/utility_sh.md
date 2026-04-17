@@ -3444,3 +3444,247 @@ begin interactive test "vi G without number goes to oldest history"
   wait
 end interactive test "vi G without number goes to oldest history"
 ```
+
+#### Test: vi x deletes full multi-byte character
+
+In vi command mode, `x` shall delete the character at the cursor. When the cursor is on a multi-byte character (like `é`), the entire character is deleted, not just one byte.
+
+```
+begin interactive test "vi x deletes full multi-byte character"
+  spawn -i
+  expect "$ "
+  send "export LC_ALL=C.UTF-8"
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  sendraw 65 63 68 6f 20 61 c3 a9 62
+  sleep 100ms
+  sendraw 1b
+  sleep 200ms
+  sendraw 68
+  sleep 200ms
+  sendraw 78
+  sleep 200ms
+  sendraw 0a
+  expect "ab"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "vi x deletes full multi-byte character"
+```
+
+#### Test: vi dl deletes full multi-byte character
+
+In vi command mode, `dl` (delete-motion-right) shall delete one character. When the cursor is on a multi-byte character, the entire character is deleted.
+
+```
+begin interactive test "vi dl deletes full multi-byte character"
+  spawn -i
+  expect "$ "
+  send "export LC_ALL=C.UTF-8"
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  sendraw 65 63 68 6f 20 61 c3 a9 62
+  sleep 100ms
+  sendraw 1b
+  sleep 200ms
+  sendraw 68
+  sleep 200ms
+  sendraw 64 6c
+  sleep 200ms
+  sendraw 0a
+  expect "ab"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "vi dl deletes full multi-byte character"
+```
+
+#### Test: vi dw deletes word containing multi-byte characters
+
+In vi command mode, `dw` shall delete from the cursor through the end of the current word. When the word contains multi-byte characters, they are all deleted correctly.
+
+```
+begin interactive test "vi dw deletes word containing multi-byte characters"
+  spawn -i
+  expect "$ "
+  send "export LC_ALL=C.UTF-8"
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  sendraw 65 63 68 6f 20 c3 a9 c3 a8 20 62 62 62
+  sleep 100ms
+  sendraw 1b
+  sleep 200ms
+  sendraw 30
+  sleep 200ms
+  sendraw 64 77
+  sleep 200ms
+  sendraw 0a
+  expect "bbb"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "vi dw deletes word containing multi-byte characters"
+```
+
+#### Test: vi r replaces multi-byte character with ASCII
+
+In vi command mode, `r` followed by a character shall replace the character at the cursor. When the cursor is on a multi-byte character, the entire character is replaced by the new character.
+
+```
+begin interactive test "vi r replaces multi-byte character with ASCII"
+  spawn -i
+  expect "$ "
+  send "export LC_ALL=C.UTF-8"
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  sendraw 65 63 68 6f 20 61 c3 a9 62
+  sleep 100ms
+  sendraw 1b
+  sleep 200ms
+  sendraw 68
+  sleep 200ms
+  sendraw 72 58
+  sleep 200ms
+  sendraw 0a
+  expect "aXb"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "vi r replaces multi-byte character with ASCII"
+```
+
+#### Test: vi f finds multi-byte character
+
+In vi command mode, `f` followed by a character shall move the cursor to the next occurrence of that character. When the target is a multi-byte character, the find matches the full character.
+
+```
+begin interactive test "vi f finds multi-byte character"
+  spawn -i
+  expect "$ "
+  send "export LC_ALL=C.UTF-8"
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  sendraw 65 63 68 6f 20 61 62 c3 a9 63
+  sleep 100ms
+  sendraw 1b
+  sleep 200ms
+  sendraw 30
+  sleep 200ms
+  sendraw 66 c3 a9
+  sleep 200ms
+  sendraw 64 6c
+  sleep 200ms
+  sendraw 0a
+  expect "abc"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "vi f finds multi-byte character"
+```
+
+#### Test: vi a appends after multi-byte character
+
+In vi command mode, `a` shall enter insert mode with the cursor positioned after the character at the current position. When the current character is multi-byte, the cursor advances past all its bytes.
+
+```
+begin interactive test "vi a appends after multi-byte character"
+  spawn -i
+  expect "$ "
+  send "export LC_ALL=C.UTF-8"
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  sendraw 65 63 68 6f 20 c3 a9 62
+  sleep 100ms
+  sendraw 1b
+  sleep 200ms
+  sendraw 30
+  sleep 200ms
+  sendraw 66 c3 a9
+  sleep 200ms
+  sendraw 61 58
+  sleep 200ms
+  sendraw 1b
+  sleep 200ms
+  sendraw 30
+  sleep 200ms
+  sendraw 66 c3 a9
+  sleep 200ms
+  sendraw 64 6c
+  sleep 200ms
+  sendraw 0a
+  expect "Xb"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "vi a appends after multi-byte character"
+```
+
+#### Test: vi dollar moves to start of last multi-byte character
+
+In vi command mode, `$` shall move the cursor to the last character on the line. When the last character is multi-byte, the cursor lands on its first byte, not a continuation byte.
+
+```
+begin interactive test "vi dollar moves to start of last multi-byte character"
+  spawn -i
+  expect "$ "
+  send "export LC_ALL=C.UTF-8"
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  sendraw 65 63 68 6f 20 61 62 c3 a9
+  sleep 100ms
+  sendraw 1b
+  sleep 200ms
+  sendraw 30
+  sleep 200ms
+  sendraw 24
+  sleep 200ms
+  sendraw 78
+  sleep 200ms
+  sendraw 0a
+  expect "ab"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "vi dollar moves to start of last multi-byte character"
+```
+
+#### Test: vi p pastes after multi-byte character
+
+In vi command mode, `p` shall insert the contents of the yank buffer after the current cursor position. When the cursor is on a multi-byte character, the paste position is after the full character.
+
+```
+begin interactive test "vi p pastes after multi-byte character"
+  spawn -i
+  expect "$ "
+  send "export LC_ALL=C.UTF-8"
+  expect "$ "
+  send "set -o vi"
+  expect "$ "
+  sendraw 65 63 68 6f 20 61 c3 a9 62
+  sleep 100ms
+  sendraw 1b
+  sleep 200ms
+  sendraw 68
+  sleep 200ms
+  sendraw 78
+  sleep 200ms
+  sendraw 70
+  sleep 200ms
+  sendraw 24
+  sleep 200ms
+  sendraw 78
+  sleep 200ms
+  sendraw 0a
+  expect "ab"
+  expect "$ "
+  sendeof
+  wait
+end interactive test "vi p pastes after multi-byte character"
+```

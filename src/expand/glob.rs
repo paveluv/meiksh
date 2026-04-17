@@ -1,3 +1,5 @@
+use crate::sys::locale;
+
 pub(crate) fn pattern_matches(text: &[u8], pattern: &[u8]) -> bool {
     pattern_matches_inner(text, 0, pattern, 0)
 }
@@ -17,28 +19,30 @@ pub(super) fn pattern_matches_inner(text: &[u8], ti: usize, pattern: &[u8], pi: 
                 if pos == text.len() {
                     break;
                 }
-                pos += 1;
+                let (_, clen) = locale::decode_char(&text[pos..]);
+                pos += if clen == 0 { 1 } else { clen };
             }
             false
         }
-        b'?' => ti < text.len() && pattern_matches_inner(text, ti + 1, pattern, pi + 1),
+        b'?' => {
+            if ti >= text.len() {
+                return false;
+            }
+            let (_, clen) = locale::decode_char(&text[ti..]);
+            let step = if clen == 0 { 1 } else { clen };
+            pattern_matches_inner(text, ti + step, pattern, pi + 1)
+        }
         b'[' => {
-            let tc = if ti < text.len() {
-                Some(text[ti])
-            } else {
-                None
-            };
-            match match_bracket(tc, pattern, pi) {
+            if ti >= text.len() {
+                return match_bracket_invalid(text, ti, pattern, pi);
+            }
+            let (wc, clen) = locale::decode_char(&text[ti..]);
+            let char_len = if clen == 0 { 1 } else { clen };
+            match match_bracket(Some(wc), char_len, text, ti, pattern, pi) {
                 Some((matched, next_pi)) => {
-                    matched
-                        && ti < text.len()
-                        && pattern_matches_inner(text, ti + 1, pattern, next_pi)
+                    matched && pattern_matches_inner(text, ti + char_len, pattern, next_pi)
                 }
-                None => {
-                    ti < text.len()
-                        && text[ti] == b'['
-                        && pattern_matches_inner(text, ti + 1, pattern, pi + 1)
-                }
+                None => text[ti] == b'[' && pattern_matches_inner(text, ti + 1, pattern, pi + 1),
             }
         }
         b'\\' if pi + 1 < pattern.len() => {
@@ -55,12 +59,26 @@ pub(super) fn pattern_matches_inner(text: &[u8], ti: usize, pattern: &[u8], pi: 
     }
 }
 
-pub(super) fn match_charclass(class: &[u8], ch: u8) -> bool {
-    crate::sys::locale::classify_byte(class, ch)
+fn match_bracket_invalid(text: &[u8], ti: usize, pattern: &[u8], pi: usize) -> bool {
+    match match_bracket(None, 0, text, ti, pattern, pi) {
+        Some((_, _)) => false,
+        None => {
+            ti < text.len()
+                && text[ti] == b'['
+                && pattern_matches_inner(text, ti + 1, pattern, pi + 1)
+        }
+    }
+}
+
+pub(super) fn match_charclass(class: &[u8], ch: u32) -> bool {
+    locale::classify_char(class, ch)
 }
 
 pub(super) fn match_bracket(
-    current: Option<u8>,
+    current: Option<u32>,
+    char_len: usize,
+    text: &[u8],
+    ti: usize,
     pattern: &[u8],
     start: usize,
 ) -> Option<(bool, usize)> {
@@ -90,23 +108,34 @@ pub(super) fn match_bracket(
         first_elem = false;
 
         if pc == b'[' && index + 1 < pattern.len() {
-            if let Some(adv) = match_bracket_special(pattern, index, current, &mut matched) {
+            if let Some(adv) =
+                match_bracket_special(pattern, index, current, text, ti, char_len, &mut matched)
+            {
                 index = adv;
                 continue;
             }
         }
 
-        let first = if pc == b'\\' && index + 1 < pattern.len() {
+        let (first_wc, first_end) = if pc == b'\\' && index + 1 < pattern.len() {
             index += 1;
-            pattern[index]
+            let (wc, len) = decode_pattern_char(pattern, index);
+            (wc, index + len)
         } else {
-            pc
+            let (wc, len) = decode_pattern_char(pattern, index);
+            (wc, index + len)
         };
-        if try_consume_range(pattern, index + 1, current, first, &mut matched, &mut index) {
+        if try_consume_range(
+            pattern,
+            first_end,
+            current,
+            first_wc,
+            &mut matched,
+            &mut index,
+        ) {
             continue;
         }
-        matched |= current == first;
-        index += 1;
+        matched |= current == first_wc;
+        index = first_end;
     }
 
     if saw_closer {
@@ -116,18 +145,31 @@ pub(super) fn match_bracket(
     }
 }
 
-fn try_collating_range_endpoint(pattern: &[u8], rhs: usize) -> Option<(u8, usize)> {
+fn decode_pattern_char(pattern: &[u8], index: usize) -> (u32, usize) {
+    let (wc, len) = locale::decode_char(&pattern[index..]);
+    if len == 0 {
+        (pattern[index] as u32, 1)
+    } else {
+        (wc, len)
+    }
+}
+
+fn try_collating_range_endpoint(pattern: &[u8], rhs: usize) -> Option<(u32, usize)> {
     if pattern[rhs] != b'[' || rhs + 1 >= pattern.len() || pattern[rhs + 1] != b'.' {
         return None;
     }
     let (end, elem) = scan_bracket_delimited(pattern, rhs + 2, b'.', b']')?;
-    Some((elem[0], end))
+    let (wc, _) = locale::decode_char(elem);
+    Some((wc, end))
 }
 
 fn match_bracket_special(
     pattern: &[u8],
     index: usize,
-    current: u8,
+    current: u32,
+    text: &[u8],
+    ti: usize,
+    _char_len: usize,
     matched: &mut bool,
 ) -> Option<usize> {
     let delim = pattern[index + 1];
@@ -139,21 +181,55 @@ fn match_bracket_special(
         }
         b'.' => {
             let (end, elem) = scan_bracket_delimited(pattern, index + 2, b'.', b']')?;
-            let ch = elem[0];
+            if elem.len() > 1 {
+                *matched |= text.get(ti..ti + elem.len()) == Some(elem);
+                let mut dummy_index = end;
+                if try_consume_range_collsym(pattern, end, current, elem, matched, &mut dummy_index)
+                {
+                    return Some(dummy_index);
+                }
+                return Some(end);
+            }
+            let (wc, _) = locale::decode_char(elem);
             let mut dummy_index = end;
-            if try_consume_range(pattern, end, current, ch, matched, &mut dummy_index) {
+            if try_consume_range(pattern, end, current, wc, matched, &mut dummy_index) {
                 return Some(dummy_index);
             }
-            *matched |= current == ch;
+            *matched |= current == wc;
             Some(end)
         }
         b'=' => {
             let (end, elem) = scan_bracket_delimited(pattern, index + 2, b'=', b']')?;
-            *matched |= current == elem[0];
+            let (wc, _) = locale::decode_char(elem);
+            *matched |= current == wc;
             Some(end)
         }
         _ => None,
     }
+}
+
+fn try_consume_range_collsym(
+    pattern: &[u8],
+    after_first: usize,
+    current: u32,
+    _elem: &[u8],
+    matched: &mut bool,
+    index: &mut usize,
+) -> bool {
+    if after_first + 1 >= pattern.len() || pattern[after_first] != b'-' {
+        return false;
+    }
+    let rhs = after_first + 1;
+    if pattern[rhs] == b']' {
+        return false;
+    }
+    if let Some((last_wc, end)) = try_collating_range_endpoint(pattern, rhs) {
+        let (first_wc, _) = locale::decode_char(_elem);
+        *matched |= first_wc <= current && current <= last_wc;
+        *index = end;
+        return true;
+    }
+    false
 }
 
 fn scan_bracket_delimited<'a>(
@@ -179,8 +255,8 @@ fn scan_bracket_delimited<'a>(
 fn try_consume_range(
     pattern: &[u8],
     after_first: usize,
-    current: u8,
-    first: u8,
+    current: u32,
+    first: u32,
     matched: &mut bool,
     index: &mut usize,
 ) -> bool {
@@ -196,9 +272,9 @@ fn try_consume_range(
         *index = end;
         return true;
     }
-    let last = pattern[rhs];
+    let (last, last_len) = decode_pattern_char(pattern, rhs);
     *matched |= first <= current && current <= last;
-    *index = rhs + 1;
+    *index = rhs + last_len;
     true
 }
 
@@ -208,7 +284,7 @@ mod tests {
 
     #[test]
     fn bracket_helpers_cover_missing_closer() {
-        assert_eq!(match_bracket(Some(b'a'), b"[a", 0), None);
+        assert_eq!(match_bracket(Some(b'a' as u32), 1, b"a", 0, b"[a", 0), None);
     }
 
     #[test]

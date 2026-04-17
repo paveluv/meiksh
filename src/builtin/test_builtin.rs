@@ -62,10 +62,10 @@ pub(super) fn test_three_args(_shell: &Shell, left: &[u8], op: &[u8], right: &[u
         return Ok(left != right);
     }
     if op == b">" {
-        return Ok(left > right);
+        return Ok(crate::sys::locale::strcoll(left, right).is_gt());
     }
     if op == b"<" {
-        return Ok(left < right);
+        return Ok(crate::sys::locale::strcoll(left, right).is_lt());
     }
     if let Some(r) = test_integer_binary(left, op, right) {
         return r;

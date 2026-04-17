@@ -11,7 +11,7 @@ use super::model::{
 };
 use super::parameter::{expand_dollar, expand_parameter_dollar};
 use super::pathname::expand_pathname;
-use crate::syntax::byte_class::{is_ascii_ws, is_glob_char, is_name_cont, is_name_start};
+use crate::syntax::byte_class::{is_glob_char, is_name_cont, is_name_start};
 
 pub(crate) fn expand_words<C: Context>(
     ctx: &mut C,
@@ -210,8 +210,7 @@ fn split_fields_raw(segments: &[Segment], ifs: &[u8]) -> Vec<Vec<u8>> {
     let mut fields = Vec::new();
     let mut current = Vec::new();
 
-    let ifs_ws: Vec<u8> = ifs.iter().copied().filter(|b| is_ascii_ws(*b)).collect();
-    let ifs_other: Vec<u8> = ifs.iter().copied().filter(|b| !is_ascii_ws(*b)).collect();
+    let ifs_chars = super::expand_parts::decompose_ifs(ifs);
 
     for seg in segments {
         #[rustfmt::skip]
@@ -220,15 +219,22 @@ fn split_fields_raw(segments: &[Segment], ifs: &[u8]) -> Vec<Vec<u8>> {
             current.extend_from_slice(text);
             continue;
         }
-        for &b in text.iter() {
-            if ifs_other.contains(&b) {
-                fields.push(std::mem::take(&mut current));
-            } else if ifs_ws.contains(&b) {
-                if !current.is_empty() {
+        let mut i = 0;
+        while i < text.len() {
+            if let Some((_, byte_seq, is_ws)) =
+                super::expand_parts::find_ifs_char_at(&ifs_chars, &text[i..])
+            {
+                if is_ws {
+                    if !current.is_empty() {
+                        fields.push(std::mem::take(&mut current));
+                    }
+                } else {
                     fields.push(std::mem::take(&mut current));
                 }
+                i += byte_seq.len();
             } else {
-                current.push(b);
+                current.push(text[i]);
+                i += 1;
             }
         }
     }

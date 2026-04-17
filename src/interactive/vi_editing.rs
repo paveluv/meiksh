@@ -41,12 +41,50 @@ fn bell() {
     write_bytes(b"\x07");
 }
 
+fn display_width(line: &[u8]) -> usize {
+    let mut w = 0;
+    let mut i = 0;
+    while i < line.len() {
+        let (wc, len) = sys::locale::decode_char(&line[i..]);
+        let step = if len == 0 { 1 } else { len };
+        w += sys::locale::char_width(wc);
+        i += step;
+    }
+    w
+}
+
+fn display_width_range(line: &[u8], from: usize, to: usize) -> usize {
+    if to <= from {
+        return 0;
+    }
+    display_width(&line[from..to])
+}
+
+fn char_len_at(line: &[u8], pos: usize) -> usize {
+    if pos >= line.len() {
+        return 0;
+    }
+    let (_, len) = sys::locale::decode_char(&line[pos..]);
+    if len == 0 { 1 } else { len }
+}
+
+fn prev_char_start(line: &[u8], pos: usize) -> usize {
+    if pos == 0 {
+        return 0;
+    }
+    let mut p = pos - 1;
+    while p > 0 && (line[p] & 0xC0) == 0x80 {
+        p -= 1;
+    }
+    p
+}
+
 fn redraw(line: &[u8], cursor: usize, prompt: &[u8]) {
     write_bytes(b"\r\x1b[K");
     let _ = sys::fd_io::write_all_fd(sys::constants::STDERR_FILENO, prompt);
     let mut buf = Vec::with_capacity(line.len() + 20);
     buf.extend_from_slice(line);
-    let cursor_back = line.len().saturating_sub(cursor);
+    let cursor_back = display_width_range(line, cursor, line.len());
     if cursor_back > 0 {
         buf.extend_from_slice(b"\x1b[");
         bstr::push_u64(&mut buf, cursor_back as u64);
@@ -55,8 +93,55 @@ fn redraw(line: &[u8], cursor: usize, prompt: &[u8]) {
     write_bytes(&buf);
 }
 
+fn is_word_char_wc(wc: u32) -> bool {
+    if wc == b'_' as u32 {
+        return true;
+    }
+    sys::locale::classify_char(b"alnum", wc)
+}
+
+#[allow(dead_code)]
 fn is_word_char(c: u8) -> bool {
-    c.is_ascii_alphanumeric() || c == b'_'
+    is_word_char_wc(c as u32)
+}
+
+fn expected_utf8_len(first_byte: u8) -> usize {
+    if first_byte < 0x80 {
+        1
+    } else if first_byte < 0xC0 {
+        1
+    } else if first_byte < 0xE0 {
+        2
+    } else if first_byte < 0xF0 {
+        3
+    } else {
+        4
+    }
+}
+
+fn last_char_start(line: &[u8]) -> usize {
+    if line.is_empty() {
+        return 0;
+    }
+    prev_char_start(line, line.len())
+}
+
+fn is_word_char_at(line: &[u8], pos: usize) -> bool {
+    let (wc, _) = sys::locale::decode_char(&line[pos..]);
+    is_word_char_wc(wc)
+}
+
+fn is_ws_at(line: &[u8], pos: usize) -> bool {
+    let b = line[pos];
+    b == b' ' || b == b'\t' || b == b'\n'
+}
+
+fn is_word_char_before(line: &[u8], pos: usize) -> bool {
+    is_word_char_at(line, prev_char_start(line, pos))
+}
+
+fn is_ws_before(line: &[u8], pos: usize) -> bool {
+    is_ws_at(line, prev_char_start(line, pos))
 }
 
 fn word_forward(line: &[u8], pos: usize) -> usize {
@@ -65,17 +150,17 @@ fn word_forward(line: &[u8], pos: usize) -> usize {
     if p >= len {
         return p;
     }
-    if is_word_char(line[p]) {
-        while p < len && is_word_char(line[p]) {
-            p += 1;
+    if is_word_char_at(line, p) {
+        while p < len && is_word_char_at(line, p) {
+            p += char_len_at(line, p);
         }
-    } else if !line[p].is_ascii_whitespace() {
-        while p < len && !is_word_char(line[p]) && !line[p].is_ascii_whitespace() {
-            p += 1;
+    } else if !is_ws_at(line, p) {
+        while p < len && !is_word_char_at(line, p) && !is_ws_at(line, p) {
+            p += char_len_at(line, p);
         }
     }
-    while p < len && line[p].is_ascii_whitespace() {
-        p += 1;
+    while p < len && is_ws_at(line, p) {
+        p += char_len_at(line, p);
     }
     p
 }
@@ -85,19 +170,19 @@ fn word_backward(line: &[u8], pos: usize) -> usize {
         return 0;
     }
     let mut p = pos;
-    while p > 0 && line[p - 1].is_ascii_whitespace() {
-        p -= 1;
+    while p > 0 && is_ws_before(line, p) {
+        p = prev_char_start(line, p);
     }
     if p == 0 {
         return 0;
     }
-    if is_word_char(line[p - 1]) {
-        while p > 0 && is_word_char(line[p - 1]) {
-            p -= 1;
+    if is_word_char_before(line, p) {
+        while p > 0 && is_word_char_before(line, p) {
+            p = prev_char_start(line, p);
         }
     } else {
-        while p > 0 && !is_word_char(line[p - 1]) && !line[p - 1].is_ascii_whitespace() {
-            p -= 1;
+        while p > 0 && !is_word_char_before(line, p) && !is_ws_before(line, p) {
+            p = prev_char_start(line, p);
         }
     }
     p
@@ -106,11 +191,11 @@ fn word_backward(line: &[u8], pos: usize) -> usize {
 fn bigword_forward(line: &[u8], pos: usize) -> usize {
     let mut p = pos;
     let len = line.len();
-    while p < len && !line[p].is_ascii_whitespace() {
-        p += 1;
+    while p < len && !is_ws_at(line, p) {
+        p += char_len_at(line, p);
     }
-    while p < len && line[p].is_ascii_whitespace() {
-        p += 1;
+    while p < len && is_ws_at(line, p) {
+        p += char_len_at(line, p);
     }
     p
 }
@@ -120,34 +205,43 @@ fn bigword_backward(line: &[u8], pos: usize) -> usize {
         return 0;
     }
     let mut p = pos;
-    while p > 0 && line[p - 1].is_ascii_whitespace() {
-        p -= 1;
+    while p > 0 && is_ws_before(line, p) {
+        p = prev_char_start(line, p);
     }
-    while p > 0 && !line[p - 1].is_ascii_whitespace() {
-        p -= 1;
+    while p > 0 && !is_ws_before(line, p) {
+        p = prev_char_start(line, p);
     }
     p
 }
 
 fn word_end(line: &[u8], pos: usize) -> usize {
     let len = line.len();
-    if pos + 1 >= len {
+    let next = pos + char_len_at(line, pos);
+    if next >= len {
         return pos;
     }
-    let mut p = pos + 1;
-    while p < len && line[p].is_ascii_whitespace() {
-        p += 1;
+    let mut p = next;
+    while p < len && is_ws_at(line, p) {
+        p += char_len_at(line, p);
     }
     if p >= len {
-        return len.saturating_sub(1);
+        return last_char_start(line);
     }
-    if is_word_char(line[p]) {
-        while p + 1 < len && is_word_char(line[p + 1]) {
-            p += 1;
+    if is_word_char_at(line, p) {
+        loop {
+            let n = p + char_len_at(line, p);
+            if n >= len || !is_word_char_at(line, n) {
+                break;
+            }
+            p = n;
         }
     } else {
-        while p + 1 < len && !is_word_char(line[p + 1]) && !line[p + 1].is_ascii_whitespace() {
-            p += 1;
+        loop {
+            let n = p + char_len_at(line, p);
+            if n >= len || is_word_char_at(line, n) || is_ws_at(line, n) {
+                break;
+            }
+            p = n;
         }
     }
     p
@@ -155,18 +249,23 @@ fn word_end(line: &[u8], pos: usize) -> usize {
 
 fn bigword_end(line: &[u8], pos: usize) -> usize {
     let len = line.len();
-    if pos + 1 >= len {
+    let next = pos + char_len_at(line, pos);
+    if next >= len {
         return pos;
     }
-    let mut p = pos + 1;
-    while p < len && line[p].is_ascii_whitespace() {
-        p += 1;
+    let mut p = next;
+    while p < len && is_ws_at(line, p) {
+        p += char_len_at(line, p);
     }
     if p >= len {
-        return len.saturating_sub(1);
+        return last_char_start(line);
     }
-    while p + 1 < len && !line[p + 1].is_ascii_whitespace() {
-        p += 1;
+    loop {
+        let n = p + char_len_at(line, p);
+        if n >= len || is_ws_at(line, n) {
+            break;
+        }
+        p = n;
     }
     p
 }
@@ -192,8 +291,8 @@ enum ViAction {
 enum PendingInput {
     None,
     CountDigits,
-    FindTarget { cmd: u8, count: usize },
-    ReplaceChar { count: usize },
+    FindTarget { cmd: u8, count: usize, buf: Vec<u8> },
+    ReplaceChar { count: usize, buf: Vec<u8> },
     ReplaceMode,
     Motion { op: u8, count: usize },
     LiteralChar,
@@ -206,7 +305,7 @@ struct ViState {
     pub insert_mode: bool,
     pub yank_buf: Vec<u8>,
     pub last_cmd: Option<(u8, usize, Option<u8>)>,
-    pub last_find: Option<(u8, u8)>,
+    pub last_find: Option<(u8, u32)>,
     pub hist_index: Option<usize>,
     pub edit_line: Vec<u8>,
     pub search_buf: Vec<u8>,
@@ -238,7 +337,7 @@ impl ViState {
     fn process_byte(&mut self, byte: u8, history: &[Box<[u8]>]) -> Vec<ViAction> {
         let mut actions = Vec::new();
 
-        match &self.pending {
+        match &mut self.pending {
             PendingInput::CountDigits => {
                 if byte.is_ascii_digit() {
                     if let Some((ref mut count, _)) = self.count_buf {
@@ -252,13 +351,20 @@ impl ViState {
                 self.pending = PendingInput::None;
                 return self.process_command(byte, count, first_byte, history);
             }
-            PendingInput::FindTarget { cmd, count } => {
+            PendingInput::FindTarget { cmd, count, buf } => {
                 let cmd = *cmd;
                 let count = *count;
+                buf.push(byte);
+                let expected_len = expected_utf8_len(buf[0]);
+                if buf.len() < expected_len {
+                    return vec![ViAction::ReadByte];
+                }
+                let (wc, len) = sys::locale::decode_char(buf);
+                let target = if len > 0 { wc } else { buf[0] as u32 };
                 self.pending = PendingInput::None;
-                self.last_find = Some((cmd, byte));
+                self.last_find = Some((cmd, target));
                 for _ in 0..count {
-                    if let Some(pos) = do_find(&self.line, self.cursor, cmd, byte) {
+                    if let Some(pos) = do_find(&self.line, self.cursor, cmd, target) {
                         self.cursor = pos;
                     } else {
                         actions.push(ViAction::Bell);
@@ -268,20 +374,36 @@ impl ViState {
                 actions.push(ViAction::Redraw);
                 return actions;
             }
-            PendingInput::ReplaceChar { count } => {
+            PendingInput::ReplaceChar { count, buf } => {
                 let count = *count;
+                buf.push(byte);
+                let expected_len = expected_utf8_len(buf[0]);
+                if buf.len() < expected_len {
+                    return vec![ViAction::ReadByte];
+                }
+                let (_, len) = sys::locale::decode_char(buf);
+                let replacement: Vec<u8> = if len > 0 {
+                    buf[..len].to_vec()
+                } else {
+                    vec![buf[0]]
+                };
                 self.pending = PendingInput::None;
-                self.last_cmd = Some((b'r', count, Some(byte)));
+                self.last_cmd = Some((b'r', count, Some(replacement[0])));
                 for _ in 0..count {
                     if self.cursor < self.line.len() {
-                        self.line[self.cursor] = byte;
-                        if self.cursor + 1 < self.line.len() {
-                            self.cursor += 1;
+                        let clen = char_len_at(&self.line, self.cursor);
+                        self.line.drain(self.cursor..self.cursor + clen);
+                        for (j, &rb) in replacement.iter().enumerate() {
+                            self.line.insert(self.cursor + j, rb);
+                        }
+                        let next = self.cursor + replacement.len();
+                        if next < self.line.len() {
+                            self.cursor = next;
                         }
                     }
                 }
                 if count > 1 && self.cursor > 0 {
-                    self.cursor -= 1;
+                    self.cursor = prev_char_start(&self.line, self.cursor);
                 }
                 actions.push(ViAction::Redraw);
                 return actions;
@@ -290,7 +412,7 @@ impl ViState {
                 0x1b => {
                     self.pending = PendingInput::None;
                     if self.cursor > 0 && self.cursor >= self.line.len() {
-                        self.cursor = self.line.len().saturating_sub(1);
+                        self.cursor = last_char_start(&self.line);
                     }
                     actions.push(ViAction::Redraw);
                     return actions;
@@ -306,7 +428,9 @@ impl ViState {
                 }
                 b => {
                     if self.cursor < self.line.len() {
-                        self.line[self.cursor] = b;
+                        let clen = char_len_at(&self.line, self.cursor);
+                        self.line.drain(self.cursor..self.cursor + clen);
+                        self.line.insert(self.cursor, b);
                     } else {
                         self.line.push(b);
                     }
@@ -341,7 +465,8 @@ impl ViState {
                     }
                     0x7f | 0x08 => {
                         if !self.search_buf.is_empty() {
-                            self.search_buf.pop();
+                            let last = prev_char_start(&self.search_buf, self.search_buf.len());
+                            self.search_buf.truncate(last);
                             actions.push(ViAction::WriteBytes(b"\x08 \x08".to_vec()));
                         }
                         return actions;
@@ -361,7 +486,7 @@ impl ViState {
                 0x1b => {
                     self.insert_mode = false;
                     if self.cursor > 0 && self.cursor >= self.line.len() {
-                        self.cursor = self.line.len().saturating_sub(1);
+                        self.cursor = last_char_start(&self.line);
                         actions.push(ViAction::WriteBytes(b"\x1b[D".to_vec()));
                     }
                 }
@@ -395,8 +520,9 @@ impl ViState {
                 }
                 b if b == self.erase_char || b == 0x7f || b == 0x08 => {
                     if self.cursor > 0 {
-                        self.cursor -= 1;
-                        self.line.remove(self.cursor);
+                        let prev = prev_char_start(&self.line, self.cursor);
+                        self.line.drain(prev..self.cursor);
+                        self.cursor = prev;
                         actions.push(ViAction::Redraw);
                     }
                 }
@@ -440,7 +566,8 @@ impl ViState {
             b'a' => {
                 self.insert_mode = true;
                 if !self.line.is_empty() {
-                    self.cursor = (self.cursor + 1).min(self.line.len());
+                    self.cursor =
+                        (self.cursor + char_len_at(&self.line, self.cursor)).min(self.line.len());
                     actions.push(ViAction::Redraw);
                 }
                 actions.push(ViAction::SetInsertMode(true));
@@ -458,12 +585,18 @@ impl ViState {
                 actions.push(ViAction::SetInsertMode(true));
             }
             b'h' => {
-                let n = count.min(self.cursor);
-                self.cursor -= n;
-                if n > 0 {
+                let old = self.cursor;
+                for _ in 0..count {
+                    if self.cursor == 0 {
+                        break;
+                    }
+                    self.cursor = prev_char_start(&self.line, self.cursor);
+                }
+                if self.cursor != old {
+                    let cols = display_width_range(&self.line, self.cursor, old);
                     let esc = ByteWriter::new()
                         .bytes(b"\x1b[")
-                        .usize_val(n)
+                        .usize_val(cols)
                         .byte(b'D')
                         .finish();
                     actions.push(ViAction::WriteBytes(esc));
@@ -472,13 +605,19 @@ impl ViState {
                 }
             }
             b'l' | b' ' => {
-                let max = self.line.len().saturating_sub(1);
-                let n = count.min(max.saturating_sub(self.cursor));
-                self.cursor += n;
-                if n > 0 {
+                let old = self.cursor;
+                for _ in 0..count {
+                    let clen = char_len_at(&self.line, self.cursor);
+                    if self.cursor + clen >= self.line.len() {
+                        break;
+                    }
+                    self.cursor += clen;
+                }
+                if self.cursor != old {
+                    let cols = display_width_range(&self.line, old, self.cursor);
                     let esc = ByteWriter::new()
                         .bytes(b"\x1b[")
-                        .usize_val(n)
+                        .usize_val(cols)
                         .byte(b'C')
                         .finish();
                     actions.push(ViAction::WriteBytes(esc));
@@ -492,16 +631,16 @@ impl ViState {
             }
             b'$' => {
                 if !self.line.is_empty() {
-                    self.cursor = self.line.len() - 1;
+                    self.cursor = last_char_start(&self.line);
                 }
                 actions.push(ViAction::Redraw);
             }
             b'^' => {
-                self.cursor = self
-                    .line
-                    .iter()
-                    .position(|c| !c.is_ascii_whitespace())
-                    .unwrap_or(0);
+                let mut p = 0;
+                while p < self.line.len() && is_ws_at(&self.line, p) {
+                    p += char_len_at(&self.line, p);
+                }
+                self.cursor = if p < self.line.len() { p } else { 0 };
                 actions.push(ViAction::Redraw);
             }
             b'w' => {
@@ -511,7 +650,11 @@ impl ViState {
                         actions.push(ViAction::Bell);
                         break;
                     }
-                    self.cursor = next.min(self.line.len().saturating_sub(1));
+                    self.cursor = if self.line.is_empty() {
+                        0
+                    } else {
+                        next.min(last_char_start(&self.line))
+                    };
                 }
                 actions.push(ViAction::Redraw);
             }
@@ -522,7 +665,11 @@ impl ViState {
                         actions.push(ViAction::Bell);
                         break;
                     }
-                    self.cursor = next.min(self.line.len().saturating_sub(1));
+                    self.cursor = if self.line.is_empty() {
+                        0
+                    } else {
+                        next.min(last_char_start(&self.line))
+                    };
                 }
                 actions.push(ViAction::Redraw);
             }
@@ -561,14 +708,30 @@ impl ViState {
                 actions.push(ViAction::Redraw);
             }
             b'|' => {
-                let col = count
-                    .saturating_sub(1)
-                    .min(self.line.len().saturating_sub(1));
-                self.cursor = col;
+                let target_col = count.saturating_sub(1);
+                let mut p = 0;
+                let mut col = 0;
+                while p < self.line.len() && col < target_col {
+                    p += char_len_at(&self.line, p);
+                    col += 1;
+                }
+                self.cursor = if p > self.line.len() {
+                    last_char_start(&self.line)
+                } else {
+                    p.min(if self.line.is_empty() {
+                        0
+                    } else {
+                        last_char_start(&self.line)
+                    })
+                };
                 actions.push(ViAction::Redraw);
             }
             b'f' | b'F' | b't' | b'T' => {
-                self.pending = PendingInput::FindTarget { cmd: ch, count };
+                self.pending = PendingInput::FindTarget {
+                    cmd: ch,
+                    count,
+                    buf: Vec::new(),
+                };
                 actions.push(ViAction::NeedFindTarget);
             }
             b';' => {
@@ -608,12 +771,14 @@ impl ViState {
                 self.last_cmd = Some((b'x', count, None));
                 for _ in 0..count {
                     if self.cursor < self.line.len() {
-                        self.yank_buf = vec![self.line.remove(self.cursor)];
+                        let clen = char_len_at(&self.line, self.cursor);
+                        self.yank_buf = self.line[self.cursor..self.cursor + clen].to_vec();
+                        self.line.drain(self.cursor..self.cursor + clen);
                     } else {
                         break;
                     }
                     if self.cursor >= self.line.len() && self.cursor > 0 {
-                        self.cursor -= 1;
+                        self.cursor = prev_char_start(&self.line, self.cursor);
                     }
                 }
                 actions.push(ViAction::Redraw);
@@ -622,8 +787,10 @@ impl ViState {
                 self.last_cmd = Some((b'X', count, None));
                 for _ in 0..count {
                     if self.cursor > 0 {
-                        self.cursor -= 1;
-                        self.yank_buf = vec![self.line.remove(self.cursor)];
+                        let prev = prev_char_start(&self.line, self.cursor);
+                        self.yank_buf = self.line[prev..self.cursor].to_vec();
+                        self.line.drain(prev..self.cursor);
+                        self.cursor = prev;
                     } else {
                         actions.push(ViAction::Bell);
                         break;
@@ -632,7 +799,10 @@ impl ViState {
                 actions.push(ViAction::Redraw);
             }
             b'r' => {
-                self.pending = PendingInput::ReplaceChar { count };
+                self.pending = PendingInput::ReplaceChar {
+                    count,
+                    buf: Vec::new(),
+                };
                 actions.push(ViAction::NeedReplaceChar);
             }
             b'R' => {
@@ -642,16 +812,31 @@ impl ViState {
             b'~' => {
                 for _ in 0..count {
                     if self.cursor < self.line.len() {
-                        let c = self.line[self.cursor];
-                        if c.is_ascii_lowercase() {
-                            self.line[self.cursor] = c.to_ascii_uppercase();
-                        } else if c.is_ascii_uppercase() {
-                            self.line[self.cursor] = c.to_ascii_lowercase();
-                        }
-                        if self.cursor + 1 < self.line.len() {
-                            self.cursor += 1;
+                        let clen = char_len_at(&self.line, self.cursor);
+                        let (wc, _) = sys::locale::decode_char(&self.line[self.cursor..]);
+                        let toggled = if sys::locale::classify_char(b"lower", wc) {
+                            sys::locale::to_upper(wc)
+                        } else if sys::locale::classify_char(b"upper", wc) {
+                            sys::locale::to_lower(wc)
                         } else {
-                            break;
+                            wc
+                        };
+                        if toggled != wc {
+                            let encoded = sys::locale::encode_char(toggled);
+                            self.line
+                                .splice(self.cursor..self.cursor + clen, encoded.iter().copied());
+                            let new_clen = char_len_at(&self.line, self.cursor);
+                            if self.cursor + new_clen < self.line.len() {
+                                self.cursor += new_clen;
+                            } else {
+                                break;
+                            }
+                        } else {
+                            if self.cursor + clen < self.line.len() {
+                                self.cursor += clen;
+                            } else {
+                                break;
+                            }
                         }
                     }
                 }
@@ -666,7 +851,7 @@ impl ViState {
                     self.yank_buf = self.line[self.cursor..].to_vec();
                     self.line.truncate(self.cursor);
                     if self.cursor > 0 {
-                        self.cursor -= 1;
+                        self.cursor = last_char_start(&self.line);
                     }
                 }
                 actions.push(ViAction::Redraw);
@@ -703,11 +888,17 @@ impl ViState {
             }
             b'p' => {
                 if !self.yank_buf.is_empty() {
-                    let pos = (self.cursor + 1).min(self.line.len());
-                    for b in self.yank_buf.clone().iter().rev() {
+                    let pos = if self.line.is_empty() {
+                        0
+                    } else {
+                        (self.cursor + char_len_at(&self.line, self.cursor)).min(self.line.len())
+                    };
+                    let yb = self.yank_buf.clone();
+                    for b in yb.iter().rev() {
                         self.line.insert(pos, *b);
                     }
-                    self.cursor = pos + self.yank_buf.len() - 1;
+                    let pasted_end = pos + yb.len();
+                    self.cursor = last_char_start(&self.line[..pasted_end]);
                     actions.push(ViAction::Redraw);
                 }
             }
@@ -717,7 +908,8 @@ impl ViState {
                     for (i, b) in yb.iter().enumerate() {
                         self.line.insert(self.cursor + i, *b);
                     }
-                    self.cursor += self.yank_buf.len().saturating_sub(1);
+                    let pasted_end = self.cursor + yb.len();
+                    self.cursor = last_char_start(&self.line[..pasted_end]);
                     actions.push(ViAction::Redraw);
                 }
             }
@@ -727,7 +919,11 @@ impl ViState {
                 self.line.clear();
                 self.line.extend_from_slice(&self.edit_line);
                 self.edit_line = saved;
-                self.cursor = saved_cursor.min(self.line.len().saturating_sub(1));
+                self.cursor = if self.line.is_empty() {
+                    0
+                } else {
+                    saved_cursor.min(last_char_start(&self.line))
+                };
                 actions.push(ViAction::Redraw);
             }
             b'U' => {
@@ -738,10 +934,11 @@ impl ViState {
                 } else {
                     self.line.clear();
                 }
-                self.cursor = self.cursor.min(self.line.len().saturating_sub(1));
-                if self.line.is_empty() {
-                    self.cursor = 0;
-                }
+                self.cursor = if self.line.is_empty() {
+                    0
+                } else {
+                    self.cursor.min(last_char_start(&self.line))
+                };
                 actions.push(ViAction::Redraw);
             }
             b'.' => {
@@ -784,10 +981,11 @@ impl ViState {
                 if let Some(idx) = target {
                     self.hist_index = Some(idx);
                     self.line = history[idx].to_vec();
-                    self.cursor = self.line.len().saturating_sub(1);
-                    if self.line.is_empty() {
-                        self.cursor = 0;
-                    }
+                    self.cursor = if self.line.is_empty() {
+                        0
+                    } else {
+                        last_char_start(&self.line)
+                    };
                     actions.push(ViAction::Redraw);
                 } else {
                     actions.push(ViAction::Bell);
@@ -803,10 +1001,11 @@ impl ViState {
                         self.hist_index = None;
                         self.line = self.edit_line.clone();
                     }
-                    self.cursor = self.line.len().saturating_sub(1);
-                    if self.line.is_empty() {
-                        self.cursor = 0;
-                    }
+                    self.cursor = if self.line.is_empty() {
+                        0
+                    } else {
+                        last_char_start(&self.line)
+                    };
                     actions.push(ViAction::Redraw);
                 } else {
                     actions.push(ViAction::Bell);
@@ -830,10 +1029,11 @@ impl ViState {
                     self.hist_index = Some(0);
                     self.line = history[0].to_vec();
                 }
-                self.cursor = self.line.len().saturating_sub(1);
-                if self.line.is_empty() {
-                    self.cursor = 0;
-                }
+                self.cursor = if self.line.is_empty() {
+                    0
+                } else {
+                    last_char_start(&self.line)
+                };
                 actions.push(ViAction::Redraw);
             }
             b'/' => {
@@ -887,15 +1087,15 @@ impl ViState {
             b'*' => {
                 let word_start = {
                     let mut p = self.cursor;
-                    while p > 0 && !self.line[p - 1].is_ascii_whitespace() {
-                        p -= 1;
+                    while p > 0 && !is_ws_before(&self.line, p) {
+                        p = prev_char_start(&self.line, p);
                     }
                     p
                 };
                 let word_end_pos = {
                     let mut p = self.cursor;
-                    while p < self.line.len() && !self.line[p].is_ascii_whitespace() {
-                        p += 1;
+                    while p < self.line.len() && !is_ws_at(&self.line, p) {
+                        p += char_len_at(&self.line, p);
                     }
                     p
                 };
@@ -919,25 +1119,27 @@ impl ViState {
                     for (i, b) in replacement.iter().enumerate() {
                         self.line.insert(word_start + i, *b);
                     }
-                    self.cursor = word_start + replacement.len();
-                    if self.cursor > 0 {
-                        self.cursor -= 1;
-                    }
+                    let end = word_start + replacement.len();
+                    self.cursor = if end > 0 {
+                        last_char_start(&self.line[..end])
+                    } else {
+                        0
+                    };
                 }
                 actions.push(ViAction::Redraw);
             }
             b'\\' => {
                 let word_start = {
                     let mut p = self.cursor;
-                    while p > 0 && !self.line[p - 1].is_ascii_whitespace() {
-                        p -= 1;
+                    while p > 0 && !is_ws_before(&self.line, p) {
+                        p = prev_char_start(&self.line, p);
                     }
                     p
                 };
                 let word_end_pos = {
                     let mut p = self.cursor;
-                    while p < self.line.len() && !self.line[p].is_ascii_whitespace() {
-                        p += 1;
+                    while p < self.line.len() && !is_ws_at(&self.line, p) {
+                        p += char_len_at(&self.line, p);
                     }
                     p
                 };
@@ -958,9 +1160,15 @@ impl ViState {
                         for (i, b) in rep.iter().enumerate() {
                             self.line.insert(word_start + i, *b);
                         }
-                        self.cursor = word_start + rep.len();
-                        if self.cursor > 0 && !is_dir {
-                            self.cursor -= 1;
+                        let end = word_start + rep.len();
+                        if is_dir {
+                            self.cursor = end;
+                        } else {
+                            self.cursor = if end > 0 {
+                                last_char_start(&self.line[..end])
+                            } else {
+                                0
+                            };
                         }
                     } else {
                         actions.push(ViAction::Bell);
@@ -1004,7 +1212,11 @@ impl ViState {
                     if start != end {
                         self.yank_buf = self.line[start..end].to_vec();
                         self.line.drain(start..end);
-                        self.cursor = start.min(self.line.len().saturating_sub(1));
+                        self.cursor = if self.line.is_empty() {
+                            0
+                        } else {
+                            start.min(last_char_start(&self.line))
+                        };
                         self.last_cmd = Some((b'd', count, Some(motion)));
                     } else {
                         actions.push(ViAction::Bell);
@@ -1064,7 +1276,11 @@ impl ViState {
                     if history[idx].windows(pat.len()).any(|w| w == pat.as_slice()) {
                         self.hist_index = Some(idx);
                         self.line = history[idx].to_vec();
-                        self.cursor = self.line.len().saturating_sub(1);
+                        self.cursor = if self.line.is_empty() {
+                            0
+                        } else {
+                            last_char_start(&self.line)
+                        };
                         found = true;
                         break;
                     }
@@ -1081,7 +1297,11 @@ impl ViState {
                     if history[idx].windows(pat.len()).any(|w| w == pat.as_slice()) {
                         self.hist_index = Some(idx);
                         self.line = history[idx].to_vec();
-                        self.cursor = self.line.len().saturating_sub(1);
+                        self.cursor = if self.line.is_empty() {
+                            0
+                        } else {
+                            last_char_start(&self.line)
+                        };
                         found = true;
                         break;
                     }
@@ -1195,36 +1415,50 @@ pub(super) fn read_line(
     }
 }
 
-fn do_find(line: &[u8], cursor: usize, cmd: u8, target: u8) -> Option<usize> {
+fn do_find(line: &[u8], cursor: usize, cmd: u8, target: u32) -> Option<usize> {
     match cmd {
         b'f' => {
-            for i in (cursor + 1)..line.len() {
-                if line[i] == target {
+            let mut i = cursor + char_len_at(line, cursor);
+            while i < line.len() {
+                let (wc, len) = sys::locale::decode_char(&line[i..]);
+                let step = if len == 0 { 1 } else { len };
+                if wc == target {
                     return Some(i);
                 }
+                i += step;
             }
             None
         }
         b'F' => {
-            for i in (0..cursor).rev() {
-                if line[i] == target {
+            let mut i = cursor;
+            while i > 0 {
+                i = prev_char_start(line, i);
+                let (wc, _) = sys::locale::decode_char(&line[i..]);
+                if wc == target {
                     return Some(i);
                 }
             }
             None
         }
         b't' => {
-            for i in (cursor + 1)..line.len() {
-                if line[i] == target {
-                    return if i > 0 { Some(i - 1) } else { None };
+            let mut i = cursor + char_len_at(line, cursor);
+            while i < line.len() {
+                let (wc, len) = sys::locale::decode_char(&line[i..]);
+                let step = if len == 0 { 1 } else { len };
+                if wc == target {
+                    return Some(prev_char_start(line, i));
                 }
+                i += step;
             }
             None
         }
         b'T' => {
-            for i in (0..cursor).rev() {
-                if line[i] == target {
-                    return Some(i + 1);
+            let mut i = cursor;
+            while i > 0 {
+                i = prev_char_start(line, i);
+                let (wc, _) = sys::locale::decode_char(&line[i..]);
+                if wc == target {
+                    return Some(i + char_len_at(line, i));
                 }
             }
             None
@@ -1268,19 +1502,34 @@ fn resolve_motion(line: &[u8], cursor: usize, motion: u8, count: usize) -> (usiz
             for _ in 0..count {
                 p = word_end(line, p);
             }
-            p + 1
+            p + char_len_at(line, p)
         }
         b'E' => {
             let mut p = cursor;
             for _ in 0..count {
                 p = bigword_end(line, p);
             }
-            p + 1
+            p + char_len_at(line, p)
         }
-        b'h' => return (cursor.saturating_sub(count), cursor),
+        b'h' => {
+            let mut p = cursor;
+            for _ in 0..count {
+                if p == 0 {
+                    break;
+                }
+                p = prev_char_start(line, p);
+            }
+            return (p, cursor);
+        }
         b'l' | b' ' => {
-            let end = (cursor + count).min(line.len());
-            return (cursor, end);
+            let mut p = cursor;
+            for _ in 0..count {
+                if p >= line.len() {
+                    break;
+                }
+                p += char_len_at(line, p);
+            }
+            return (cursor, p.min(line.len()));
         }
         b'0' => return (0, cursor),
         b'$' => return (cursor, line.len()),
@@ -1305,18 +1554,22 @@ fn replay_cmd(
         b'x' => {
             for _ in 0..count {
                 if *cursor < line.len() {
-                    *yank_buf = vec![line.remove(*cursor)];
+                    let clen = char_len_at(line, *cursor);
+                    *yank_buf = line[*cursor..*cursor + clen].to_vec();
+                    line.drain(*cursor..*cursor + clen);
                 }
                 if *cursor >= line.len() && *cursor > 0 {
-                    *cursor -= 1;
+                    *cursor = last_char_start(line);
                 }
             }
         }
         b'X' => {
             for _ in 0..count {
                 if *cursor > 0 {
-                    *cursor -= 1;
-                    *yank_buf = vec![line.remove(*cursor)];
+                    let prev = prev_char_start(line, *cursor);
+                    *yank_buf = line[prev..*cursor].to_vec();
+                    line.drain(prev..*cursor);
+                    *cursor = prev;
                 }
             }
         }
@@ -1324,14 +1577,17 @@ fn replay_cmd(
             if let Some(replacement) = arg {
                 for _ in 0..count {
                     if *cursor < line.len() {
-                        line[*cursor] = replacement;
-                        if *cursor + 1 < line.len() {
-                            *cursor += 1;
+                        let clen = char_len_at(line, *cursor);
+                        line.drain(*cursor..*cursor + clen);
+                        line.insert(*cursor, replacement);
+                        let next = *cursor + 1;
+                        if next < line.len() {
+                            *cursor = next;
                         }
                     }
                 }
                 if count > 1 && *cursor > 0 {
-                    *cursor -= 1;
+                    *cursor = prev_char_start(line, *cursor);
                 }
             }
         }
@@ -1346,7 +1602,11 @@ fn replay_cmd(
                     if start != end {
                         *yank_buf = line[start..end].to_vec();
                         line.drain(start..end);
-                        *cursor = start.min(line.len().saturating_sub(1));
+                        *cursor = if line.is_empty() {
+                            0
+                        } else {
+                            start.min(last_char_start(line))
+                        };
                     }
                 }
             }
@@ -1440,8 +1700,8 @@ mod tests {
     mod vi_tests {
         use super::super::{
             PendingInput, ViAction, ViState, bigword_backward, bigword_end, bigword_forward,
-            do_find, glob_expand, is_word_char, replay_cmd, resolve_motion, word_backward,
-            word_end, word_forward,
+            char_len_at, do_find, glob_expand, is_word_char, last_char_start, prev_char_start,
+            replay_cmd, resolve_motion, word_backward, word_end, word_forward,
         };
         use super::{feed_bytes, get_return, has_bell, has_return};
         use crate::sys::test_support::{assert_no_syscalls, run_trace};
@@ -1510,15 +1770,15 @@ mod tests {
         fn do_find_all_directions() {
             assert_no_syscalls(|| {
                 let line = b"abcba";
-                assert_eq!(do_find(line, 0, b'f', b'c'), Some(2));
-                assert_eq!(do_find(line, 0, b'f', b'z'), None);
-                assert_eq!(do_find(line, 4, b'F', b'c'), Some(2));
-                assert_eq!(do_find(line, 0, b'F', b'c'), None);
-                assert_eq!(do_find(line, 0, b't', b'c'), Some(1));
-                assert_eq!(do_find(line, 0, b't', b'z'), None);
-                assert_eq!(do_find(line, 4, b'T', b'c'), Some(3));
-                assert_eq!(do_find(line, 0, b'T', b'c'), None);
-                assert_eq!(do_find(line, 0, b'z', b'a'), None);
+                assert_eq!(do_find(line, 0, b'f', b'c' as u32), Some(2));
+                assert_eq!(do_find(line, 0, b'f', b'z' as u32), None);
+                assert_eq!(do_find(line, 4, b'F', b'c' as u32), Some(2));
+                assert_eq!(do_find(line, 0, b'F', b'c' as u32), None);
+                assert_eq!(do_find(line, 0, b't', b'c' as u32), Some(1));
+                assert_eq!(do_find(line, 0, b't', b'z' as u32), None);
+                assert_eq!(do_find(line, 4, b'T', b'c' as u32), Some(3));
+                assert_eq!(do_find(line, 0, b'T', b'c' as u32), None);
+                assert_eq!(do_find(line, 0, b'z', b'a' as u32), None);
             });
         }
 
@@ -3268,10 +3528,10 @@ mod tests {
                 let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"a", &history);
                 state.process_byte(0x1b, &history);
-                state.last_find = Some((b'f', b'z'));
+                state.last_find = Some((b'f', b'z' as u32));
                 let actions = state.process_byte(b';', &history);
                 assert!(has_bell(&actions));
-                state.last_find = Some((b'f', b'z'));
+                state.last_find = Some((b'f', b'z' as u32));
                 let _actions = state.process_byte(b';', &history);
             });
         }
@@ -3324,7 +3584,7 @@ mod tests {
                 let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"abc", &history);
                 state.process_byte(0x1b, &history);
-                state.last_find = Some((b'z', b'a'));
+                state.last_find = Some((b'z', b'a' as u32));
                 let actions = state.process_byte(b',', &history);
                 assert!(has_bell(&actions));
             });
@@ -3657,6 +3917,298 @@ mod tests {
                 state.insert_mode = false;
                 state.process_byte(b'\\', &history);
                 assert_eq!(state.line, word);
+            });
+        }
+
+        // --- Multi-byte character unit tests ---
+
+        #[test]
+        fn word_forward_multibyte() {
+            // "café bar" - word_forward from 0 should skip past café (5 bytes) to the space
+            run_trace(trace_entries![], || {
+                assert_eq!(word_forward(b"caf\xc3\xa9 bar", 0), 6);
+            });
+        }
+
+        #[test]
+        fn word_forward_multibyte_punct() {
+            // "é.x" - é is word char, . is punctuation, so word_forward stops at .
+            run_trace(trace_entries![], || {
+                assert_eq!(word_forward(b"\xc3\xa9.x", 0), 2);
+            });
+        }
+
+        #[test]
+        fn word_backward_multibyte() {
+            // "ab éè" - cursor at 7 (past the two 2-byte chars), should go back to byte 3
+            run_trace(trace_entries![], || {
+                assert_eq!(word_backward(b"ab \xc3\xa9\xc3\xa8", 7), 3);
+            });
+        }
+
+        #[test]
+        fn word_end_multibyte() {
+            // "éè x" - word_end from 0 should land on è (byte 2), the last char of the word
+            run_trace(trace_entries![], || {
+                assert_eq!(word_end(b"\xc3\xa9\xc3\xa8 x", 0), 2);
+            });
+        }
+
+        #[test]
+        fn bigword_forward_multibyte() {
+            // "é.è z" - all non-whitespace is one bigword, bigword_forward skips past space
+            run_trace(trace_entries![], || {
+                assert_eq!(bigword_forward(b"\xc3\xa9.\xc3\xa8 z", 0), 6);
+            });
+        }
+
+        #[test]
+        fn resolve_motion_h_multibyte() {
+            // "aéb" - h from byte 3 (b) should move back over é (2 bytes) to byte 1
+            run_trace(trace_entries![], || {
+                assert_eq!(resolve_motion(b"a\xc3\xa9b", 3, b'h', 1), (1, 3));
+            });
+        }
+
+        #[test]
+        fn resolve_motion_l_multibyte() {
+            // "aéb" - l from byte 1 (é) should move forward over é (2 bytes) to byte 3
+            run_trace(trace_entries![], || {
+                assert_eq!(resolve_motion(b"a\xc3\xa9b", 1, b'l', 1), (1, 3));
+            });
+        }
+
+        #[test]
+        fn resolve_motion_e_multibyte() {
+            // "éè" - e from 0 covers both chars: start=0, end=4
+            run_trace(trace_entries![], || {
+                assert_eq!(resolve_motion(b"\xc3\xa9\xc3\xa8", 0, b'e', 1), (0, 4));
+            });
+        }
+
+        #[test]
+        fn do_find_multibyte_target() {
+            // "aéb" - f for é (U+00E9 = 0xE9) from pos 0 should find it at byte 1
+            run_trace(trace_entries![], || {
+                assert_eq!(do_find(b"a\xc3\xa9b", 0, b'f', 0xe9), Some(1));
+            });
+        }
+
+        #[test]
+        fn do_find_skips_continuation_bytes() {
+            // "aéb" - f for b from pos 0 should find at byte 3, not byte 2
+            run_trace(trace_entries![], || {
+                assert_eq!(do_find(b"a\xc3\xa9b", 0, b'f', b'b' as u32), Some(3));
+            });
+        }
+
+        #[test]
+        fn do_find_t_multibyte() {
+            // "aéb" - t for b from pos 0: one char before b is é at byte 1
+            run_trace(trace_entries![], || {
+                assert_eq!(do_find(b"a\xc3\xa9b", 0, b't', b'b' as u32), Some(1));
+            });
+        }
+
+        #[test]
+        fn vi_x_deletes_multibyte_char() {
+            run_trace(trace_entries![], || {
+                let mut state = ViState::new(0x7f, 0);
+                let history: Vec<Box<[u8]>> = vec![];
+                // Type "aéb", ESC, h (on é), x
+                feed_bytes(&mut state, b"a\xc3\xa9b", &history);
+                state.process_byte(0x1b, &history);
+                state.process_byte(b'h', &history);
+                state.process_byte(b'x', &history);
+                assert_eq!(state.line, b"ab");
+            });
+        }
+
+        #[test]
+        fn vi_X_deletes_multibyte_char_before() {
+            run_trace(trace_entries![], || {
+                let mut state = ViState::new(0x7f, 0);
+                let history: Vec<Box<[u8]>> = vec![];
+                // Type "aéb", ESC (cursor on b at byte 3), X deletes é before b
+                feed_bytes(&mut state, b"a\xc3\xa9b", &history);
+                state.process_byte(0x1b, &history);
+                state.process_byte(b'X', &history);
+                assert_eq!(state.line, b"ab");
+            });
+        }
+
+        #[test]
+        fn vi_dl_multibyte() {
+            run_trace(trace_entries![], || {
+                let mut state = ViState::new(0x7f, 0);
+                let history: Vec<Box<[u8]>> = vec![];
+                feed_bytes(&mut state, b"a\xc3\xa9b", &history);
+                state.process_byte(0x1b, &history);
+                state.process_byte(b'0', &history);
+                state.process_byte(b'l', &history);
+                feed_bytes(&mut state, b"dl", &history);
+                assert_eq!(state.line, b"ab");
+            });
+        }
+
+        #[test]
+        fn vi_dw_multibyte() {
+            run_trace(trace_entries![], || {
+                let mut state = ViState::new(0x7f, 0);
+                let history: Vec<Box<[u8]>> = vec![];
+                feed_bytes(&mut state, b"\xc3\xa9\xc3\xa8 b", &history);
+                state.process_byte(0x1b, &history);
+                state.process_byte(b'0', &history);
+                feed_bytes(&mut state, b"dw", &history);
+                assert_eq!(state.line, b"b");
+            });
+        }
+
+        #[test]
+        fn vi_r_replaces_multibyte() {
+            run_trace(trace_entries![], || {
+                let mut state = ViState::new(0x7f, 0);
+                let history: Vec<Box<[u8]>> = vec![];
+                feed_bytes(&mut state, b"a\xc3\xa9b", &history);
+                state.process_byte(0x1b, &history);
+                state.process_byte(b'h', &history);
+                feed_bytes(&mut state, b"rX", &history);
+                assert_eq!(state.line, b"aXb");
+            });
+        }
+
+        #[test]
+        fn vi_a_appends_after_multibyte() {
+            run_trace(trace_entries![], || {
+                let mut state = ViState::new(0x7f, 0);
+                let history: Vec<Box<[u8]>> = vec![];
+                feed_bytes(&mut state, b"\xc3\xa9b", &history);
+                state.process_byte(0x1b, &history);
+                state.process_byte(b'0', &history);
+                state.process_byte(b'a', &history);
+                feed_bytes(&mut state, b"X", &history);
+                state.process_byte(0x1b, &history);
+                assert_eq!(state.line, b"\xc3\xa9Xb");
+            });
+        }
+
+        #[test]
+        fn vi_dollar_on_multibyte_end() {
+            run_trace(trace_entries![], || {
+                let mut state = ViState::new(0x7f, 0);
+                let history: Vec<Box<[u8]>> = vec![];
+                feed_bytes(&mut state, b"ab\xc3\xa9", &history);
+                state.process_byte(0x1b, &history);
+                state.process_byte(b'0', &history);
+                state.process_byte(b'$', &history);
+                assert_eq!(state.cursor, 2);
+            });
+        }
+
+        #[test]
+        fn vi_p_after_multibyte() {
+            run_trace(trace_entries![], || {
+                let mut state = ViState::new(0x7f, 0);
+                let history: Vec<Box<[u8]>> = vec![];
+                // "aéb", ESC, h (on é), x (yank é), l (on b), p (paste after b)
+                feed_bytes(&mut state, b"a\xc3\xa9b", &history);
+                state.process_byte(0x1b, &history);
+                state.process_byte(b'h', &history);
+                state.process_byte(b'x', &history);
+                state.process_byte(b'p', &history);
+                assert_eq!(state.line, b"ab\xc3\xa9");
+            });
+        }
+
+        #[test]
+        fn vi_D_multibyte_end() {
+            run_trace(trace_entries![], || {
+                let mut state = ViState::new(0x7f, 0);
+                let history: Vec<Box<[u8]>> = vec![];
+                feed_bytes(&mut state, b"a\xc3\xa9", &history);
+                state.process_byte(0x1b, &history);
+                state.process_byte(b'0', &history);
+                state.process_byte(b'D', &history);
+                assert!(state.line.is_empty());
+            });
+        }
+
+        #[test]
+        fn vi_pipe_column_multibyte() {
+            run_trace(trace_entries![], || {
+                let mut state = ViState::new(0x7f, 0);
+                let history: Vec<Box<[u8]>> = vec![];
+                // "éèà" (3 two-byte chars)
+                feed_bytes(&mut state, b"\xc3\xa9\xc3\xa8\xc3\xa0", &history);
+                state.process_byte(0x1b, &history);
+                // 2| should go to character 2 (è at byte 2)
+                state.process_byte(b'2', &history);
+                state.process_byte(b'|', &history);
+                assert_eq!(state.cursor, 2);
+            });
+        }
+
+        #[test]
+        fn vi_search_backspace_multibyte() {
+            run_trace(trace_entries![], || {
+                let mut state = ViState::new(0x7f, 0);
+                let history: Vec<Box<[u8]>> = vec![];
+                feed_bytes(&mut state, b"a", &history);
+                state.process_byte(0x1b, &history);
+                // Enter search mode
+                state.process_byte(b'/', &history);
+                // Type é (2 bytes)
+                state.process_byte(0xc3, &history);
+                state.process_byte(0xa9, &history);
+                // Backspace should remove the entire é, not just one byte
+                state.process_byte(0x7f, &history);
+                assert!(state.search_buf.is_empty());
+            });
+        }
+
+        #[test]
+        fn last_char_start_multibyte() {
+            run_trace(trace_entries![], || {
+                assert_eq!(last_char_start(b"ab\xc3\xa9"), 2);
+                assert_eq!(last_char_start(b"\xc3\xa9"), 0);
+                assert_eq!(last_char_start(b""), 0);
+                assert_eq!(last_char_start(b"a"), 0);
+            });
+        }
+
+        #[test]
+        fn replay_cmd_x_multibyte() {
+            run_trace(trace_entries![], || {
+                let mut line = b"a\xc3\xa9b".to_vec();
+                let mut cursor = 1usize;
+                let mut yank = vec![];
+                replay_cmd(&mut line, &mut cursor, &mut yank, b'x', 1, None);
+                assert_eq!(line, b"ab");
+                assert_eq!(yank, b"\xc3\xa9");
+            });
+        }
+
+        #[test]
+        fn replay_cmd_X_multibyte() {
+            run_trace(trace_entries![], || {
+                let mut line = b"a\xc3\xa9b".to_vec();
+                let mut cursor = 3usize;
+                let mut yank = vec![];
+                replay_cmd(&mut line, &mut cursor, &mut yank, b'X', 1, None);
+                assert_eq!(line, b"ab");
+                assert_eq!(yank, b"\xc3\xa9");
+                assert_eq!(cursor, 1);
+            });
+        }
+
+        #[test]
+        fn replay_cmd_r_multibyte() {
+            run_trace(trace_entries![], || {
+                let mut line = b"a\xc3\xa9b".to_vec();
+                let mut cursor = 1usize;
+                let mut yank = vec![];
+                replay_cmd(&mut line, &mut cursor, &mut yank, b'r', 1, Some(b'X'));
+                assert_eq!(line, b"aXb");
             });
         }
     }

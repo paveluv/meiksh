@@ -869,3 +869,17 @@ begin test "printf %n$ format reuse"
     exit_code 0
 end test "printf %n$ format reuse"
 ```
+
+#### Test: printf leading quote gives wchar_t codepoint value
+
+```
+begin test "printf leading quote gives wchar_t codepoint value"
+  script
+    export LC_ALL=C.UTF-8
+    printf "%d\n" "'$(printf '\303\251')"
+  expect
+    stdout "233"
+    stderr ""
+    exit_code 0
+end test "printf leading quote gives wchar_t codepoint value"
+```

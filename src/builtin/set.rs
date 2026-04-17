@@ -7,7 +7,7 @@ use crate::shell::state::Shell;
 pub(super) fn set(shell: &mut Shell, argv: &[Vec<u8>]) -> BuiltinOutcome {
     if argv.len() == 1 {
         let mut items: Vec<_> = shell.env().iter().collect();
-        items.sort_by(|a, b| a.0.cmp(b.0));
+        items.sort_by(|a, b| crate::sys::locale::strcoll(a.0, b.0));
         for (name, value) in items {
             let quoted = shell_quote_if_needed(value);
             let mut line = name.clone();

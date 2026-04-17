@@ -1017,7 +1017,7 @@ default locale used by shell pattern character classes.
 ```
 begin test "LANG provides default locale for shell character classes"
   script
-    LANG=test_EPTY.ISO-8859-1 LC_ALL= LC_CTYPE= $SHELL -c 'v=$(printf "\\351"); case "$v" in ([[:alpha:]]) echo alpha;; (*) echo no;; esac'
+    LANG=C.UTF-8 LC_ALL= LC_CTYPE= $SHELL -c 'v=$(printf "\\351"); case "$v" in ([[:alpha:]]) echo alpha;; (*) echo no;; esac'
   expect
     stdout "alpha"
     stderr ""
@@ -1033,7 +1033,7 @@ shell pattern character classes such as `[[:alpha:]]`.
 ```
 begin test "LC_CTYPE controls shell pattern character classes"
   script
-    LANG=C LC_ALL= LC_CTYPE=test_EPTY.ISO-8859-1 $SHELL -c 'v=$(printf "\\351"); case "$v" in ([[:alpha:]]) echo alpha;; (*) echo no;; esac'
+    LANG=C LC_ALL= LC_CTYPE=C.UTF-8 $SHELL -c 'v=$(printf "\\351"); case "$v" in ([[:alpha:]]) echo alpha;; (*) echo no;; esac'
   expect
     stdout "alpha"
     stderr ""
@@ -1049,7 +1049,7 @@ when the shell evaluates pattern character classes.
 ```
 begin test "LC_ALL overrides LANG and LC_CTYPE for shell character classes"
   script
-    LANG=test_EPTY.ISO-8859-1 LC_CTYPE=test_EPTY.ISO-8859-1 LC_ALL=C $SHELL -c 'v=$(printf "\\351"); case "$v" in ([[:alpha:]]) echo alpha;; (*) echo no;; esac'
+    LANG=C.UTF-8 LC_CTYPE=C.UTF-8 LC_ALL=C $SHELL -c 'v=$(printf "\\351"); case "$v" in ([[:alpha:]]) echo alpha;; (*) echo no;; esac'
   expect
     stdout "no"
     stderr ""
@@ -1448,4 +1448,42 @@ begin interactive test "PS2 uses parameter expansion"
   sendeof
   wait
 end interactive test "PS2 uses parameter expansion"
+```
+
+#### Test: runtime locale change affects pattern matching
+
+```
+begin test "runtime locale change affects pattern matching"
+  script
+    v=$(printf '\303\251')
+    case "$v" in
+      ([[:alpha:]]) echo "alpha-before";;
+      (*) echo "not-alpha-before";;
+    esac
+    export LC_ALL=C.UTF-8
+    case "$v" in
+      ([[:alpha:]]) echo "alpha-after";;
+      (*) echo "not-alpha-after";;
+    esac
+  expect
+    stdout "not-alpha-before\nalpha-after"
+    stderr ""
+    exit_code 0
+end test "runtime locale change affects pattern matching"
+```
+
+#### Test: runtime locale change affects string length
+
+```
+begin test "runtime locale change affects string length"
+  script
+    v=$(printf '\303\251')
+    echo "${#v}"
+    export LC_ALL=C.UTF-8
+    echo "${#v}"
+  expect
+    stdout "2\n1"
+    stderr ""
+    exit_code 0
+end test "runtime locale change affects string length"
 ```

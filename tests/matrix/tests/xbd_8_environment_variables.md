@@ -586,3 +586,33 @@ begin test "TZ affects timezone used by utilities"
 end test "TZ affects timezone used by utilities"
 ```
 
+#### Test: unset PATH clears command lookup cache
+
+```
+begin test "unset PATH clears command lookup cache"
+  script
+    echo hello
+    unset PATH
+    PATH=$(command -p getconf PATH 2>/dev/null || echo /usr/bin:/bin)
+    echo hello
+  expect
+    stdout "hello\nhello"
+    stderr ""
+    exit_code 0
+end test "unset PATH clears command lookup cache"
+```
+
+#### Test: temporary PATH assignment does not persist
+
+```
+begin test "temporary PATH assignment does not persist"
+  script
+    echo hello
+    PATH=/nonexistent true
+    echo hello
+  expect
+    stdout "hello\nhello"
+    stderr ""
+    exit_code 0
+end test "temporary PATH assignment does not persist"
+```

@@ -65,7 +65,89 @@ pub(super) struct SystemInterface {
     pub(super) monotonic_clock_ns: fn() -> u64,
     // Locale
     pub(super) setup_locale: fn(),
+    pub(super) reinit_locale: fn(),
+    #[allow(dead_code)]
     pub(super) classify_byte: fn(&[u8], u8) -> bool,
+    pub(super) classify_char: fn(&[u8], u32) -> bool,
+    pub(super) decode_char: fn(&[u8]) -> (u32, usize),
+    pub(super) encode_char: fn(u32, &mut [u8]) -> usize,
+    #[allow(dead_code)]
+    pub(super) mb_cur_max: fn() -> usize,
+    pub(super) to_upper: fn(u32) -> u32,
+    pub(super) to_lower: fn(u32) -> u32,
+    pub(super) char_width: fn(u32) -> usize,
+    pub(super) strcoll: fn(&[u8], &[u8]) -> std::cmp::Ordering,
+    pub(super) decimal_point: fn() -> u8,
+}
+
+fn classify_wchar(class: &[u8], wc: u32) -> bool {
+    unsafe extern "C" {
+        fn iswalnum(wc: u32) -> c_int;
+        fn iswalpha(wc: u32) -> c_int;
+        fn iswblank(wc: u32) -> c_int;
+        fn iswcntrl(wc: u32) -> c_int;
+        fn iswdigit(wc: u32) -> c_int;
+        fn iswgraph(wc: u32) -> c_int;
+        fn iswlower(wc: u32) -> c_int;
+        fn iswprint(wc: u32) -> c_int;
+        fn iswpunct(wc: u32) -> c_int;
+        fn iswspace(wc: u32) -> c_int;
+        fn iswupper(wc: u32) -> c_int;
+        fn iswxdigit(wc: u32) -> c_int;
+    }
+    unsafe {
+        match class {
+            b"alnum" => iswalnum(wc) != 0,
+            b"alpha" => iswalpha(wc) != 0,
+            b"blank" => iswblank(wc) != 0,
+            b"cntrl" => iswcntrl(wc) != 0,
+            b"digit" => iswdigit(wc) != 0,
+            b"graph" => iswgraph(wc) != 0,
+            b"lower" => iswlower(wc) != 0,
+            b"print" => iswprint(wc) != 0,
+            b"punct" => iswpunct(wc) != 0,
+            b"space" => iswspace(wc) != 0,
+            b"upper" => iswupper(wc) != 0,
+            b"xdigit" => iswxdigit(wc) != 0,
+            _ => {
+                unsafe extern "C" {
+                    fn wctype(name: *const c_char) -> usize;
+                    fn iswctype(wc: u32, desc: usize) -> c_int;
+                }
+                let c_class = crate::bstr::to_cstring(class).unwrap_or_default();
+                let desc = wctype(c_class.as_ptr());
+                if desc == 0 {
+                    false
+                } else {
+                    iswctype(wc, desc) != 0
+                }
+            }
+        }
+    }
+}
+
+fn mb_cur_max_impl() -> usize {
+    #[cfg(target_os = "linux")]
+    {
+        unsafe extern "C" {
+            fn __ctype_get_mb_cur_max() -> usize;
+        }
+        unsafe { __ctype_get_mb_cur_max() }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        unsafe extern "C" {
+            fn __mb_cur_max() -> c_int;
+        }
+        unsafe { __mb_cur_max() as usize }
+    }
+    #[cfg(target_os = "freebsd")]
+    {
+        unsafe extern "C" {
+            fn __mb_cur_max() -> usize;
+        }
+        unsafe { __mb_cur_max() }
+    }
 }
 
 pub(super) fn default_interface() -> SystemInterface {
@@ -185,38 +267,79 @@ pub(super) fn default_interface() -> SystemInterface {
         setup_locale: || unsafe {
             libc::setlocale(libc::LC_ALL, b"\0".as_ptr().cast());
         },
-        classify_byte: |class, byte| {
-            unsafe extern "C" {
-                fn iswalnum(wc: u32) -> c_int;
-                fn iswalpha(wc: u32) -> c_int;
-                fn iswblank(wc: u32) -> c_int;
-                fn iswcntrl(wc: u32) -> c_int;
-                fn iswdigit(wc: u32) -> c_int;
-                fn iswgraph(wc: u32) -> c_int;
-                fn iswlower(wc: u32) -> c_int;
-                fn iswprint(wc: u32) -> c_int;
-                fn iswpunct(wc: u32) -> c_int;
-                fn iswspace(wc: u32) -> c_int;
-                fn iswupper(wc: u32) -> c_int;
-                fn iswxdigit(wc: u32) -> c_int;
+        reinit_locale: || unsafe {
+            libc::setlocale(libc::LC_ALL, b"\0".as_ptr().cast());
+        },
+        classify_byte: |class, byte| classify_wchar(class, byte as u32),
+        classify_char: classify_wchar,
+        decode_char: |bytes| {
+            if bytes.is_empty() {
+                return (0, 0);
             }
-            let wc = byte as u32;
+            unsafe extern "C" {
+                fn mbrtowc(
+                    pwc: *mut libc::wchar_t,
+                    s: *const u8,
+                    n: usize,
+                    ps: *mut libc::mbstate_t,
+                ) -> usize;
+            }
             unsafe {
-                match class {
-                    b"alnum" => iswalnum(wc) != 0,
-                    b"alpha" => iswalpha(wc) != 0,
-                    b"blank" => iswblank(wc) != 0,
-                    b"cntrl" => iswcntrl(wc) != 0,
-                    b"digit" => iswdigit(wc) != 0,
-                    b"graph" => iswgraph(wc) != 0,
-                    b"lower" => iswlower(wc) != 0,
-                    b"print" => iswprint(wc) != 0,
-                    b"punct" => iswpunct(wc) != 0,
-                    b"space" => iswspace(wc) != 0,
-                    b"upper" => iswupper(wc) != 0,
-                    b"xdigit" => iswxdigit(wc) != 0,
-                    _ => false,
+                let mut wc: libc::wchar_t = 0;
+                let mut ps: libc::mbstate_t = std::mem::zeroed();
+                let n = mbrtowc(&mut wc, bytes.as_ptr(), bytes.len(), &mut ps);
+                if n == 0 {
+                    (0, 0)
+                } else if n == usize::MAX || n == usize::MAX - 1 {
+                    (bytes[0] as u32, 1)
+                } else {
+                    (wc as u32, n)
                 }
+            }
+        },
+        encode_char: |wc, buf| {
+            unsafe extern "C" {
+                fn wcrtomb(s: *mut u8, wc: libc::wchar_t, ps: *mut libc::mbstate_t) -> usize;
+            }
+            unsafe {
+                let mut ps: libc::mbstate_t = std::mem::zeroed();
+                let n = wcrtomb(buf.as_mut_ptr(), wc as libc::wchar_t, &mut ps);
+                if n == usize::MAX { 0 } else { n }
+            }
+        },
+        mb_cur_max: mb_cur_max_impl,
+        to_upper: |wc| unsafe {
+            unsafe extern "C" {
+                fn towupper(wc: u32) -> u32;
+            }
+            towupper(wc)
+        },
+        to_lower: |wc| unsafe {
+            unsafe extern "C" {
+                fn towlower(wc: u32) -> u32;
+            }
+            towlower(wc)
+        },
+        char_width: |wc| {
+            unsafe extern "C" {
+                fn wcwidth(wc: u32) -> c_int;
+            }
+            let w = unsafe { wcwidth(wc) };
+            if w < 0 { 0 } else { w as usize }
+        },
+        strcoll: |a, b| {
+            let ca = crate::bstr::to_cstring(a).unwrap_or_default();
+            let cb = crate::bstr::to_cstring(b).unwrap_or_default();
+            let r = unsafe { libc::strcoll(ca.as_ptr(), cb.as_ptr()) };
+            r.cmp(&0)
+        },
+        decimal_point: || {
+            let lc = unsafe { libc::localeconv() };
+            if lc.is_null() {
+                b'.'
+            } else {
+                let dp = unsafe { *(*lc).decimal_point };
+                if dp == 0 { b'.' } else { dp as u8 }
             }
         },
     }

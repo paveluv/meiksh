@@ -2740,4 +2740,94 @@ begin test "dollar-single-quote removed during quote removal"
 end test "dollar-single-quote removed during quote removal"
 ```
 
+#### Test: string length counts characters not bytes
 
+```
+begin test "string length counts characters not bytes"
+  script
+    export LC_ALL=C.UTF-8
+    v=$(printf '\303\251\303\250')
+    echo "${#v}"
+  expect
+    stdout "2"
+    stderr ""
+    exit_code 0
+end test "string length counts characters not bytes"
+```
+
+#### Test: string length counts bytes in C locale
+
+```
+begin test "string length counts bytes in C locale"
+  script
+    v=$(printf '\303\251\303\250')
+    echo "${#v}"
+  expect
+    stdout "4"
+    stderr ""
+    exit_code 0
+end test "string length counts bytes in C locale"
+```
+
+#### Test: multi-byte IFS character splits fields
+
+```
+begin test "multi-byte IFS character splits fields"
+  script
+    export LC_ALL=C.UTF-8
+    IFS=$(printf '\303\251')
+    v=$(printf 'a\303\251b')
+    set -- $v
+    echo "$1|$2"
+  expect
+    stdout "a\|b"
+    stderr ""
+    exit_code 0
+end test "multi-byte IFS character splits fields"
+```
+
+#### Test: quoted star uses full multi-byte IFS character
+
+```
+begin test "quoted star uses full multi-byte IFS character"
+  script
+    export LC_ALL=C.UTF-8
+    IFS=$(printf '\303\251')
+    set -- a b
+    printf '%s' "$*" | od -An -t x1 | tr -d ' \n'
+  expect
+    stdout "61c3a962"
+    stderr ""
+    exit_code 0
+end test "quoted star uses full multi-byte IFS character"
+```
+
+#### Test: prefix removal respects character boundaries
+
+```
+begin test "prefix removal respects character boundaries"
+  script
+    export LC_ALL=C.UTF-8
+    v=$(printf '\303\251\303\250')
+    echo "${v#?}"| od -An -t x1 | tr -d ' \n'
+  expect
+    stdout "c3a80a"
+    stderr ""
+    exit_code 0
+end test "prefix removal respects character boundaries"
+```
+
+#### Test: suffix removal respects character boundaries
+
+```
+begin test "suffix removal respects character boundaries"
+  script
+    export LC_ALL=C.UTF-8
+    v=$(printf '\303\251\303\250')
+    echo "${v%?}" | od -An -t x1 | tr -d ' \n'
+  expect
+    stdout "c3a90a"
+    stderr ""
+    exit_code 0
+end test "suffix removal respects character boundaries"
+```

@@ -1,8 +1,23 @@
 use crate::bstr;
+use crate::sys;
 
 use super::error::{ShellError, VarError, var_error_message};
 use super::run::stdin_parse_error_requires_more_input;
 use super::state::Shell;
+
+const LOCALE_VARS: &[&[u8]] = &[
+    b"LC_ALL",
+    b"LC_CTYPE",
+    b"LC_COLLATE",
+    b"LC_NUMERIC",
+    b"LC_MESSAGES",
+    b"LC_TIME",
+    b"LANG",
+];
+
+fn is_locale_var(name: &[u8]) -> bool {
+    LOCALE_VARS.iter().any(|v| *v == name)
+}
 
 impl Shell {
     pub(crate) fn env_for_child(&self) -> Vec<(Vec<u8>, Vec<u8>)> {
@@ -84,6 +99,13 @@ impl Shell {
         if self.options.allexport && !self.exported().contains(name) {
             self.exported_mut().insert(name.to_vec());
         }
+        if is_locale_var(name) {
+            #[cfg(not(test))]
+            {
+                let _ = sys::env::env_set_var(name, value);
+            }
+            sys::locale::reinit_locale();
+        }
         Ok(())
     }
 
@@ -114,6 +136,16 @@ impl Shell {
         }
         self.env_mut().remove(name);
         self.exported_mut().remove(name);
+        if name == b"PATH" {
+            self.path_cache_mut().clear();
+        }
+        if is_locale_var(name) {
+            #[cfg(not(test))]
+            {
+                let _ = sys::env::env_unset_var(name);
+            }
+            sys::locale::reinit_locale();
+        }
         Ok(())
     }
 
