@@ -340,12 +340,7 @@ pub(super) fn default_interface() -> SystemInterface {
             r.cmp(&0)
         },
         decimal_point: || {
-            let lc = unsafe { libc::localeconv() };
-            let dp = if lc.is_null() {
-                0
-            } else {
-                unsafe { *(*lc).decimal_point }
-            };
+            let dp = unsafe { *(*libc::localeconv()).decimal_point };
             if dp == 0 { b'.' } else { dp as u8 }
         },
     }
