@@ -1700,7 +1700,7 @@ mod tests {
     mod vi_tests {
         use super::super::{
             PendingInput, ViAction, ViState, bigword_backward, bigword_end, bigword_forward,
-            char_len_at, do_find, glob_expand, is_word_char, last_char_start, prev_char_start,
+            do_find, glob_expand, is_word_char, last_char_start,
             replay_cmd, resolve_motion, word_backward, word_end, word_forward,
         };
         use super::{feed_bytes, get_return, has_bell, has_return};
