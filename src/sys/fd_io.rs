@@ -339,6 +339,34 @@ mod tests {
     }
 
     #[test]
+    fn clear_cloexec_error() {
+        fn fail_fcntl(_fd: c_int, _cmd: c_int, _arg: c_int) -> c_int {
+            -1
+        }
+        let fake = SystemInterface {
+            fcntl: fail_fcntl,
+            ..default_interface()
+        };
+        test_support::with_test_interface(fake, || {
+            assert!(clear_cloexec(5).is_err());
+        });
+    }
+
+    #[test]
+    fn clear_cloexec_success() {
+        fn ok_fcntl(_fd: c_int, _cmd: c_int, _arg: c_int) -> c_int {
+            0
+        }
+        let fake = SystemInterface {
+            fcntl: ok_fcntl,
+            ..default_interface()
+        };
+        test_support::with_test_interface(fake, || {
+            assert!(clear_cloexec(5).is_ok());
+        });
+    }
+
+    #[test]
     fn write_all_fd_zero_write_eio() {
         fn fake_write(_fd: c_int, _data: &[u8]) -> isize {
             0

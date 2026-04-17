@@ -80,6 +80,20 @@ pub(super) struct SystemInterface {
     pub(super) decimal_point: fn() -> u8,
 }
 
+fn classify_wchar_wctype(class: &[u8], wc: u32) -> bool {
+    unsafe extern "C" {
+        fn wctype(name: *const c_char) -> usize;
+        fn iswctype(wc: u32, desc: usize) -> c_int;
+    }
+    let c_class = crate::bstr::to_cstring(class).unwrap_or_default();
+    let desc = unsafe { wctype(c_class.as_ptr()) };
+    if desc == 0 {
+        false
+    } else {
+        unsafe { iswctype(wc, desc) != 0 }
+    }
+}
+
 fn classify_wchar(class: &[u8], wc: u32) -> bool {
     unsafe extern "C" {
         fn iswalnum(wc: u32) -> c_int;
@@ -109,19 +123,7 @@ fn classify_wchar(class: &[u8], wc: u32) -> bool {
             b"space" => iswspace(wc) != 0,
             b"upper" => iswupper(wc) != 0,
             b"xdigit" => iswxdigit(wc) != 0,
-            _ => {
-                unsafe extern "C" {
-                    fn wctype(name: *const c_char) -> usize;
-                    fn iswctype(wc: u32, desc: usize) -> c_int;
-                }
-                let c_class = crate::bstr::to_cstring(class).unwrap_or_default();
-                let desc = wctype(c_class.as_ptr());
-                if desc == 0 {
-                    false
-                } else {
-                    iswctype(wc, desc) != 0
-                }
-            }
+            _ => classify_wchar_wctype(class, wc),
         }
     }
 }
@@ -335,12 +337,12 @@ pub(super) fn default_interface() -> SystemInterface {
         },
         decimal_point: || {
             let lc = unsafe { libc::localeconv() };
-            if lc.is_null() {
-                b'.'
+            let dp = if lc.is_null() {
+                0
             } else {
-                let dp = unsafe { *(*lc).decimal_point };
-                if dp == 0 { b'.' } else { dp as u8 }
-            }
+                unsafe { *(*lc).decimal_point }
+            };
+            if dp == 0 { b'.' } else { dp as u8 }
         },
     }
 }
@@ -629,6 +631,88 @@ mod tests {
         let mut buf = std::mem::MaybeUninit::<libc::stat>::zeroed();
         assert!((tbl.lstat)(std::ptr::null(), buf.as_mut_ptr()) < 0);
         assert!((tbl.unlink)(std::ptr::null()) < 0);
+    }
+
+    #[test]
+    fn default_interface_decode_char() {
+        let tbl = default_interface();
+        (tbl.setup_locale)();
+        let (wc, len) = (tbl.decode_char)(b"A");
+        assert_eq!(wc, b'A' as u32);
+        assert_eq!(len, 1);
+        let (_, len0) = (tbl.decode_char)(b"");
+        assert_eq!(len0, 0);
+        let (wc_inv, len_inv) = (tbl.decode_char)(&[0xFF, 0xFF]);
+        assert_eq!(len_inv, 1);
+        assert_eq!(wc_inv, 0xFF);
+        let (wc_nul, len_nul) = (tbl.decode_char)(&[0x00]);
+        assert_eq!(wc_nul, 0);
+        assert_eq!(len_nul, 0);
+    }
+
+    #[test]
+    fn default_interface_encode_char() {
+        let tbl = default_interface();
+        (tbl.setup_locale)();
+        let mut buf = [0u8; 8];
+        let n = (tbl.encode_char)(b'Z' as u32, &mut buf);
+        assert!(n > 0);
+        assert_eq!(buf[0], b'Z');
+    }
+
+    #[test]
+    fn default_interface_to_upper_lower() {
+        let tbl = default_interface();
+        (tbl.setup_locale)();
+        let upper = (tbl.to_upper)(b'a' as u32);
+        assert_eq!(upper, b'A' as u32);
+        let lower = (tbl.to_lower)(b'A' as u32);
+        assert_eq!(lower, b'a' as u32);
+    }
+
+    #[test]
+    fn default_interface_char_width() {
+        let tbl = default_interface();
+        (tbl.setup_locale)();
+        let w = (tbl.char_width)(b'A' as u32);
+        assert_eq!(w, 1);
+        let w_ctrl = (tbl.char_width)(0x01);
+        assert_eq!(w_ctrl, 0);
+    }
+
+    #[test]
+    fn default_interface_mb_cur_max() {
+        let tbl = default_interface();
+        (tbl.setup_locale)();
+        let m = (tbl.mb_cur_max)();
+        assert!(m >= 1);
+    }
+
+    #[test]
+    fn default_interface_decimal_point() {
+        let tbl = default_interface();
+        (tbl.setup_locale)();
+        let dp = (tbl.decimal_point)();
+        assert!(dp == b'.' || dp == b',');
+    }
+
+    #[test]
+    fn default_interface_strcoll() {
+        let tbl = default_interface();
+        (tbl.setup_locale)();
+        use std::cmp::Ordering;
+        assert_eq!((tbl.strcoll)(b"abc", b"abc"), Ordering::Equal);
+        assert_eq!((tbl.strcoll)(b"abc", b"abd"), Ordering::Less);
+        assert_eq!((tbl.strcoll)(b"abd", b"abc"), Ordering::Greater);
+    }
+
+    #[test]
+    fn classify_wchar_wctype_standard_class() {
+        let tbl = default_interface();
+        (tbl.setup_locale)();
+        assert!(classify_wchar_wctype(b"alpha", b'a' as u32));
+        assert!(!classify_wchar_wctype(b"alpha", b'1' as u32));
+        assert!(!classify_wchar_wctype(b"bogus", b'a' as u32));
     }
 
     #[test]

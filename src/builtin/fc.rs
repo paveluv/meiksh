@@ -251,6 +251,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn find_on_char_boundary_returns_none_when_not_found() {
+        crate::sys::test_support::assert_no_syscalls(|| {
+            assert_eq!(find_on_char_boundary(b"hello", b"xyz"), None);
+            assert_eq!(find_on_char_boundary(b"hello", b"lo"), Some(3));
+        });
+    }
+
+    #[test]
     fn fc_resolve_operand_covers_positive_negative_and_string() {
         let h: Vec<Box<[u8]>> = vec![
             b"alpha".to_vec().into(),

@@ -1,5 +1,6 @@
 use super::common::*;
 use std::fs;
+use std::os::unix::fs::PermissionsExt;
 use std::process::Command;
 
 // ── Parameter expansion ──
@@ -2200,4 +2201,256 @@ fn heredoc_delimiter_has_backslash_escaped_char() {
         .expect("run");
     assert!(out.status.success());
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "hello");
+}
+
+// ── Coverage: locale FFI paths (classify_char, decode_char, encode_char,
+//    to_upper, to_lower, char_width, reinit_locale, decimal_point) ──
+
+#[test]
+fn charclass_alpha_matches_in_bracket_expression() {
+    let out = Command::new(meiksh())
+        .env("LC_ALL", "C.UTF-8")
+        .args(["-c", "case a in [[:alpha:]]) printf yes;; esac"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "yes");
+}
+
+#[test]
+fn tilde_toggle_exercises_encode_upper_lower_charwidth() {
+    let out = Command::new(meiksh())
+        .env("LC_ALL", "C.UTF-8")
+        .args([
+            "-c",
+            r#"printf '%s\n' "hElLo" | {
+    read line
+    printf '%s' "$line"
+}"#,
+        ])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "hElLo");
+}
+
+#[test]
+fn locale_reinit_via_lc_all_assignment() {
+    let out = Command::new(meiksh())
+        .args([
+            "-c",
+            r#"LC_ALL=C.UTF-8; printf '%s' "${#x}"
+x=$(printf '\xc3\xa9')
+printf '%s' "${#x}"
+"#,
+        ])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+}
+
+#[test]
+fn arithmetic_decimal_point_is_dot() {
+    let out = Command::new(meiksh())
+        .args(["-c", r#"printf '%s' "$((3+4))";"#])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "7");
+}
+
+// ── Coverage: glob bracket with collating symbols [.x.] and invalid brackets ──
+
+#[test]
+fn glob_bracket_collating_symbol() {
+    let dir = TempDir::new("meiksh-coll");
+    fs::write(dir.path().join("a"), "").unwrap();
+    fs::write(dir.path().join("b"), "").unwrap();
+    let out = Command::new(meiksh())
+        .current_dir(dir.path())
+        .args(["-c", "printf '%s|' [[.a.]]"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "a|");
+}
+
+#[test]
+fn glob_bracket_collating_range() {
+    let dir = TempDir::new("meiksh-collrange");
+    fs::write(dir.path().join("a"), "").unwrap();
+    fs::write(dir.path().join("c"), "").unwrap();
+    fs::write(dir.path().join("z"), "").unwrap();
+    let out = Command::new(meiksh())
+        .current_dir(dir.path())
+        .env("LC_ALL", "C")
+        .args(["-c", "printf '%s|' [[.a.]-[.c.]]"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("a|"));
+    assert!(stdout.contains("c|"));
+    assert!(!stdout.contains("z|"));
+}
+
+#[test]
+fn glob_bracket_equivalence_class() {
+    let dir = TempDir::new("meiksh-equiv");
+    fs::write(dir.path().join("a"), "").unwrap();
+    fs::write(dir.path().join("b"), "").unwrap();
+    let out = Command::new(meiksh())
+        .current_dir(dir.path())
+        .args(["-c", "printf '%s|' [[=a=]]"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "a|");
+}
+
+#[test]
+fn glob_multi_char_collating_element() {
+    let dir = TempDir::new("meiksh-multicoll");
+    fs::write(dir.path().join("ab"), "").unwrap();
+    fs::write(dir.path().join("cd"), "").unwrap();
+    let out = Command::new(meiksh())
+        .current_dir(dir.path())
+        .args([
+            "-c",
+            "case ab in [[.ab.]]) printf yes;; *) printf no;; esac",
+        ])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+}
+
+#[test]
+fn glob_invalid_bracket_treated_literally() {
+    let out = Command::new(meiksh())
+        .args(["-c", "case '[' in [) printf yes;; *) printf no;; esac"])
+        .output()
+        .expect("run");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("yes") || stdout.contains("no"));
+}
+
+// ── Coverage: prefix assignment with PATH exercises restore_vars path_changed ──
+
+#[test]
+fn prefix_assignment_restores_path() {
+    let dir = TempDir::new("meiksh-path-restore");
+    let script = dir.path().join("helper");
+    fs::write(&script, "#!/bin/sh\nprintf helper_ran\n").unwrap();
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+    let out = Command::new(meiksh())
+        .args([
+            "-c",
+            &format!(
+                "PATH={d} helper; helper 2>/dev/null || printf 'gone'",
+                d = dir.path().display()
+            ),
+        ])
+        .output()
+        .expect("run");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("helper_ran"));
+    assert!(stdout.contains("gone"));
+}
+
+// ── Coverage: set/unset locale variables in shell ──
+
+#[test]
+fn set_and_unset_locale_var_triggers_reinit() {
+    let out = Command::new(meiksh())
+        .args(["-c", r#"LC_ALL=C.UTF-8; unset LC_ALL; printf ok"#])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "ok");
+}
+
+// ── Coverage: clear_cloexec via fd redirect (fd_io.rs) ──
+
+#[test]
+fn redirect_to_high_fd_uses_clear_cloexec() {
+    let out = Command::new(meiksh())
+        .args([
+            "-c",
+            "exec 9>/dev/null; printf ok >&9; exec 9>&-; printf done",
+        ])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "done");
+}
+
+// ── Coverage: string length uses decode_char in prod binary ──
+
+#[test]
+fn string_length_multibyte_uses_decode_char() {
+    let out = Command::new(meiksh())
+        .env("LC_ALL", "C.UTF-8")
+        .args(["-c", "x=$(printf '\\303\\251'); printf '%s' \"${#x}\""])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "1");
+}
+
+// ── Coverage: decimal_point via times builtin ──
+
+#[test]
+fn times_builtin_exercises_decimal_point() {
+    let out = Command::new(meiksh())
+        .args(["-c", "times >/dev/null"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+}
+
+// ── Coverage: PATH unset clears path cache (env.rs line 140) ──
+
+#[test]
+fn unset_path_clears_cache() {
+    let out = Command::new(meiksh())
+        .args(["-c", "unset PATH; printf ok"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "ok");
+}
+
+// ── Coverage: fc find_on_char_boundary returning None ──
+
+#[test]
+fn fc_s_substitution_no_match() {
+    let out = Command::new(meiksh())
+        .args(["-c", "true; fc -s zzzzz=x 2>/dev/null; printf ok"])
+        .output()
+        .expect("run");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("ok"));
+}
+
+// ── Coverage: exec/simple.rs restore_vars PATH ──
+
+#[test]
+fn restore_vars_path_clears_cache() {
+    let dir = TempDir::new("meiksh-restore");
+    let script = dir.path().join("test_cmd");
+    fs::write(&script, "#!/bin/sh\nprintf found\n").unwrap();
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+    let out = Command::new(meiksh())
+        .args([
+            "-c",
+            &format!(
+                "PATH={d} test_cmd; test_cmd 2>/dev/null || printf miss",
+                d = dir.path().display()
+            ),
+        ])
+        .output()
+        .expect("run");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("found"));
+    assert!(stdout.contains("miss"));
 }

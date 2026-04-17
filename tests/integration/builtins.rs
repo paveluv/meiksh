@@ -1080,6 +1080,77 @@ printf '%s\n' "$r"
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "abxy");
 }
 
+// ── Coverage: getopts skips colons in optstring ──
+
+#[test]
+fn getopts_skips_colons_in_optstring() {
+    let out = Command::new(meiksh())
+        .args([
+            "-c",
+            r#"
+set -- -b val
+while getopts :a:b: opt; do printf '%s=%s ' "$opt" "$OPTARG"; done
+"#,
+        ])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "b=val");
+}
+
+// ── Coverage: fc -s old=new reexec with no match returns None ──
+
+#[test]
+fn fc_reexec_with_missing_pattern_fails() {
+    let out = Command::new(meiksh())
+        .args([
+            "-c",
+            "FCEDIT=cat; printf hello; fc -s zzzzzz=yyy 2>/dev/null; printf after",
+        ])
+        .output()
+        .expect("run");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("after"));
+}
+
+// ── Coverage: read with backslash-escaped IFS delim preserves field ──
+
+#[test]
+fn read_backslash_escaped_ifs_delim() {
+    let out = Command::new(meiksh())
+        .args([
+            "-c",
+            "IFS=:; read a b <<EOF\nx\\:y:z\nEOF\nprintf '%s|%s' \"$a\" \"$b\"",
+        ])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "x:y|z");
+}
+
+// ── Coverage: restore_vars with PATH restores path cache ──
+
+#[test]
+fn prefix_assignment_path_is_restored() {
+    let dir = TempDir::new("meiksh-prefix-path");
+    let script_path = dir.path().join("myscript");
+    fs::write(&script_path, "#!/bin/sh\nprintf found\n").unwrap();
+    fs::set_permissions(&script_path, fs::Permissions::from_mode(0o755)).unwrap();
+    let out = Command::new(meiksh())
+        .args([
+            "-c",
+            &format!(
+                "PATH={d} myscript 2>/dev/null; myscript 2>/dev/null || printf 'not_found'",
+                d = dir.path().display()
+            ),
+        ])
+        .output()
+        .expect("run");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("found"));
+    assert!(stdout.contains("not_found"));
+}
+
 // ── builtin error behavior ──
 
 #[test]

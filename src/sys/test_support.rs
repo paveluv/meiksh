@@ -521,7 +521,7 @@ fn test_classify_char(class: &[u8], wc: u32) -> bool {
     }
 }
 fn test_decode_char(bytes: &[u8]) -> (u32, usize) {
-    if bytes.is_empty() {
+    if bytes.is_empty() || bytes[0] == 0 {
         return (0, 0);
     }
     if test_locale() == TestLocale::C {
