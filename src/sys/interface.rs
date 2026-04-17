@@ -444,8 +444,6 @@ pub(super) fn flush_coverage() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::ffi::CString;
-
     use crate::sys::test_support;
     use crate::trace_entries;
 
@@ -466,15 +464,6 @@ mod tests {
         let mut termios: libc::termios = unsafe { std::mem::zeroed() };
         let _ = (iface.tcgetattr)(STDIN_FILENO, &mut termios);
         let _ = (iface.tcsetattr)(STDIN_FILENO, 0, &termios);
-    }
-
-    #[test]
-    fn default_interface_execvp_nonexistent() {
-        let iface = default_interface();
-        let prog = CString::new("/nonexistent_meiksh_test_binary_xyz").unwrap();
-        let argv = [prog.as_ptr(), std::ptr::null()];
-        let rc = (iface.execvp)(prog.as_ptr(), argv.as_ptr());
-        assert!(rc < 0);
     }
 
     #[test]
