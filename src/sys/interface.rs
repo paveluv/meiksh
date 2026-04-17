@@ -611,11 +611,12 @@ mod tests {
     }
 
     #[test]
-    fn default_interface_lstat_and_unlink_error_on_null() {
+    fn default_interface_lstat_and_unlink_error_on_nonexistent() {
         let tbl = default_interface();
+        let path = c"/nonexistent_meiksh_xyz_42";
         let mut buf = std::mem::MaybeUninit::<libc::stat>::zeroed();
-        assert!((tbl.lstat)(std::ptr::null(), buf.as_mut_ptr()) < 0);
-        assert!((tbl.unlink)(std::ptr::null()) < 0);
+        assert!((tbl.lstat)(path.as_ptr(), buf.as_mut_ptr()) < 0);
+        assert!((tbl.unlink)(path.as_ptr()) < 0);
     }
 
     #[test]
