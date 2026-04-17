@@ -18,6 +18,7 @@
 //!   expect_pty --shell "/usr/bin/bash --posix" tests/*.epty
 //!   expect_pty --shell "/usr/bin/bash --posix" --script-modes dash-c,tempfile,stdin tests/*.epty
 //!   expect_pty --shell "/usr/bin/bash --posix" --test "name" tests/*.epty
+//!   expect_pty --shell "/usr/bin/bash --posix" --verbose tests/*.epty
 //!
 //! ### Suite DSL:
 //!   testsuite "name"                      — suite name (one per file)
@@ -65,6 +66,8 @@
 //!   To embed a literal double-quote in a pattern, use "" (doubled quote).
 //! - $SHELL env var is set to the --shell value (including flags, e.g. "/usr/bin/bash --posix").
 //! - All pattern matching uses the built-in regex engine (no external deps).
+//! - Use --verbose (-v) to emit detailed diagnostics to stderr (PTY spawn, expect
+//!   buffer state, cleanup steps, per-test isolation progress).
 
 #[path = "epty_parser.rs"]
 mod epty_parser;
@@ -81,9 +84,24 @@ use std::io::{self, Read};
 use std::os::unix::io::{FromRawFd, RawFd};
 use std::os::unix::process::CommandExt;
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
+
+static VERBOSE: AtomicBool = AtomicBool::new(false);
+
+fn verbose() -> bool {
+    VERBOSE.load(AtomicOrdering::Relaxed)
+}
+
+macro_rules! vlog {
+    ($($arg:tt)*) => {
+        if VERBOSE.load(std::sync::atomic::Ordering::Relaxed) {
+            eprintln!("[verbose] {}", format!($($arg)*));
+        }
+    };
+}
 
 // ── FFI types and functions ──────────────────────────────────────────────────
 
@@ -117,12 +135,15 @@ fn wexitstatus(status: CInt) -> i32 {
 /// Kill every process whose session ID equals `sid`.
 /// Since forkpty() makes the child the session leader, `sid` == child PID.
 fn kill_session(sid: libc::pid_t) {
-    unsafe {
-        libc::kill(-sid, libc::SIGKILL);
-    }
+    vlog!("kill_session: sending SIGKILL to process group -{sid}");
+    let ret = unsafe { libc::kill(-sid, libc::SIGKILL) };
+    vlog!("kill_session: kill(-{sid}, SIGKILL) returned {ret} (errno={})",
+        if ret < 0 { io::Error::last_os_error().to_string() } else { "n/a".into() });
     let Ok(entries) = fs::read_dir("/proc") else {
+        vlog!("kill_session: /proc not available, skipping session scan");
         return;
     };
+    let mut killed = 0;
     for entry in entries.flatten() {
         let name = entry.file_name();
         let Ok(pid) = name.to_string_lossy().parse::<libc::pid_t>() else {
@@ -130,11 +151,14 @@ fn kill_session(sid: libc::pid_t) {
         };
         let got_sid = unsafe { libc::getsid(pid) };
         if got_sid == sid {
+            vlog!("kill_session: killing pid={pid} (sid={got_sid})");
             unsafe {
                 libc::kill(pid, libc::SIGKILL);
             }
+            killed += 1;
         }
     }
+    vlog!("kill_session: killed {killed} processes via /proc scan");
 }
 
 // ── PTY spawning ─────────────────────────────────────────────────────────────
@@ -271,6 +295,7 @@ impl PtySession {
                 libc::close(stop_r);
             });
 
+            vlog!("PtySession::spawn: child_pid={pid}, master_fd={master}, argv={:?}", argv);
             Ok(PtySession {
                 master_fd: master,
                 child_pid: pid,
@@ -328,6 +353,7 @@ impl PtySession {
         timeout: Duration,
     ) -> Result<String, String> {
         let start = Instant::now();
+        let mut last_verbose_log = Instant::now();
         loop {
             {
                 let mut lock = self.buf.lock().unwrap();
@@ -335,7 +361,14 @@ impl PtySession {
                 if let Some((_match_start, match_end)) = regex_find(pattern, &haystack) {
                     let consumed = haystack[..match_end].to_string();
                     lock.drain(..match_end);
+                    vlog!("expect: matched {:?} after {:.3}s", pattern_str, start.elapsed().as_secs_f64());
                     return Ok(consumed);
+                }
+                if verbose() && last_verbose_log.elapsed() >= Duration::from_millis(50) {
+                    vlog!("expect: waiting for {:?} ({:.3}s elapsed, buf={} bytes): {:?}",
+                        pattern_str, start.elapsed().as_secs_f64(), haystack.len(),
+                        if haystack.len() > 200 { format!("{}...", &haystack[..200]) } else { haystack.clone() });
+                    last_verbose_log = Instant::now();
                 }
                 if start.elapsed() >= timeout {
                     return Err(format!(
@@ -390,7 +423,7 @@ impl PtySession {
     }
 
     fn wait_child(&mut self, expected_code: Option<i32>) -> Result<i32, String> {
-        // Close master fd so the PTY signals EOF to the child
+        vlog!("wait_child: closing master_fd to signal EOF");
         if self.master_fd >= 0 {
             unsafe {
                 libc::close(self.master_fd);
@@ -398,7 +431,7 @@ impl PtySession {
             self.master_fd = -1;
         }
 
-        // Wait for the direct child (the shell) to exit.
+        vlog!("wait_child: waiting for child_pid={}", self.child_pid);
         let mut status: CInt = 0;
         unsafe {
             let ret = libc::waitpid(self.child_pid, &mut status, 0);
@@ -406,9 +439,8 @@ impl PtySession {
                 return Err(format!("waitpid failed: {}", io::Error::last_os_error()));
             }
         }
+        vlog!("wait_child: child {} exited, status=0x{:x}", self.child_pid, status);
 
-        // Kill any remaining processes in the child's session (background
-        // jobs that still hold the PTY slave open).
         kill_session(self.child_pid);
 
         // Now stop the reader thread — all slave holders are dead so the
@@ -442,21 +474,27 @@ impl PtySession {
     }
 
     fn cleanup(&mut self) {
-        // Kill all processes in the child's session (shell + background jobs)
+        vlog!("cleanup: killing session for child_pid={}", self.child_pid);
         kill_session(self.child_pid);
-        // Signal the reader thread to stop, then join it
+        vlog!("cleanup: stopping reader thread");
         self.stop_reader();
-        // Close master fd
         if self.master_fd >= 0 {
+            vlog!("cleanup: closing master_fd={}", self.master_fd);
             unsafe {
                 libc::close(self.master_fd);
             }
             self.master_fd = -1;
         }
-        // Reap child
+        vlog!("cleanup: reaping child_pid={}", self.child_pid);
         unsafe {
             let mut status: CInt = 0;
-            libc::waitpid(self.child_pid, &mut status, 0);
+            let ret = libc::waitpid(self.child_pid, &mut status, libc::WNOHANG);
+            if ret == 0 {
+                vlog!("cleanup: child {} still alive after kill_session, sending SIGKILL directly", self.child_pid);
+                libc::kill(self.child_pid, libc::SIGKILL);
+                libc::waitpid(self.child_pid, &mut status, 0);
+            }
+            vlog!("cleanup: child {} reaped, status=0x{:x}", self.child_pid, status);
         }
     }
 }
@@ -1996,6 +2034,7 @@ fn run_suite_test_inner(
                     .map(|(k, v)| (k.clone(), v.clone()))
                     .collect();
                 log.push(format!(">>> spawn {}", words.join(" ")));
+                vlog!("suite: spawn {}", words.join(" "));
                 session = Some(
                     PtySession::spawn_clean(&words, &env_pairs, workdir)
                         .map_err(|e| format!("line {line_num}: spawn failed: {e}"))?,
@@ -2018,11 +2057,13 @@ fn run_suite_test_inner(
                     pattern_str,
                     timeout.as_secs_f64()
                 ));
+                vlog!("suite: expect {:?} (timeout={:.1}s)", pattern_str, timeout.as_secs_f64());
                 match sess.expect(&pattern, &pattern_str, timeout) {
                     Ok(consumed) => {
                         log.push(format!("<<< matched (consumed {} bytes)", consumed.len()));
                     }
                     Err(e) => {
+                        vlog!("suite: expect FAILED: {e}");
                         dump_log(&log);
                         return Err(format!("line {line_num}: {e}"));
                     }
@@ -2064,6 +2105,7 @@ fn run_suite_test_inner(
                     .ok_or_else(|| format!("line {line_num}: send before spawn"))?;
                 let text = extract_quoted(rest).map_err(|e| format!("line {line_num}: {e}"))?;
                 log.push(format!(">>> send {:?}", text));
+                vlog!("suite: send {:?}", text);
                 sess.send_line(&text)
                     .map_err(|e| format!("line {line_num}: send failed: {e}"))?;
             }
@@ -2143,6 +2185,7 @@ fn run_suite_test_inner(
     }
 
     if let Some(mut sess) = session {
+        vlog!("suite: test ended with live session, sending EOF and waiting");
         let _ = sess.send_eof();
         let _ = sess.wait_child(None);
     }
@@ -2160,7 +2203,7 @@ fn dump_log(log: &[String]) {
 
 // ── Per-test isolation ───────────────────────────────────────────────────────
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::AtomicU64;
 
 static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -2176,7 +2219,7 @@ fn run_test_isolated(
     let test_id = format!(
         "{}_{}_{}",
         std::process::id(),
-        TEST_COUNTER.fetch_add(1, Ordering::Relaxed),
+        TEST_COUNTER.fetch_add(1, AtomicOrdering::Relaxed),
         test.name.replace(|c: char| !c.is_alphanumeric(), "_")
     );
 
@@ -2193,6 +2236,7 @@ fn run_test_isolated(
     let pipe_r = pipe_fds[0];
     let pipe_w = pipe_fds[1];
 
+    vlog!("run_test_isolated: starting test {:?}", test.name);
     let child_pid = unsafe { libc::fork() };
     if child_pid < 0 {
         unsafe {
@@ -2246,11 +2290,13 @@ fn run_test_isolated(
     }
 
     // ── Parent process ──
+    vlog!("run_test_isolated: forked isolation child_pid={child_pid} for {:?}", test.name);
     unsafe { libc::close(pipe_w) };
 
     let deadline = Instant::now() + timeout;
     let mut status: CInt = 0;
     let mut reaped = false;
+    let mut last_progress = Instant::now();
 
     loop {
         let ret = unsafe { libc::waitpid(child_pid, &mut status, libc::WNOHANG) };
@@ -2261,16 +2307,25 @@ fn run_test_isolated(
         if Instant::now() >= deadline {
             break;
         }
+        if verbose() && last_progress.elapsed() >= Duration::from_secs(1) {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            vlog!("run_test_isolated: still waiting for child_pid={child_pid} ({:.1}s remaining)", remaining.as_secs_f64());
+            last_progress = Instant::now();
+        }
         std::thread::sleep(Duration::from_millis(10));
     }
 
     if !reaped {
+        vlog!("run_test_isolated: TIMEOUT for {:?}, killing child_pid={child_pid}", test.name);
         if let Some(ref cg) = cgroup_path {
             let _ = kill_cgroup(cg);
         } else {
+            vlog!("run_test_isolated: sending SIGKILL to session -{child_pid}");
             unsafe { libc::kill(-child_pid, libc::SIGKILL) };
         }
+        vlog!("run_test_isolated: blocking waitpid for child_pid={child_pid}");
         unsafe { libc::waitpid(child_pid, &mut status, 0) };
+        vlog!("run_test_isolated: child {child_pid} reaped after timeout");
 
         let pipe_read = unsafe { std::fs::File::from_raw_fd(pipe_r) };
         drop(pipe_read);
@@ -2296,18 +2351,21 @@ fn run_test_isolated(
     }
 
     if wifexited(status) && wexitstatus(status) == 0 {
+        vlog!("run_test_isolated: {:?} PASSED", test.name);
         TestReport {
             name: test.name.clone(),
             outcome: TestOutcome::Pass,
             error: None,
         }
     } else if !error_buf.is_empty() {
+        vlog!("run_test_isolated: {:?} FAILED: {}", test.name, error_buf.lines().next().unwrap_or(""));
         TestReport {
             name: test.name.clone(),
             outcome: TestOutcome::Fail,
             error: Some(error_buf),
         }
     } else {
+        vlog!("run_test_isolated: {:?} FAILED with status {status}", test.name);
         TestReport {
             name: test.name.clone(),
             outcome: TestOutcome::Fail,
@@ -2394,6 +2452,7 @@ fn main() {
     let mut test_filter: Option<String> = None;
     let mut timeout_flag: Option<String> = None;
     let mut parse_only = false;
+    let mut verbose_flag = false;
     let mut files: Vec<String> = Vec::new();
     let mut i = 1;
     while i < args.len() {
@@ -2433,6 +2492,9 @@ fn main() {
             "--parse-only" => {
                 parse_only = true;
             }
+            "--verbose" | "-v" => {
+                verbose_flag = true;
+            }
             arg if arg.starts_with('-') && arg != "-" => {
                 eprintln!("expect_pty: unknown flag: {arg}");
                 std::process::exit(2);
@@ -2442,6 +2504,10 @@ fn main() {
             }
         }
         i += 1;
+    }
+
+    if verbose_flag {
+        VERBOSE.store(true, AtomicOrdering::Relaxed);
     }
 
     let has_epty = files
