@@ -240,7 +240,7 @@ end test "ulimit -f produces output"
 ```
 begin test "ulimit -a lists multiple limits"
   script
-    lines=$(ulimit -a | wc -l)
+    lines=$(ulimit -a | wc -l | tr -d ' ')
     test "$lines" -gt 1 && echo "multiple"
   expect
     stdout "multiple"

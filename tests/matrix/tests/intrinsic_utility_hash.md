@@ -172,7 +172,7 @@ begin test "hash -r forgets all remembered locations"
   script
     hash ls 2>/dev/null
     hash -r
-    count=$(hash 2>/dev/null | wc -l)
+    count=$(hash 2>/dev/null | wc -l | tr -d ' ')
     echo "$count"
   expect
     stdout "0"

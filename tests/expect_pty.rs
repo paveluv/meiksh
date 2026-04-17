@@ -1822,18 +1822,27 @@ fn compile_locale_variant(
         return true;
     }
 
-    let status = Command::new("localedef")
+    let output = Command::new("localedef")
         .args(["-f", charmap, "-i", def_path, &out_path])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status();
+        .output();
 
-    match status {
-        Ok(s) if s.success() => {
+    match output {
+        Ok(o) if o.status.success() || o.status.code() == Some(1) => {
             eprintln!("expect_pty: compiled test locale to {out_path}");
             true
         }
-        _ => false,
+        Ok(o) => {
+            let stderr = String::from_utf8_lossy(&o.stderr);
+            eprintln!(
+                "expect_pty: localedef failed (status={:?}) for {locale_name}: {stderr}",
+                o.status.code()
+            );
+            false
+        }
+        Err(e) => {
+            eprintln!("expect_pty: localedef not found: {e}");
+            false
+        }
     }
 }
 

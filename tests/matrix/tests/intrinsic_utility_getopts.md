@@ -398,7 +398,7 @@ begin test "invalid option in silent mode suppresses diagnostic"
     set -- -z
     getopts :ab name 2>"$tmp"
     status=$?
-    printf 'name=%s optarg=%s status=%s stderr_bytes=%s\n' "$name" "$OPTARG" "$status" "$(wc -c <"$tmp")"
+    printf 'name=%s optarg=%s status=%s stderr_bytes=%s\n' "$name" "$OPTARG" "$status" "$(wc -c <"$tmp" | tr -d ' ')"
     rm -f "$tmp"
   expect
     stdout "name=\? optarg=z status=0 stderr_bytes=0"
@@ -454,7 +454,7 @@ begin test "missing argument in silent mode sets colon and OPTARG"
     set -- -f
     getopts :f: name 2>"$tmp"
     status=$?
-    printf 'name=%s optarg=%s status=%s stderr_bytes=%s\n' "$name" "$OPTARG" "$status" "$(wc -c <"$tmp")"
+    printf 'name=%s optarg=%s status=%s stderr_bytes=%s\n' "$name" "$OPTARG" "$status" "$(wc -c <"$tmp" | tr -d ' ')"
     rm -f "$tmp"
   expect
     stdout "name=: optarg=f status=0 stderr_bytes=0"

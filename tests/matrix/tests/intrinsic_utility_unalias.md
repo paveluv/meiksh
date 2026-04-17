@@ -167,7 +167,7 @@ begin test "unalias -a removes all aliases"
     alias a1="echo a"
     alias a2="echo b"
     unalias -a
-    count=$(alias 2>/dev/null | wc -l)
+    count=$(alias 2>/dev/null | wc -l | tr -d ' ')
     echo "$count"
   expect
     stdout "0"
