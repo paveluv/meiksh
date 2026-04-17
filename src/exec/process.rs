@@ -70,37 +70,7 @@ impl RedirectionRef for ProcessRedirection {
     }
 }
 
-pub(super) fn file_needs_binary_rejection(path: &[u8]) -> bool {
-    let fd = match sys::fs::open_file(
-        path,
-        sys::constants::O_RDONLY | sys::constants::O_CLOEXEC,
-        0,
-    ) {
-        Ok(fd) => fd,
-        Err(_) => return false,
-    };
-    let mut buf = [0u8; 256];
-    let n = match sys::fd_io::read_fd(fd, &mut buf) {
-        Ok(n) => n,
-        Err(_) => {
-            let _ = sys::fd_io::close_fd(fd);
-            return false;
-        }
-    };
-    let _ = sys::fd_io::close_fd(fd);
-    if n == 0 {
-        return false;
-    }
-    let prefix = &buf[..n];
-    if n >= 4 && prefix[0] == 0x7f && prefix[1] == b'E' {
-        return false;
-    }
-    if n >= 2 && prefix[0] == b'#' && prefix[1] == b'!' {
-        return false;
-    }
-    let nl_pos = prefix.iter().position(|&b| b == b'\n').unwrap_or(n);
-    prefix[..nl_pos].contains(&0)
-}
+
 
 pub(super) fn prepare_prepared_process(
     shell: &Shell,
@@ -162,7 +132,7 @@ pub(super) fn run_prepared_process(
         let _ = sys::env::env_set_var(key, value);
     }
 
-    if file_needs_binary_rejection(&prepared.exec_path) {
+    if sys::fs::file_needs_binary_rejection(&prepared.exec_path) {
         let msg = ByteWriter::new()
             .bytes(&prepared.argv[0])
             .bytes(b": cannot execute binary file\n")
@@ -403,38 +373,6 @@ mod tests {
     }
 
     #[test]
-    fn file_needs_binary_rejection_handles_errors_and_empty() {
-        run_trace(
-            trace_entries![
-                open(_, _, _) -> err(sys::constants::EACCES),
-            ],
-            || {
-                assert!(!file_needs_binary_rejection(b"/some/file"));
-            },
-        );
-        run_trace(
-            trace_entries![
-                open(_, _, _) -> fd(50),
-                read(fd(50), _) -> err(libc::EIO),
-                close(fd(50)) -> int(0),
-            ],
-            || {
-                assert!(!file_needs_binary_rejection(b"/some/file"));
-            },
-        );
-        run_trace(
-            trace_entries![
-                open(_, _, _) -> fd(50),
-                read(fd(50), _) -> int(0),
-                close(fd(50)) -> int(0),
-            ],
-            || {
-                assert!(!file_needs_binary_rejection(b"/some/file"));
-            },
-        );
-    }
-
-    #[test]
     fn join_boxed_bytes_various_inputs() {
         assert_no_syscalls(|| {
             let empty: Vec<Box<[u8]>> = vec![];
@@ -451,62 +389,6 @@ mod tests {
             assert_eq!(join_boxed_bytes(&multi, b' '), b"a bb ccc");
             assert_eq!(join_boxed_bytes(&multi, b'/'), b"a/bb/ccc");
         });
-    }
-
-    #[test]
-    fn file_needs_binary_rejection_elf_prefix_allowed() {
-        run_trace(
-            trace_entries![
-                open(_, _, _) -> fd(50),
-                read(fd(50), _) -> bytes(b"\x7fELF\x02\x01\x01\x00"),
-                close(fd(50)) -> int(0),
-            ],
-            || {
-                assert!(!file_needs_binary_rejection(b"/some/elf"));
-            },
-        );
-    }
-
-    #[test]
-    fn file_needs_binary_rejection_shebang_allowed() {
-        run_trace(
-            trace_entries![
-                open(_, _, _) -> fd(50),
-                read(fd(50), _) -> bytes(b"#!/bin/sh\necho hi\n"),
-                close(fd(50)) -> int(0),
-            ],
-            || {
-                assert!(!file_needs_binary_rejection(b"/some/script"));
-            },
-        );
-    }
-
-    #[test]
-    fn file_needs_binary_rejection_null_byte_triggers() {
-        run_trace(
-            trace_entries![
-                open(_, _, _) -> fd(50),
-                read(fd(50), _) -> bytes(b"binary\x00data\n"),
-                close(fd(50)) -> int(0),
-            ],
-            || {
-                assert!(file_needs_binary_rejection(b"/some/binary"));
-            },
-        );
-    }
-
-    #[test]
-    fn file_needs_binary_rejection_text_without_null_ok() {
-        run_trace(
-            trace_entries![
-                open(_, _, _) -> fd(50),
-                read(fd(50), _) -> bytes(b"just plain text\n"),
-                close(fd(50)) -> int(0),
-            ],
-            || {
-                assert!(!file_needs_binary_rejection(b"/some/text"));
-            },
-        );
     }
 
     #[test]

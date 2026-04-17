@@ -288,6 +288,16 @@ fn apply_trace_result_pid(entry: &TraceEntry) -> Pid {
     }
 }
 
+fn continued_wait_status() -> c_int {
+    // Linux uses 0xffff; macOS/FreeBSD use (SIGCONT << 8) | 0x7f = 0x137f.
+    for &candidate in &[0xffffi32, 0x137f] {
+        if libc::WIFCONTINUED(candidate) {
+            return candidate;
+        }
+    }
+    panic!("could not derive WIFCONTINUED wait status for this platform");
+}
+
 // Trace-dispatching syscall implementations
 fn trace_getpid() -> Pid {
     let entry = trace_dispatch("getpid", &[]);
@@ -328,7 +338,7 @@ fn trace_waitpid(pid: Pid, status: *mut c_int, options: c_int) -> Pid {
             }
             TraceResult::ContinuedStatus => {
                 unsafe {
-                    *status = 0xffff;
+                    *status = continued_wait_status();
                 }
                 return pid;
             }

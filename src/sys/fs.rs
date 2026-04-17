@@ -39,7 +39,7 @@ pub(crate) fn stat_path(path: &[u8]) -> SysResult<FileStat> {
     Ok(FileStat {
         mode: raw.st_mode,
         size: raw.st_size as u64,
-        dev: raw.st_dev,
+        dev: raw.st_dev as u64,
         ino: raw.st_ino,
         mtime_sec: raw.st_mtime,
         mtime_nsec: raw.st_mtime_nsec,
@@ -62,7 +62,7 @@ pub(crate) fn lstat_path(path: &[u8]) -> SysResult<FileStat> {
     Ok(FileStat {
         mode: raw.st_mode,
         size: raw.st_size as u64,
-        dev: raw.st_dev,
+        dev: raw.st_dev as u64,
         ino: raw.st_ino,
         mtime_sec: raw.st_mtime,
         mtime_nsec: raw.st_mtime_nsec,
@@ -181,6 +181,43 @@ pub(crate) fn unlink(path: &[u8]) -> SysResult<()> {
     } else {
         Err(last_error())
     }
+}
+
+pub(crate) fn file_needs_binary_rejection(path: &[u8]) -> bool {
+    let fd = match open_file(path, O_RDONLY | O_CLOEXEC, 0) {
+        Ok(fd) => fd,
+        Err(_) => return false,
+    };
+    let mut buf = [0u8; 256];
+    let n = match read_fd(fd, &mut buf) {
+        Ok(n) => n,
+        Err(_) => {
+            let _ = close_fd(fd);
+            return false;
+        }
+    };
+    let _ = close_fd(fd);
+    if n == 0 {
+        return false;
+    }
+    let prefix = &buf[..n];
+    if n >= 4 {
+        let m = [prefix[0], prefix[1], prefix[2], prefix[3]];
+        if m[0] == 0x7f && m[1] == b'E'                // ELF
+            || m == [0xce, 0xfa, 0xed, 0xfe]            // Mach-O 32-bit LE
+            || m == [0xcf, 0xfa, 0xed, 0xfe]            // Mach-O 64-bit LE
+            || m == [0xfe, 0xed, 0xfa, 0xce]            // Mach-O 32-bit BE
+            || m == [0xfe, 0xed, 0xfa, 0xcf]            // Mach-O 64-bit BE
+            || m == [0xca, 0xfe, 0xba, 0xbe]            // Mach-O fat/universal
+        {
+            return false;
+        }
+    }
+    if n >= 2 && prefix[0] == b'#' && prefix[1] == b'!' {
+        return false;
+    }
+    let nl_pos = prefix.iter().position(|&b| b == b'\n').unwrap_or(n);
+    prefix[..nl_pos].contains(&0)
 }
 
 #[cfg(test)]
@@ -379,6 +416,94 @@ mod tests {
             ],
             || {
                 assert!(read_dir_entries(b"/tmp").is_err());
+            },
+        );
+    }
+
+    #[test]
+    fn file_needs_binary_rejection_handles_errors_and_empty() {
+        test_support::run_trace(
+            trace_entries![
+                open(_, _, _) -> err(super::super::constants::EACCES),
+            ],
+            || {
+                assert!(!file_needs_binary_rejection(b"/some/file"));
+            },
+        );
+        test_support::run_trace(
+            trace_entries![
+                open(_, _, _) -> fd(50),
+                read(fd(50), _) -> err(libc::EIO),
+                close(fd(50)) -> int(0),
+            ],
+            || {
+                assert!(!file_needs_binary_rejection(b"/some/file"));
+            },
+        );
+        test_support::run_trace(
+            trace_entries![
+                open(_, _, _) -> fd(50),
+                read(fd(50), _) -> int(0),
+                close(fd(50)) -> int(0),
+            ],
+            || {
+                assert!(!file_needs_binary_rejection(b"/some/file"));
+            },
+        );
+    }
+
+    #[test]
+    fn file_needs_binary_rejection_elf_prefix_allowed() {
+        test_support::run_trace(
+            trace_entries![
+                open(_, _, _) -> fd(50),
+                read(fd(50), _) -> bytes(b"\x7fELF\x02\x01\x01\x00"),
+                close(fd(50)) -> int(0),
+            ],
+            || {
+                assert!(!file_needs_binary_rejection(b"/some/elf"));
+            },
+        );
+    }
+
+    #[test]
+    fn file_needs_binary_rejection_shebang_allowed() {
+        test_support::run_trace(
+            trace_entries![
+                open(_, _, _) -> fd(50),
+                read(fd(50), _) -> bytes(b"#!/bin/sh\necho hi\n"),
+                close(fd(50)) -> int(0),
+            ],
+            || {
+                assert!(!file_needs_binary_rejection(b"/some/script"));
+            },
+        );
+    }
+
+    #[test]
+    fn file_needs_binary_rejection_null_byte_triggers() {
+        test_support::run_trace(
+            trace_entries![
+                open(_, _, _) -> fd(50),
+                read(fd(50), _) -> bytes(b"binary\x00data\n"),
+                close(fd(50)) -> int(0),
+            ],
+            || {
+                assert!(file_needs_binary_rejection(b"/some/binary"));
+            },
+        );
+    }
+
+    #[test]
+    fn file_needs_binary_rejection_text_without_null_ok() {
+        test_support::run_trace(
+            trace_entries![
+                open(_, _, _) -> fd(50),
+                read(fd(50), _) -> bytes(b"just plain text\n"),
+                close(fd(50)) -> int(0),
+            ],
+            || {
+                assert!(!file_needs_binary_rejection(b"/some/text"));
             },
         );
     }
