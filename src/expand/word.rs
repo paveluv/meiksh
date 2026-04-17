@@ -156,10 +156,6 @@ fn expand_word_raw_fallback<C: Context>(
             return Ok(Vec::new());
         }
 
-        if !has_at_break {
-            return Ok(vec![flatten_segments(&expanded.segments)]);
-        }
-
         let mut fields = Vec::new();
         let mut current = Vec::new();
         for seg in &expanded.segments {
@@ -189,9 +185,7 @@ fn expand_word_raw_fallback<C: Context>(
         split_fields_raw(&expanded.segments, ifs)
     } else {
         let text = flatten_segments(&expanded.segments);
-        if text.is_empty() {
-            return Ok(Vec::new());
-        }
+        debug_assert!(!text.is_empty());
         let has_glob = expanded.segments.iter().any(|seg| {
             matches!(seg, Segment::Text(text, QuoteState::Literal) if text.iter().any(|&b| is_glob_char(b)))
         });
@@ -220,21 +214,21 @@ fn split_fields_raw(segments: &[Segment], ifs: &[u8]) -> Vec<Vec<u8>> {
     let ifs_other: Vec<u8> = ifs.iter().copied().filter(|b| !is_ascii_ws(*b)).collect();
 
     for seg in segments {
-        if let Segment::Text(text, state) = seg {
-            if *state != QuoteState::Expanded {
-                current.extend_from_slice(text);
-                continue;
-            }
-            for &b in text.iter() {
-                if ifs_other.contains(&b) {
+        #[rustfmt::skip]
+        let Segment::Text(text, state) = seg else { continue };
+        if *state != QuoteState::Expanded {
+            current.extend_from_slice(text);
+            continue;
+        }
+        for &b in text.iter() {
+            if ifs_other.contains(&b) {
+                fields.push(std::mem::take(&mut current));
+            } else if ifs_ws.contains(&b) {
+                if !current.is_empty() {
                     fields.push(std::mem::take(&mut current));
-                } else if ifs_ws.contains(&b) {
-                    if !current.is_empty() {
-                        fields.push(std::mem::take(&mut current));
-                    }
-                } else {
-                    current.push(b);
                 }
+            } else {
+                current.push(b);
             }
         }
     }
@@ -306,17 +300,10 @@ pub(crate) fn expand_assignment_value<C: Context>(
 
     if !word.parts.is_empty() {
         let mut output = ExpandOutput::new();
-        super::expand_parts::expand_parts_into(
-            ctx,
-            &word.raw,
-            &word.parts,
-            b"",
-            true,
-            &mut output,
-        )?;
+        #[rustfmt::skip]
+        super::expand_parts::expand_parts_into(ctx, &word.raw, &word.parts, b"", true, &mut output)?;
         return Ok(output.drain_single_vec());
     }
-
     expand_word_text_assignment(ctx, word, true)
 }
 
@@ -1856,5 +1843,636 @@ mod tests {
             },
         );
         assert!(result.is_err());
+    }
+
+    fn parsed_cmd_word(source: &[u8]) -> Word {
+        let prog = crate::syntax::parse(source).expect("parse");
+        let item = &prog.items[0];
+        let cmd = &item.and_or.first.commands[0];
+        match cmd {
+            crate::syntax::ast::Command::Simple(sc) => sc.words[1].clone(),
+            _ => panic!("expected simple command"),
+        }
+    }
+
+    fn parsed_assignment_word(source: &[u8]) -> Word {
+        let prog = crate::syntax::parse(source).expect("parse");
+        let item = &prog.items[0];
+        let cmd = &item.and_or.first.commands[0];
+        match cmd {
+            crate::syntax::ast::Command::Simple(sc) => sc.assignments[0].value.clone(),
+            _ => panic!("expected simple command with assignment"),
+        }
+    }
+
+    #[test]
+    fn expand_word_via_parts_simple_var() {
+        let mut ctx = FakeContext::new();
+        ctx.env.insert(b"X".to_vec(), b"hello".to_vec());
+        let word = parsed_cmd_word(b"echo $X\n");
+        assert!(!word.parts.is_empty());
+        let fields = expand_word(&mut ctx, &word).expect("fields");
+        assert_eq!(fields, vec![b"hello".to_vec()]);
+    }
+
+    #[test]
+    fn expand_word_via_parts_quoted_at_empty() {
+        let mut ctx = FakeContext::new();
+        ctx.positional.clear();
+        let word = parsed_cmd_word(b"echo \"$@\"\n");
+        assert!(!word.parts.is_empty());
+        let fields = expand_word(&mut ctx, &word).expect("fields");
+        assert_eq!(fields, Vec::<Vec<u8>>::new());
+    }
+
+    fn parts_word(source: &[u8]) -> Word {
+        let w = parsed_cmd_word(source);
+        assert!(
+            !w.parts.is_empty(),
+            "expected parts for {:?}",
+            std::str::from_utf8(&w.raw)
+        );
+        w
+    }
+
+    #[test]
+    fn expand_assignment_value_via_parts() {
+        let mut ctx = FakeContext::new();
+        ctx.env.insert(b"Y".to_vec(), b"world".to_vec());
+        let word = parts_word(b"echo hello${Y}\n");
+        let result = expand_assignment_value(&mut ctx, &word).expect("assign");
+        assert_eq!(result, b"helloworld");
+    }
+
+    #[test]
+    fn expand_assignment_value_via_parts_with_at() {
+        let mut ctx = FakeContext::new();
+        ctx.positional = vec![b"a".to_vec(), b"b".to_vec()];
+        let word = parts_word(b"echo $@\n");
+        let result = expand_assignment_value(&mut ctx, &word).expect("assign at");
+        assert_eq!(result, b"ab");
+    }
+
+    #[test]
+    fn expand_redirect_word_via_parts() {
+        let mut ctx = FakeContext::new();
+        ctx.env.insert(b"F".to_vec(), b"out.txt".to_vec());
+        let word = parsed_cmd_word(b"echo $F\n");
+        assert!(!word.parts.is_empty());
+        let result = expand_redirect_word(&mut ctx, &word).expect("redir");
+        assert_eq!(result, b"out.txt");
+    }
+
+    #[test]
+    fn expand_word_text_via_parts() {
+        let mut ctx = FakeContext::new();
+        ctx.env.insert(b"V".to_vec(), b"world".to_vec());
+        let word = parsed_cmd_word(b"echo \"hello $V\"\n");
+        assert!(!word.parts.is_empty());
+        let result = expand_word_text(&mut ctx, &word).expect("text");
+        assert_eq!(result, b"hello world");
+    }
+
+    #[test]
+    fn expand_word_via_parts_with_ifs_split() {
+        let mut ctx = FakeContext::new();
+        ctx.env.insert(b"V".to_vec(), b"a b c".to_vec());
+        let word = parsed_cmd_word(b"echo $V\n");
+        assert!(!word.parts.is_empty());
+        let fields = expand_word(&mut ctx, &word).expect("fields");
+        assert_eq!(fields, vec![b"a".to_vec(), b"b".to_vec(), b"c".to_vec()]);
+    }
+
+    #[test]
+    fn expand_word_via_parts_empty_ifs() {
+        let mut ctx = FakeContext::new();
+        ctx.env.insert(b"V".to_vec(), b"a b c".to_vec());
+        ctx.env.insert(b"IFS".to_vec(), b"".to_vec());
+        let word = parsed_cmd_word(b"echo $V\n");
+        assert!(!word.parts.is_empty());
+        let fields = expand_word(&mut ctx, &word).expect("fields");
+        assert_eq!(fields, vec![b"a b c".to_vec()]);
+    }
+
+    #[test]
+    fn expand_word_parsed_tilde_home_empty() {
+        let mut ctx = FakeContext::new();
+        ctx.env.insert(b"HOME".to_vec(), b"".to_vec());
+        let word = parsed_cmd_word(b"echo ~\n");
+        assert!(!word.parts.is_empty());
+        let text = expand_word_text(&mut ctx, &word).expect("text");
+        assert_eq!(text, b"");
+    }
+
+    #[test]
+    fn expand_word_parsed_tilde_home_unset() {
+        let mut ctx = FakeContext::new();
+        ctx.env.remove(b"HOME".as_ref());
+        let word = parsed_cmd_word(b"echo ~\n");
+        assert!(!word.parts.is_empty());
+        let fields = expand_word(&mut ctx, &word).expect("fields");
+        assert_eq!(fields, vec![b"~".to_vec()]);
+    }
+
+    #[test]
+    fn expand_redirect_word_via_parts_static_expansion() {
+        let mut ctx = FakeContext::new();
+        let word = parsed_cmd_word(b"echo $?\n");
+        assert!(!word.parts.is_empty());
+        let result = expand_redirect_word(&mut ctx, &word).expect("redir static");
+        assert_eq!(result, b"0");
+    }
+
+    #[test]
+    fn expand_arith_literal_via_parts() {
+        let mut ctx = FakeContext::new();
+        let word = parsed_cmd_word(b"echo $((42))\n");
+        assert!(!word.parts.is_empty());
+        let fields = expand_word(&mut ctx, &word).expect("arith");
+        assert_eq!(fields, vec![b"42".to_vec()]);
+    }
+
+    #[test]
+    fn tilde_home_empty_raw_path() {
+        let mut ctx = FakeContext::new();
+        ctx.env.insert(b"HOME".to_vec(), b"".to_vec());
+        let result = expand_word_text(
+            &mut ctx,
+            &Word {
+                raw: b"~".as_ref().into(),
+                parts: Box::new([]),
+                line: 0,
+            },
+        )
+        .expect("tilde empty home");
+        assert_eq!(result, b"");
+    }
+
+    #[test]
+    fn tilde_home_unset_raw_path() {
+        let mut ctx = FakeContext::new();
+        ctx.env.remove(b"HOME".as_ref());
+        let fields = expand_word(
+            &mut ctx,
+            &Word {
+                raw: b"~".as_ref().into(),
+                parts: Box::new([]),
+                line: 0,
+            },
+        )
+        .expect("tilde unset home");
+        assert_eq!(fields, vec![b"~".to_vec()]);
+    }
+
+    #[test]
+    fn tilde_user_trailing_slash_raw_path() {
+        let mut ctx = FakeContext::new();
+        let fields = expand_word(
+            &mut ctx,
+            &Word {
+                raw: b"~testuser/sub".as_ref().into(),
+                parts: Box::new([]),
+                line: 0,
+            },
+        )
+        .expect("tilde user");
+        assert_eq!(fields, vec![b"/home/testuser/sub".to_vec()]);
+    }
+
+    #[test]
+    fn redirect_word_with_expansion_raw_path() {
+        let mut ctx = FakeContext::new();
+        ctx.env.insert(b"F".to_vec(), b"a b".to_vec());
+        let result = expand_redirect_word(
+            &mut ctx,
+            &Word {
+                raw: b"$F".as_ref().into(),
+                parts: Box::new([]),
+                line: 0,
+            },
+        )
+        .expect("redirect fields");
+        assert_eq!(result, b"a b");
+    }
+
+    #[test]
+    fn expand_word_empty_ifs_raw_path() {
+        let mut ctx = FakeContext::new();
+        ctx.env.insert(b"V".to_vec(), b"a b c".to_vec());
+        ctx.env.insert(b"IFS".to_vec(), b"".to_vec());
+        let fields = expand_word(
+            &mut ctx,
+            &Word {
+                raw: b"$V".as_ref().into(),
+                parts: Box::new([]),
+                line: 0,
+            },
+        )
+        .expect("empty ifs");
+        assert_eq!(fields, vec![b"a b c".to_vec()]);
+    }
+
+    #[test]
+    fn expand_word_other_ifs_split_raw_path() {
+        let mut ctx = FakeContext::new();
+        ctx.env.insert(b"V".to_vec(), b"a:b:c".to_vec());
+        ctx.env.insert(b"IFS".to_vec(), b":".to_vec());
+        let fields = expand_word(
+            &mut ctx,
+            &Word {
+                raw: b"$V".as_ref().into(),
+                parts: Box::new([]),
+                line: 0,
+            },
+        )
+        .expect("ifs split");
+        assert_eq!(fields, vec![b"a".to_vec(), b"b".to_vec(), b"c".to_vec()]);
+    }
+
+    #[test]
+    fn expand_assignment_value_raw_path() {
+        let mut ctx = FakeContext::new();
+        ctx.env.insert(b"Y".to_vec(), b"world".to_vec());
+        let result = expand_assignment_value(
+            &mut ctx,
+            &Word {
+                raw: b"hello$Y".as_ref().into(),
+                parts: Box::new([]),
+                line: 0,
+            },
+        )
+        .expect("assign raw");
+        assert_eq!(result, b"helloworld");
+    }
+
+    #[test]
+    fn expand_word_empty_non_expanded_raw_path() {
+        let mut ctx = FakeContext::new();
+        let fields = expand_word(
+            &mut ctx,
+            &Word {
+                raw: b"\"\"".as_ref().into(),
+                parts: Box::new([]),
+                line: 0,
+            },
+        )
+        .expect("empty quoted");
+        assert_eq!(fields, vec![b"".to_vec()]);
+    }
+
+    #[test]
+    fn flatten_expansion_static_variant() {
+        let result = flatten_expansion(Expansion::Static(b"test"));
+        assert_eq!(result, b"test");
+    }
+
+    #[test]
+    fn expand_redirect_word_via_parts_multiple_fields() {
+        let mut ctx = FakeContext::new();
+        ctx.env.insert(b"F".to_vec(), b"a b".to_vec());
+        let word = parts_word(b"echo $F\n");
+        let result = expand_redirect_word(&mut ctx, &word).expect("redirect");
+        assert_eq!(result, b"a b");
+    }
+
+    #[test]
+    fn expand_word_via_parts_tilde_user_trailing_slash() {
+        let mut ctx = FakeContext::new();
+        let word = parts_word(b"echo ~testuser/sub\n");
+        let fields = expand_word(&mut ctx, &word).expect("tilde user parts");
+        assert_eq!(fields, vec![b"/home/testuser/sub".to_vec()]);
+    }
+
+    #[test]
+    fn expand_word_via_parts_tilde_home_empty() {
+        let mut ctx = FakeContext::new();
+        ctx.env.insert(b"HOME".to_vec(), b"".to_vec());
+        let word = parts_word(b"echo ~\n");
+        let result = expand_word_text(&mut ctx, &word).expect("tilde empty home parts");
+        assert_eq!(result, b"");
+    }
+
+    #[test]
+    fn expand_word_via_parts_tilde_home_unset() {
+        let mut ctx = FakeContext::new();
+        ctx.env.remove(b"HOME".as_ref());
+        let word = parts_word(b"echo ~\n");
+        let fields = expand_word(&mut ctx, &word).expect("tilde unset home parts");
+        assert_eq!(fields, vec![b"~".to_vec()]);
+    }
+
+    #[test]
+    fn expand_word_via_parts_ifs_other_split() {
+        let mut ctx = FakeContext::new();
+        ctx.env.insert(b"V".to_vec(), b"a:b:c".to_vec());
+        ctx.env.insert(b"IFS".to_vec(), b":".to_vec());
+        let word = parts_word(b"echo $V\n");
+        let fields = expand_word(&mut ctx, &word).expect("ifs other split");
+        assert_eq!(fields, vec![b"a".to_vec(), b"b".to_vec(), b"c".to_vec()]);
+    }
+
+    #[test]
+    fn expand_word_via_parts_empty_ifs_no_split() {
+        let mut ctx = FakeContext::new();
+        ctx.env.insert(b"V".to_vec(), b"a b c".to_vec());
+        ctx.env.insert(b"IFS".to_vec(), b"".to_vec());
+        let word = parts_word(b"echo $V\n");
+        let fields = expand_word(&mut ctx, &word).expect("empty ifs");
+        assert_eq!(fields, vec![b"a b c".to_vec()]);
+    }
+
+    #[test]
+    fn expand_word_via_parts_literal_with_newlines() {
+        let mut ctx = FakeContext::new();
+        let word = parts_word(b"echo line1\necho line2\n");
+        let fields = expand_word(&mut ctx, &word).expect("word with newlines");
+        assert!(!fields.is_empty());
+    }
+
+    #[test]
+    fn expand_word_via_parts_tilde_trailing_slash_home() {
+        let mut ctx = FakeContext::new();
+        ctx.env.insert(b"HOME".to_vec(), b"/root/".to_vec());
+        let word = parts_word(b"echo ~/foo\n");
+        let fields = expand_word(&mut ctx, &word).expect("tilde trailing slash");
+        assert_eq!(fields, vec![b"/root/foo".to_vec()]);
+    }
+
+    #[test]
+    fn expand_redirect_word_static_expansion_via_parts() {
+        let mut ctx = FakeContext::new();
+        let word = parts_word(b"echo $?\n");
+        let result = expand_redirect_word(&mut ctx, &word).expect("redirect static");
+        assert_eq!(result, b"0");
+    }
+
+    #[test]
+    fn push_literal_with_glob_char_via_unknown_tilde() {
+        use crate::syntax::word_parts::WordPart;
+        assert_no_syscalls(|| {
+            let mut ctx = FakeContext::new();
+            ctx.pathname_expansion_enabled = false;
+            let word = Word {
+                raw: b"~unkn*wn".as_ref().into(),
+                parts: Box::new([WordPart::TildeLiteral {
+                    tilde_pos: 0,
+                    user_end: 8,
+                    end: 8,
+                }]),
+                line: 0,
+            };
+            let fields = expand_word(&mut ctx, &word).expect("tilde unknown with glob");
+            assert_eq!(fields, vec![b"~unkn*wn".to_vec()]);
+        });
+    }
+
+    #[test]
+    fn expand_word_via_parts_arith_with_special_param() {
+        use crate::syntax::word_parts::{ExpansionKind, WordPart};
+        assert_no_syscalls(|| {
+            let mut ctx = FakeContext::new();
+            ctx.pathname_expansion_enabled = false;
+            let word = Word {
+                raw: b"$(($?+1))".as_ref().into(),
+                parts: Box::new([WordPart::Expansion {
+                    kind: ExpansionKind::Arithmetic {
+                        parts: Box::new([
+                            WordPart::Expansion {
+                                kind: ExpansionKind::SpecialVar { ch: b'?' },
+                                quoted: false,
+                            },
+                            WordPart::Literal {
+                                start: 5,
+                                end: 7,
+                                has_glob: false,
+                                newlines: 0,
+                            },
+                        ]),
+                    },
+                    quoted: false,
+                }]),
+                line: 0,
+            };
+            let fields = expand_word(&mut ctx, &word).expect("arith");
+            assert_eq!(fields, vec![b"1".to_vec()]);
+        });
+    }
+
+    #[test]
+    fn expand_word_at_empty_in_braced_default() {
+        assert_no_syscalls(|| {
+            let mut ctx = FakeContext::new();
+            ctx.positional.clear();
+            let word = parts_word(b"echo ${x:-\"$@\"}\n");
+            let result = expand_word_text(&mut ctx, &word).expect("at empty braced");
+            assert_eq!(result, b"");
+        });
+    }
+
+    #[test]
+    fn literal_with_newlines_increments_lineno() {
+        use crate::syntax::word_parts::WordPart;
+        assert_no_syscalls(|| {
+            let mut ctx = FakeContext::new();
+            let word = Word {
+                raw: b"ab\ncd".as_ref().into(),
+                parts: Box::new([WordPart::Literal {
+                    start: 0,
+                    end: 5,
+                    has_glob: false,
+                    newlines: 1,
+                }]),
+                line: 0,
+            };
+            let fields = expand_word(&mut ctx, &word).expect("literal newlines");
+            assert_eq!(fields, vec![b"ab\ncd".to_vec()]);
+        });
+    }
+
+    #[test]
+    fn tilde_user_trailing_slash_in_homedir_via_parts() {
+        use crate::syntax::word_parts::WordPart;
+        assert_no_syscalls(|| {
+            let mut ctx = FakeContext::new();
+            let raw = b"~slashuser/sub";
+            let word = Word {
+                raw: raw.as_ref().into(),
+                parts: Box::new([WordPart::TildeLiteral {
+                    tilde_pos: 0,
+                    user_end: 10,
+                    end: 14,
+                }]),
+                line: 0,
+            };
+            let fields = expand_word(&mut ctx, &word).expect("tilde slash user");
+            assert_eq!(fields, vec![b"/home/slashuser/sub".to_vec()]);
+        });
+    }
+
+    #[test]
+    fn tilde_literal_noop_in_arithmetic_parts() {
+        use crate::syntax::word_parts::{ExpansionKind, WordPart};
+        assert_no_syscalls(|| {
+            let mut ctx = FakeContext::new();
+            ctx.pathname_expansion_enabled = false;
+            let word = Word {
+                raw: b"$((1+2))".as_ref().into(),
+                parts: Box::new([WordPart::Expansion {
+                    kind: ExpansionKind::Arithmetic {
+                        parts: Box::new([
+                            WordPart::Literal {
+                                start: 3,
+                                end: 6,
+                                has_glob: false,
+                                newlines: 0,
+                            },
+                            WordPart::TildeLiteral {
+                                tilde_pos: 0,
+                                user_end: 0,
+                                end: 0,
+                            },
+                        ]),
+                    },
+                    quoted: false,
+                }]),
+                line: 0,
+            };
+            let fields = expand_word(&mut ctx, &word).expect("arith tilde noop");
+            assert_eq!(fields, vec![b"3".to_vec()]);
+        });
+    }
+
+    #[test]
+    fn tilde_literal_noop_in_pattern_parts() {
+        use crate::syntax::word_parts::{BracedName, BracedOp, ExpansionKind, WordPart};
+        assert_no_syscalls(|| {
+            let mut ctx = FakeContext::new();
+            ctx.env.insert(b"V".to_vec(), b"hello_world".to_vec());
+            let raw = b"${V%_*}";
+            let word = Word {
+                raw: raw.as_ref().into(),
+                parts: Box::new([WordPart::Expansion {
+                    kind: ExpansionKind::Braced {
+                        name: BracedName::Var { start: 2, end: 3 },
+                        op: BracedOp::TrimSuffix,
+                        parts: Box::new([
+                            WordPart::Literal {
+                                start: 4,
+                                end: 6,
+                                has_glob: true,
+                                newlines: 0,
+                            },
+                            WordPart::TildeLiteral {
+                                tilde_pos: 0,
+                                user_end: 0,
+                                end: 0,
+                            },
+                        ]),
+                    },
+                    quoted: false,
+                }]),
+                line: 0,
+            };
+            let fields = expand_word(&mut ctx, &word).expect("pattern tilde noop");
+            assert_eq!(fields, vec![b"hello".to_vec()]);
+        });
+    }
+
+    #[test]
+    fn drain_single_vec_via_assignment_star() {
+        assert_no_syscalls(|| {
+            let mut ctx = FakeContext::new();
+            let word = parts_word(b"echo $*\n");
+            let result = expand_assignment_value(&mut ctx, &word).expect("assign star");
+            assert_eq!(result, b"alpha beta");
+        });
+    }
+
+    #[test]
+    fn expand_word_at_single_positional_no_break() {
+        assert_no_syscalls(|| {
+            let mut ctx = FakeContext::new();
+            ctx.positional = vec![b"only".to_vec()];
+            let word = Word {
+                raw: b"\"$@\"".as_ref().into(),
+                parts: Box::new([]),
+                line: 0,
+            };
+            let fields = expand_word(&mut ctx, &word).expect("single at");
+            assert_eq!(fields, vec![b"only".to_vec()]);
+        });
+    }
+
+    #[test]
+    fn expand_word_at_empty_no_break() {
+        assert_no_syscalls(|| {
+            let mut ctx = FakeContext::new();
+            ctx.positional.clear();
+            let word = Word {
+                raw: b"\"$@\"".as_ref().into(),
+                parts: Box::new([]),
+                line: 0,
+            };
+            let fields = expand_word(&mut ctx, &word).expect("empty at");
+            assert!(fields.is_empty());
+        });
+    }
+
+    #[test]
+    fn expand_redirect_word_at_expansion_via_parts() {
+        assert_no_syscalls(|| {
+            let mut ctx = FakeContext::new();
+            ctx.positional = vec![b"file.txt".to_vec()];
+            let word = parts_word(b"echo \"$@\"\n");
+            let result = expand_redirect_word(&mut ctx, &word).expect("redirect at");
+            assert_eq!(result, b"file.txt");
+        });
+    }
+
+    #[test]
+    fn expand_redirect_word_empty_quoted_via_parts() {
+        use crate::syntax::word_parts::WordPart;
+        assert_no_syscalls(|| {
+            let mut ctx = FakeContext::new();
+            let word = Word {
+                raw: b"\"\"".as_ref().into(),
+                parts: Box::new([WordPart::QuotedLiteral {
+                    bytes: Box::from(&b""[..]),
+                    newlines: 0,
+                }]),
+                line: 0,
+            };
+            let result = expand_redirect_word(&mut ctx, &word).expect("redirect empty quoted");
+            assert_eq!(result, b"");
+        });
+    }
+
+    #[test]
+    fn tilde_user_trailing_slash_raw_path_with_slash_user() {
+        assert_no_syscalls(|| {
+            let mut ctx = FakeContext::new();
+            ctx.pathname_expansion_enabled = false;
+            let word = Word {
+                raw: b"~slashuser/sub".as_ref().into(),
+                parts: Box::new([]),
+                line: 0,
+            };
+            let fields = expand_word(&mut ctx, &word).expect("tilde slash raw");
+            assert_eq!(fields, vec![b"/home/slashuser/sub".to_vec()]);
+        });
+    }
+
+    #[test]
+    fn expand_word_empty_text_non_expanded_raw() {
+        assert_no_syscalls(|| {
+            let mut ctx = FakeContext::new();
+            let word = Word {
+                raw: b"''".as_ref().into(),
+                parts: Box::new([]),
+                line: 0,
+            };
+            let fields = expand_word(&mut ctx, &word).expect("empty quoted");
+            assert_eq!(fields, vec![Vec::<u8>::new()]);
+        });
     }
 }

@@ -576,6 +576,7 @@ mod tests {
     use crate::expand::test_support::FakeContext;
     use crate::expand::word::expand_word;
     use crate::syntax::ast::Word;
+    use crate::sys::test_support::assert_no_syscalls;
 
     #[test]
     fn arith_variable_reference() {
@@ -1374,6 +1375,15 @@ mod tests {
         let mut ctx = FakeContext::new();
         let result = expand_arithmetic_expression(&mut ctx, b"1\n+\n2").expect("newline arith");
         assert_eq!(result, b"1\n+\n2");
+    }
+
+    #[test]
+    fn expand_arithmetic_expression_static_literal_dollar() {
+        assert_no_syscalls(|| {
+            let mut ctx = FakeContext::new();
+            let result = expand_arithmetic_expression(&mut ctx, b"$ ").expect("static dollar");
+            assert_eq!(result, b"$ ");
+        });
     }
 
     #[test]

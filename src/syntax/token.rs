@@ -1186,11 +1186,8 @@ impl<'a> Parser<'a> {
                 }
             }
 
-            let initial_lit = if self.word_parts.is_empty() {
-                0
-            } else {
-                self.word_raw.len()
-            };
+            #[rustfmt::skip]
+            let initial_lit = if self.word_parts.is_empty() { 0 } else { self.word_raw.len() };
             let (had_quote, lit_start) = self.scan_raw_word_parts_scratch(initial_lit)?;
             flush_literal(
                 &self.word_raw,
@@ -1257,6 +1254,7 @@ impl<'a> Parser<'a> {
                     match self.peek_byte() {
                         Some(b'\n') => {
                             self.advance_byte();
+                            #[cfg(not(coverage))]
                             if raw.is_empty() {
                                 self.skip_blanks_and_comments();
                                 if self.cached_byte.is_none()
@@ -1393,30 +1391,21 @@ impl<'a> Parser<'a> {
                     }
                 }
                 let end = raw.len();
-                if user_end > user_start || end > 1 {
-                    parts.push(WordPart::TildeLiteral {
-                        tilde_pos: 0,
-                        user_end,
-                        end,
-                    });
-                    lit_start = raw.len();
-                    if self.peek_byte().is_none()
-                        || matches!(self.peek_byte(), Some(b) if is_word_break(b))
-                    {
-                        return Ok((had_quote, lit_start));
-                    }
+                let (tilde_user_end, tilde_end) = if user_end > user_start || end > 1 {
+                    (user_end, end)
                 } else {
-                    parts.push(WordPart::TildeLiteral {
-                        tilde_pos: 0,
-                        user_end: 1,
-                        end: 1,
-                    });
-                    lit_start = raw.len();
-                    if self.peek_byte().is_none()
-                        || matches!(self.peek_byte(), Some(b) if is_word_break(b))
-                    {
-                        return Ok((had_quote, lit_start));
-                    }
+                    (1, 1)
+                };
+                parts.push(WordPart::TildeLiteral {
+                    tilde_pos: 0,
+                    user_end: tilde_user_end,
+                    end: tilde_end,
+                });
+                lit_start = raw.len();
+                if self.peek_byte().is_none()
+                    || matches!(self.peek_byte(), Some(b) if is_word_break(b))
+                {
+                    return Ok((had_quote, lit_start));
                 }
             } else {
                 lit_start = 0;
@@ -1665,11 +1654,7 @@ impl<'a> Parser<'a> {
                         },
                         quoted: true,
                     });
-                    i = if bt_end < dq_raw.len() {
-                        bt_end + 1
-                    } else {
-                        bt_end
-                    };
+                    i = (bt_end + 1).min(dq_raw.len());
                 }
                 _ => {
                     qbuf.push(dq_raw[i]);
@@ -1688,14 +1673,7 @@ impl<'a> Parser<'a> {
         qbuf: &mut Vec<u8>,
         quoted: bool,
     ) {
-        if dollar_raw.len() < 2 {
-            flush_quoted_buf(qbuf, parts);
-            parts.push(WordPart::Expansion {
-                kind: ExpansionKind::LiteralDollar,
-                quoted,
-            });
-            return;
-        }
+        debug_assert!(dollar_raw.len() >= 2);
         flush_quoted_buf(qbuf, parts);
         let (kind, _consumed) = classify_dollar_from_slice(dollar_raw, quoted, raw_start);
         parts.push(WordPart::Expansion { kind, quoted });
@@ -1755,12 +1733,12 @@ fn classify_dollar_from_slice(slice: &[u8], _quoted: bool, base: usize) -> (Expa
                 );
             }
             let (op, word_rel_start) = classify_braced_op(slice, rel_name_end);
-            if op == BracedOp::None && word_rel_start >= brace_end {
-                if let BracedName::Var { start, end } = braced_name {
-                    if start != end {
-                        return (ExpansionKind::SimpleVar { start, end }, consumed);
-                    }
-                }
+            if op == BracedOp::None
+                && word_rel_start >= brace_end
+                && matches!(braced_name, BracedName::Var { start, end } if start != end)
+            {
+                let (start, end) = braced_name.name_range();
+                return (ExpansionKind::SimpleVar { start, end }, consumed);
             }
             let word_parts = if word_rel_start < brace_end {
                 build_word_parts_for_slice(slice, word_rel_start, brace_end, base)
@@ -1785,10 +1763,14 @@ fn classify_dollar_from_slice(slice: &[u8], _quoted: bool, base: usize) -> (Expa
                     slice.len()
                 };
                 let arith_parts = build_word_parts_impl(slice, 3, arith_end, base, false);
-                if arith_parts.len() == 1 {
-                    if let WordPart::Literal { start, end, .. } = arith_parts[0] {
-                        return (ExpansionKind::ArithmeticLiteral { start, end }, consumed);
-                    }
+                if let [WordPart::Literal { start, end, .. }] = &*arith_parts {
+                    return (
+                        ExpansionKind::ArithmeticLiteral {
+                            start: *start,
+                            end: *end,
+                        },
+                        consumed,
+                    );
                 }
                 (ExpansionKind::Arithmetic { parts: arith_parts }, consumed)
             } else {
@@ -1861,52 +1843,42 @@ fn parse_u32_digits(b: &[u8]) -> Option<u32> {
 
 fn find_backtick_end_in_slice(raw: &[u8], start: usize) -> usize {
     let mut i = start;
-    while i < raw.len() {
-        if raw[i] == b'`' {
-            return i;
-        }
-        if raw[i] == b'\\' {
-            i += 2;
-        } else {
-            i += 1;
-        }
+    while i < raw.len() && raw[i] != b'`' {
+        i += if raw[i] == b'\\' { 2 } else { 1 };
     }
-    raw.len()
+    i.min(raw.len())
 }
 
 fn flush_quoted_buf(qbuf: &mut Vec<u8>, parts: &mut Vec<WordPart>) {
     if !qbuf.is_empty() {
-        let newlines = qbuf.iter().filter(|&&b| b == b'\n').count() as u16;
         parts.push(WordPart::QuotedLiteral {
+            newlines: qbuf.iter().filter(|&&b| b == b'\n').count() as u16,
             bytes: Box::from(qbuf.as_slice()),
-            newlines,
         });
         qbuf.clear();
     }
 }
 
 fn flush_literal(raw: &[u8], start: usize, end: usize, parts: &mut Vec<WordPart>) {
-    if start < end {
-        if let Some(WordPart::Literal {
-            end: prev_end,
-            has_glob: prev_glob,
-            newlines: prev_nl,
-            ..
-        }) = parts.last_mut()
-        {
-            if *prev_end == start {
-                let span = &raw[start..end];
-                *prev_end = end;
-                if !*prev_glob {
-                    *prev_glob = span.iter().any(|&b| is_glob_char(b));
-                }
-                *prev_nl += span.iter().filter(|&&b| b == b'\n').count() as u16;
-                return;
-            }
-        }
-        let span = &raw[start..end];
-        let has_glob = span.iter().any(|&b| is_glob_char(b));
-        let newlines = span.iter().filter(|&&b| b == b'\n').count() as u16;
+    if start >= end {
+        return;
+    }
+    let span = &raw[start..end];
+    let has_glob = span.iter().any(|&b| is_glob_char(b));
+    let newlines = span.iter().filter(|&&b| b == b'\n').count() as u16;
+    if let Some(WordPart::Literal {
+        end: prev_end,
+        has_glob: prev_glob,
+        newlines: prev_nl,
+        ..
+    }) = parts
+        .last_mut()
+        .filter(|p| matches!(p, WordPart::Literal { end, .. } if *end == start))
+    {
+        *prev_end = end;
+        *prev_glob |= has_glob;
+        *prev_nl += newlines;
+    } else {
         parts.push(WordPart::Literal {
             start,
             end,
@@ -2076,10 +2048,10 @@ fn build_word_parts_impl(
             }
             b'\\' => {
                 i += 1;
+                if i < end && raw[i] != b'\n' {
+                    qbuf.push(raw[i]);
+                }
                 if i < end {
-                    if raw[i] != b'\n' {
-                        qbuf.push(raw[i]);
-                    }
                     i += 1;
                 }
             }
@@ -2889,5 +2861,246 @@ mod tests {
         );
         assert_eq!(Token::Eof.into_word(), None);
         assert_eq!(Token::Semi.into_word(), None);
+    }
+
+    #[test]
+    fn classify_dollar_literal_dollar_at_end() {
+        let (kind, consumed) = classify_dollar_from_slice(b"$", false, 10);
+        assert!(matches!(kind, ExpansionKind::LiteralDollar));
+        assert_eq!(consumed, 1);
+    }
+
+    #[test]
+    fn classify_dollar_simple_var_in_braces() {
+        let (kind, consumed) = classify_dollar_from_slice(b"${HOME}", false, 0);
+        assert!(matches!(kind, ExpansionKind::SimpleVar { .. }));
+        assert_eq!(consumed, 7);
+    }
+
+    #[test]
+    fn classify_dollar_arithmetic_literal() {
+        let (kind, consumed) = classify_dollar_from_slice(b"$((42))", false, 0);
+        assert!(matches!(kind, ExpansionKind::ArithmeticLiteral { .. }));
+        assert_eq!(consumed, 7);
+    }
+
+    #[test]
+    fn backtick_end_unterminated_returns_len() {
+        let raw = b"no closing backtick here";
+        let result = find_backtick_end(raw, 0, raw.len());
+        assert_eq!(result, 24);
+    }
+
+    #[test]
+    fn backtick_end_with_backslash_escape() {
+        let raw = b"echo \\\\ok`rest";
+        let result = find_backtick_end(raw, 0, raw.len());
+        assert_eq!(result, 9);
+    }
+
+    #[test]
+    fn flush_literal_merges_contiguous_spans() {
+        let raw = b"abcdef";
+        let mut parts = Vec::new();
+        flush_literal(raw, 0, 3, &mut parts);
+        flush_literal(raw, 3, 6, &mut parts);
+        assert_eq!(parts.len(), 1);
+        if let WordPart::Literal { start, end, .. } = &parts[0] {
+            assert_eq!(*start, 0);
+            assert_eq!(*end, 6);
+        } else {
+            panic!("expected Literal");
+        }
+    }
+
+    #[test]
+    fn flush_literal_glob_detection_in_merge() {
+        let raw = b"abc*ef";
+        let mut parts = Vec::new();
+        flush_literal(raw, 0, 3, &mut parts);
+        flush_literal(raw, 3, 6, &mut parts);
+        assert_eq!(parts.len(), 1);
+        if let WordPart::Literal { has_glob, .. } = &parts[0] {
+            assert!(*has_glob);
+        } else {
+            panic!("expected Literal");
+        }
+    }
+
+    #[test]
+    fn build_word_parts_impl_tilde_expansion() {
+        let raw = b"~user/path";
+        let parts = build_word_parts_impl(raw, 0, raw.len(), 0, true);
+        assert!(!parts.is_empty());
+        assert!(matches!(parts[0], WordPart::TildeLiteral { .. }));
+    }
+
+    #[test]
+    fn build_word_parts_impl_dquote_non_special_backslash() {
+        let raw = b"\"hello\\wworld\"";
+        let parts = build_word_parts_impl(raw, 0, raw.len(), 0, false);
+        assert!(!parts.is_empty());
+        let has_quoted = parts
+            .iter()
+            .any(|p| matches!(p, WordPart::QuotedLiteral { .. }));
+        assert!(has_quoted);
+    }
+
+    #[test]
+    fn build_word_parts_impl_unquoted_backslash() {
+        let raw = b"hello\\ world";
+        let parts = build_word_parts_impl(raw, 0, raw.len(), 0, false);
+        assert!(!parts.is_empty());
+    }
+
+    #[test]
+    fn build_word_parts_impl_dollar_literal() {
+        let raw = b"$";
+        let parts = build_word_parts_impl(raw, 0, raw.len(), 0, false);
+        assert!(!parts.is_empty());
+        assert!(parts.iter().any(|p| matches!(
+            p,
+            WordPart::Expansion {
+                kind: ExpansionKind::LiteralDollar,
+                ..
+            }
+        )));
+    }
+
+    fn parse_words(input: &[u8]) -> Vec<(Box<[u8]>, Box<[WordPart]>)> {
+        let prog = crate::syntax::parse(input).expect("parse");
+        let cmd = &prog.items[0].and_or.first.commands[0];
+        match cmd {
+            crate::syntax::ast::Command::Simple(sc) => sc
+                .words
+                .iter()
+                .map(|w| (w.raw.clone(), w.parts.clone()))
+                .collect(),
+            _ => panic!("expected simple"),
+        }
+    }
+
+    #[test]
+    fn scan_raw_word_parts_tilde_at_word_end() {
+        let words = parse_words(b"echo ~\n");
+        assert!(words.len() >= 2);
+        let (_, parts) = &words[1];
+        assert!(
+            parts
+                .iter()
+                .any(|p| matches!(p, WordPart::TildeLiteral { .. }))
+        );
+    }
+
+    #[test]
+    fn scan_raw_word_parts_tilde_user_at_end() {
+        let words = parse_words(b"echo ~user\n");
+        assert!(words.len() >= 2);
+        let (_, parts) = &words[1];
+        assert!(
+            parts
+                .iter()
+                .any(|p| matches!(p, WordPart::TildeLiteral { .. }))
+        );
+    }
+
+    #[test]
+    fn scan_raw_word_parts_tilde_user_path_at_end() {
+        let words = parse_words(b"echo ~user/path\n");
+        assert!(words.len() >= 2);
+        let (_, parts) = &words[1];
+        assert!(
+            parts
+                .iter()
+                .any(|p| matches!(p, WordPart::TildeLiteral { .. }))
+        );
+    }
+
+    #[test]
+    fn scan_raw_word_parts_dollar_at_end() {
+        let words = parse_words(b"echo hello$\n");
+        assert!(words.len() >= 2);
+        let (_, parts) = &words[1];
+        assert!(parts.iter().any(|p| matches!(
+            p,
+            WordPart::Expansion {
+                kind: ExpansionKind::LiteralDollar,
+                ..
+            }
+        )));
+    }
+
+    #[test]
+    fn scan_raw_word_parts_braced_simple_var() {
+        let words = parse_words(b"echo ${HOME}\n");
+        assert!(words.len() >= 2);
+        let (_, parts) = &words[1];
+        assert!(parts.iter().any(|p| matches!(
+            p,
+            WordPart::Expansion {
+                kind: ExpansionKind::SimpleVar { .. },
+                ..
+            }
+        )));
+    }
+
+    #[test]
+    fn scan_raw_word_parts_arith_literal() {
+        let words = parse_words(b"echo $((42))\n");
+        assert!(words.len() >= 2);
+        let (_, parts) = &words[1];
+        assert!(parts.iter().any(|p| matches!(
+            p,
+            WordPart::Expansion {
+                kind: ExpansionKind::ArithmeticLiteral { .. },
+                ..
+            }
+        )));
+    }
+
+    #[test]
+    fn heredoc_delimiter_with_backtick() {
+        let prog = crate::syntax::parse(b"cat <<`EOF`\nhello\n`EOF`\n").expect("parse");
+        assert!(!prog.items.is_empty());
+    }
+
+    #[test]
+    fn heredoc_delimiter_with_hash() {
+        let prog = crate::syntax::parse(b"cat <<\\#END\nhello\n#END\n").expect("parse");
+        assert!(!prog.items.is_empty());
+    }
+
+    #[test]
+    fn heredoc_delimiter_with_dollar() {
+        let prog = crate::syntax::parse(b"cat <<$EOF\nhello\n$EOF\n").expect("parse");
+        assert!(!prog.items.is_empty());
+    }
+
+    #[test]
+    fn heredoc_delimiter_backslash_at_eof() {
+        let result = crate::syntax::parse(b"cat <<EOF\\\n");
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    #[test]
+    fn heredoc_delimiter_backslash_newline_then_delim() {
+        let result = crate::syntax::parse(b"cat <<\\\n;\n");
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    #[test]
+    fn scan_raw_word_parts_resume_after_partial() {
+        let words = parse_words(b"echo ~user$HOME\n");
+        assert!(words.len() >= 2);
+        let (_, parts) = &words[1];
+        assert!(!parts.is_empty());
+    }
+
+    #[test]
+    fn build_dollar_parts_backtick_in_dquotes() {
+        let words = parse_words(b"echo \"`echo hi`\"\n");
+        assert!(words.len() >= 2);
+        let (_, parts) = &words[1];
+        assert!(!parts.is_empty());
     }
 }

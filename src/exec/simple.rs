@@ -832,6 +832,42 @@ mod tests {
     }
 
     #[test]
+    fn has_command_substitution_via_word_parts() {
+        use crate::syntax::word_parts::{ExpansionKind, WordPart};
+        assert_no_syscalls(|| {
+            let cmd_with_parts = SimpleCommand {
+                words: vec![Word {
+                    raw: b"$(echo hi)".to_vec().into(),
+                    parts: Box::new([WordPart::Expansion {
+                        kind: ExpansionKind::Command {
+                            program: std::rc::Rc::new(crate::syntax::ast::Program::default()),
+                        },
+                        quoted: false,
+                    }]),
+                    line: 0,
+                }]
+                .into_boxed_slice(),
+                ..SimpleCommand::default()
+            };
+            assert!(has_command_substitution(&cmd_with_parts));
+
+            let cmd_no_cmdsub = SimpleCommand {
+                words: vec![Word {
+                    raw: b"$X".to_vec().into(),
+                    parts: Box::new([WordPart::Expansion {
+                        kind: ExpansionKind::SimpleVar { start: 0, end: 2 },
+                        quoted: false,
+                    }]),
+                    line: 0,
+                }]
+                .into_boxed_slice(),
+                ..SimpleCommand::default()
+            };
+            assert!(!has_command_substitution(&cmd_no_cmdsub));
+        });
+    }
+
+    #[test]
     fn readonly_var_blocks_external_cmd_prefix_assignment() {
         run_trace(
             trace_entries![write(fd(sys::constants::STDERR_FILENO), bytes(b"meiksh: line 1: X: readonly variable\n")) -> auto],
