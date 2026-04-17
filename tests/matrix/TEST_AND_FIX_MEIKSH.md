@@ -71,7 +71,7 @@ appear inside the sandbox.
 
 ## Phase 3a — Fix test bugs
 
-Follow the rules in `tests/matrix/IMPROVING_MD_TEST_SUITES.md`:
+Follow the rules in `tests/matrix/MD_TEST_SUITES.md`:
 
 - Assert only what POSIX explicitly specifies ("shall" statements).
 - Don't overassert (e.g. exact wording of diagnostics — use `".+"` for
