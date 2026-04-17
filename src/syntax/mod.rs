@@ -1,4 +1,5 @@
 pub(crate) mod ast;
+pub(crate) mod byte_class;
 mod token;
 pub(crate) mod word_parts;
 
@@ -71,15 +72,7 @@ impl<'src> ParseSession<'src> {
     }
 }
 
-pub(crate) fn is_name(name: &[u8]) -> bool {
-    !name.is_empty()
-        && token::BYTE_CLASS[name[0] as usize] & token::BC_NAME_START != 0
-        && name[1..]
-            .iter()
-            .fold(0xFFu8, |acc, &b| acc & token::BYTE_CLASS[b as usize])
-            & token::BC_NAME_CONT
-            != 0
-}
+pub(crate) use byte_class::is_name;
 
 #[cfg(test)]
 #[allow(

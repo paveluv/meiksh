@@ -1,3 +1,6 @@
+#[cfg(test)]
+use crate::syntax::byte_class::{is_ascii_ws, is_glob_char};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum QuoteState {
     Quoted,
@@ -53,21 +56,13 @@ pub(super) fn split_fields_from_segments(segments: &[Segment], ifs: &[u8]) -> Ve
         return vec![Field {
             text: flatten_segments(segments),
             has_unquoted_glob: segments.iter().any(|seg| {
-                matches!(seg, Segment::Text(text, state) if *state != QuoteState::Quoted && text.iter().any(|&b| is_glob_byte(b)))
+                matches!(seg, Segment::Text(text, state) if *state != QuoteState::Quoted && text.iter().any(|&b| is_glob_char(b)))
             }),
         }];
     }
 
-    let ifs_ws: Vec<u8> = ifs
-        .iter()
-        .copied()
-        .filter(|b| b.is_ascii_whitespace())
-        .collect();
-    let ifs_other: Vec<u8> = ifs
-        .iter()
-        .copied()
-        .filter(|b| !b.is_ascii_whitespace())
-        .collect();
+    let ifs_ws: Vec<u8> = ifs.iter().copied().filter(|b| is_ascii_ws(*b)).collect();
+    let ifs_other: Vec<u8> = ifs.iter().copied().filter(|b| !is_ascii_ws(*b)).collect();
     let mut iter = segment_bytes(segments).peekable();
 
     let mut fields = Vec::new();
@@ -106,7 +101,7 @@ pub(super) fn split_fields_from_segments(segments: &[Segment], ifs: &[u8]) -> Ve
             }
             continue;
         }
-        current_glob |= state != QuoteState::Quoted && is_glob_byte(b);
+        current_glob |= state != QuoteState::Quoted && is_glob_char(b);
         current.push(b);
     }
 
@@ -178,10 +173,6 @@ pub(super) fn render_pattern_from_segments(segments: &[Segment]) -> Vec<u8> {
         }
     }
     pattern
-}
-
-pub(super) fn is_glob_byte(b: u8) -> bool {
-    matches!(b, b'*' | b'?' | b'[')
 }
 
 #[cfg(test)]

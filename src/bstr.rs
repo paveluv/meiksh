@@ -137,21 +137,6 @@ pub(crate) fn parse_octal_i64(bytes: &[u8]) -> Option<i64> {
     Some(result)
 }
 
-/// POSIX shell name validation: `[A-Za-z_][A-Za-z0-9_]*`
-#[cfg(test)]
-pub(crate) fn is_name(s: &[u8]) -> bool {
-    if s.is_empty() {
-        return false;
-    }
-    let first = s[0];
-    if !first.is_ascii_alphabetic() && first != b'_' {
-        return false;
-    }
-    s[1..]
-        .iter()
-        .all(|&b| b.is_ascii_alphanumeric() || b == b'_')
-}
-
 // ---------------------------------------------------------------------------
 // Numeric-to-bytes formatters (no std::fmt)
 // ---------------------------------------------------------------------------
@@ -469,6 +454,7 @@ pub(crate) fn join_bstrings(parts: &[BString], sep: &[u8]) -> BString {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::syntax::byte_class::is_name;
 
     #[test]
     fn trim_trailing_newlines_removes_only_trailing() {

@@ -6,11 +6,12 @@ use crate::syntax::ast::Word;
 use super::core::{Context, ExpandError};
 use super::expand_parts::{ExpandOutput, ExpandResult, expand_parts_into_new};
 use super::model::{
-    ExpandedWord, Expansion, QuoteState, Segment, flatten_segments, is_glob_byte, push_segment,
+    ExpandedWord, Expansion, QuoteState, Segment, flatten_segments, push_segment,
     push_segment_slice, render_pattern_from_segments,
 };
 use super::parameter::{expand_dollar, expand_parameter_dollar};
 use super::pathname::expand_pathname;
+use crate::syntax::byte_class::{is_ascii_ws, is_glob_char, is_name_cont, is_name_start};
 
 pub(crate) fn expand_words<C: Context>(
     ctx: &mut C,
@@ -60,7 +61,7 @@ pub(super) fn word_assignment_value(raw: &[u8]) -> Option<&[u8]> {
         return None;
     }
     let first = raw[0];
-    if !(first == b'_' || first.is_ascii_alphabetic()) {
+    if !is_name_start(first) {
         return None;
     }
     let mut i = 1;
@@ -69,7 +70,7 @@ pub(super) fn word_assignment_value(raw: &[u8]) -> Option<&[u8]> {
         if b == b'=' {
             return Some(&raw[i + 1..]);
         }
-        if !(b == b'_' || b.is_ascii_alphanumeric()) {
+        if !is_name_cont(b) {
             return None;
         }
         i += 1;
@@ -192,7 +193,7 @@ fn expand_word_raw_fallback<C: Context>(
             return Ok(Vec::new());
         }
         let has_glob = expanded.segments.iter().any(|seg| {
-            matches!(seg, Segment::Text(text, QuoteState::Literal) if text.iter().any(|&b| is_glob_byte(b)))
+            matches!(seg, Segment::Text(text, QuoteState::Literal) if text.iter().any(|&b| is_glob_char(b)))
         });
         if has_glob && ctx.pathname_expansion_enabled() {
             let matches = expand_pathname(&text);
@@ -215,16 +216,8 @@ fn split_fields_raw(segments: &[Segment], ifs: &[u8]) -> Vec<Vec<u8>> {
     let mut fields = Vec::new();
     let mut current = Vec::new();
 
-    let ifs_ws: Vec<u8> = ifs
-        .iter()
-        .copied()
-        .filter(|b| b.is_ascii_whitespace())
-        .collect();
-    let ifs_other: Vec<u8> = ifs
-        .iter()
-        .copied()
-        .filter(|b| !b.is_ascii_whitespace())
-        .collect();
+    let ifs_ws: Vec<u8> = ifs.iter().copied().filter(|b| is_ascii_ws(*b)).collect();
+    let ifs_other: Vec<u8> = ifs.iter().copied().filter(|b| !is_ascii_ws(*b)).collect();
 
     for seg in segments {
         if let Segment::Text(text, state) = seg {

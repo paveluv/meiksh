@@ -6,9 +6,10 @@ use crate::syntax::word_parts::{BracedName, BracedOp, ExpansionKind, WordPart};
 use super::arithmetic::eval_arithmetic;
 use super::core::{Context, ExpandError};
 use super::glob::pattern_matches;
-use super::model::{QuoteState, Segment, is_glob_byte, render_pattern_from_segments};
-use super::parameter::{is_name, lookup_param, require_set_parameter};
+use super::model::{QuoteState, Segment, render_pattern_from_segments};
+use super::parameter::{lookup_param, require_set_parameter};
 use super::word::trim_trailing_newlines;
+use crate::syntax::byte_class::{is_ascii_ws, is_glob_char, is_name};
 
 #[derive(Debug)]
 pub(super) struct ExpandOutput {
@@ -45,7 +46,7 @@ impl ExpandOutput {
 
     pub(super) fn push_literal(&mut self, bytes: &[u8]) {
         for &b in bytes {
-            if is_glob_byte(b) {
+            if is_glob_char(b) {
                 self.current_has_glob = true;
             }
             self.current.push(b);
@@ -66,11 +67,11 @@ impl ExpandOutput {
 
         for &b in bytes {
             if !ifs.contains(&b) {
-                if is_glob_byte(b) {
+                if is_glob_char(b) {
                     self.current_has_glob = true;
                 }
                 self.current.push(b);
-            } else if b.is_ascii_whitespace() {
+            } else if is_ascii_ws(b) {
                 if !self.current.is_empty() {
                     let glob = self.current_has_glob;
                     self.fields.push((std::mem::take(&mut self.current), glob));

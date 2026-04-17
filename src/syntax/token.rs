@@ -3,82 +3,16 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
 
 use super::ParseError;
+use super::byte_class::{
+    alias_has_trailing_blank, is_delim, is_digit, is_glob_char, is_name_cont, is_name_start,
+    is_quote, is_special_param, is_tilde_user_break, is_word_break,
+};
 use super::word_parts::{BracedName, BracedOp, ExpansionKind, WordPart};
 
 struct AliasLayer<'a> {
     text: Cow<'a, [u8]>,
     pos: usize,
     trailing_blank: bool,
-}
-
-const BC_WORD_BREAK: u8 = 0x01;
-const BC_DELIM: u8 = 0x02;
-const BC_BLANK: u8 = 0x04;
-const BC_QUOTE: u8 = 0x08;
-pub(super) const BC_NAME_START: u8 = 0x10;
-pub(super) const BC_NAME_CONT: u8 = 0x20;
-
-pub(super) const BYTE_CLASS: [u8; 256] = {
-    let mut t = [0u8; 256];
-
-    t[b' ' as usize] = BC_WORD_BREAK | BC_DELIM | BC_BLANK;
-    t[b'\t' as usize] = BC_WORD_BREAK | BC_DELIM | BC_BLANK;
-
-    t[b'\n' as usize] = BC_WORD_BREAK | BC_DELIM;
-    t[b';' as usize] = BC_WORD_BREAK | BC_DELIM;
-    t[b'&' as usize] = BC_WORD_BREAK | BC_DELIM;
-    t[b'|' as usize] = BC_WORD_BREAK | BC_DELIM;
-    t[b'(' as usize] = BC_WORD_BREAK | BC_DELIM;
-    t[b')' as usize] = BC_WORD_BREAK | BC_DELIM;
-    t[b'<' as usize] = BC_WORD_BREAK | BC_DELIM;
-    t[b'>' as usize] = BC_WORD_BREAK | BC_DELIM;
-
-    t[b'#' as usize] = BC_DELIM;
-
-    t[b'\'' as usize] |= BC_QUOTE;
-    t[b'"' as usize] |= BC_QUOTE;
-    t[b'\\' as usize] |= BC_QUOTE;
-    t[b'$' as usize] |= BC_QUOTE;
-    t[b'`' as usize] |= BC_QUOTE;
-
-    t[b'_' as usize] |= BC_NAME_START | BC_NAME_CONT;
-    let mut c: u8 = b'A';
-    while c <= b'Z' {
-        t[c as usize] |= BC_NAME_START | BC_NAME_CONT;
-        c += 1;
-    }
-    c = b'a';
-    while c <= b'z' {
-        t[c as usize] |= BC_NAME_START | BC_NAME_CONT;
-        c += 1;
-    }
-    c = b'0';
-    while c <= b'9' {
-        t[c as usize] |= BC_NAME_CONT;
-        c += 1;
-    }
-
-    t
-};
-
-#[inline(always)]
-fn is_delim(b: u8) -> bool {
-    BYTE_CLASS[b as usize] & BC_DELIM != 0
-}
-
-#[inline(always)]
-fn is_word_break(b: u8) -> bool {
-    BYTE_CLASS[b as usize] & BC_WORD_BREAK != 0
-}
-
-#[inline(always)]
-fn is_quote(b: u8) -> bool {
-    BYTE_CLASS[b as usize] & BC_QUOTE != 0
-}
-
-pub(super) fn alias_has_trailing_blank(s: &[u8]) -> bool {
-    s.last()
-        .map_or(false, |&b| BYTE_CLASS[b as usize] & BC_BLANK != 0)
 }
 
 fn is_alias_eligible(word: &[u8]) -> bool {
@@ -102,7 +36,7 @@ fn parse_i32_bytes(b: &[u8]) -> Option<i32> {
     }
     let mut result: i32 = 0;
     for &d in b {
-        if !d.is_ascii_digit() {
+        if !is_digit(d) {
             return None;
         }
         result = result.checked_mul(10)?.checked_add((d - b'0') as i32)?;
@@ -1097,10 +1031,10 @@ impl<'a> Parser<'a> {
                     self.advance_byte();
                     queued_items.push(HereDocLineItem::Token(Token::RParen));
                 }
-                Some(b) if b.is_ascii_digit() => {
+                Some(b) if is_digit(b) => {
                     let mut digits = Vec::new();
                     while let Some(b) = self.peek_byte() {
-                        if b.is_ascii_digit() {
+                        if is_digit(b) {
                             digits.push(b);
                             self.advance_byte();
                         } else {
@@ -1204,7 +1138,7 @@ impl<'a> Parser<'a> {
     fn produce_io_number_or_word(&mut self) -> Result<Token, ParseError> {
         let mut digits = Vec::new();
         while let Some(b) = self.peek_byte() {
-            if b.is_ascii_digit() {
+            if is_digit(b) {
                 digits.push(b);
                 self.advance_byte();
             } else {
@@ -1383,7 +1317,7 @@ impl<'a> Parser<'a> {
                         let start = layer.pos;
                         let mut pos = start + 1;
                         while pos < bytes.len() {
-                            if BYTE_CLASS[bytes[pos] as usize] & (BC_WORD_BREAK | BC_QUOTE) != 0 {
+                            if is_word_break(bytes[pos]) || is_quote(bytes[pos]) {
                                 break;
                             }
                             pos += 1;
@@ -1587,7 +1521,7 @@ impl<'a> Parser<'a> {
                                 dollar_raw, raw_start, raw_end, parts, qbuf, false,
                             );
                         }
-                        Some(b'@' | b'*' | b'?' | b'$' | b'!' | b'#' | b'-') => {
+                        Some(c) if is_special_param(c) => {
                             let ch = self.peek_byte().unwrap();
                             raw.push(ch);
                             self.advance_byte();
@@ -1613,12 +1547,12 @@ impl<'a> Parser<'a> {
                                 quoted: false,
                             });
                         }
-                        Some(c) if c == b'_' || c.is_ascii_alphabetic() => {
+                        Some(c) if is_name_start(c) => {
                             let name_start = raw.len();
                             raw.push(c);
                             self.advance_byte();
                             while let Some(c2) = self.peek_byte() {
-                                if c2 == b'_' || c2.is_ascii_alphanumeric() {
+                                if is_name_cont(c2) {
                                     raw.push(c2);
                                     self.advance_byte();
                                 } else {
@@ -1671,7 +1605,7 @@ impl<'a> Parser<'a> {
                         let start = layer.pos;
                         let mut pos = start + 1;
                         while pos < bytes.len() {
-                            if BYTE_CLASS[bytes[pos] as usize] & (BC_WORD_BREAK | BC_QUOTE) != 0 {
+                            if is_word_break(bytes[pos]) || is_quote(bytes[pos]) {
                                 break;
                             }
                             pos += 1;
@@ -1874,12 +1808,12 @@ fn classify_dollar_from_slice(slice: &[u8], _quoted: bool, base: usize) -> (Expa
                 )
             }
         }
-        b'@' | b'*' | b'?' | b'$' | b'!' | b'#' | b'-' => (ExpansionKind::SpecialVar { ch: c1 }, 2),
+        _ if is_special_param(c1) => (ExpansionKind::SpecialVar { ch: c1 }, 2),
         b'0' => (ExpansionKind::ShellName, 2),
         b'1'..=b'9' => (ExpansionKind::Positional { index: c1 - b'0' }, 2),
-        _ if c1 == b'_' || c1.is_ascii_alphabetic() => {
+        _ if is_name_start(c1) => {
             let mut i = 2;
-            while i < slice.len() && (slice[i] == b'_' || slice[i].is_ascii_alphanumeric()) {
+            while i < slice.len() && is_name_cont(slice[i]) {
                 i += 1;
             }
             (
@@ -1899,13 +1833,13 @@ fn classify_braced_name(name_bytes: &[u8], start: usize, end: usize) -> BracedNa
         return BracedName::Var { start, end };
     }
     let b0 = name_bytes[0];
-    if b0.is_ascii_digit() {
+    if is_digit(b0) {
         if let Some(index) = parse_u32_digits(name_bytes) {
             return BracedName::Positional { start, end, index };
         }
         return BracedName::Var { start, end };
     }
-    if matches!(b0, b'?' | b'$' | b'!' | b'#' | b'*' | b'@') && name_bytes.len() == 1 {
+    if is_special_param(b0) && name_bytes.len() == 1 {
         return BracedName::Special { start, end, ch: b0 };
     }
     BracedName::Var { start, end }
@@ -1917,7 +1851,7 @@ fn parse_u32_digits(b: &[u8]) -> Option<u32> {
     }
     let mut result: u32 = 0;
     for &d in b {
-        if !d.is_ascii_digit() {
+        if !is_digit(d) {
             return None;
         }
         result = result.checked_mul(10)?.checked_add((d - b'0') as u32)?;
@@ -1964,14 +1898,14 @@ fn flush_literal(raw: &[u8], start: usize, end: usize, parts: &mut Vec<WordPart>
                 let span = &raw[start..end];
                 *prev_end = end;
                 if !*prev_glob {
-                    *prev_glob = span.iter().any(|&b| matches!(b, b'*' | b'?' | b'['));
+                    *prev_glob = span.iter().any(|&b| is_glob_char(b));
                 }
                 *prev_nl += span.iter().filter(|&&b| b == b'\n').count() as u16;
                 return;
             }
         }
         let span = &raw[start..end];
-        let has_glob = span.iter().any(|&b| matches!(b, b'*' | b'?' | b'['));
+        let has_glob = span.iter().any(|&b| is_glob_char(b));
         let newlines = span.iter().filter(|&&b| b == b'\n').count() as u16;
         parts.push(WordPart::Literal {
             start,
@@ -2012,19 +1946,19 @@ fn parse_braced_name_end(expr: &[u8]) -> usize {
         return 0;
     }
     let b0 = expr[0];
-    if b0.is_ascii_digit() {
+    if is_digit(b0) {
         let mut i = 0;
-        while i < expr.len() && expr[i].is_ascii_digit() {
+        while i < expr.len() && is_digit(expr[i]) {
             i += 1;
         }
         return i;
     }
-    if matches!(b0, b'?' | b'$' | b'!' | b'#' | b'*' | b'@') {
+    if is_special_param(b0) {
         return 1;
     }
-    if b0 == b'_' || b0.is_ascii_alphabetic() {
+    if is_name_start(b0) {
         let mut i = 0;
-        while i < expr.len() && (expr[i] == b'_' || expr[i].is_ascii_alphanumeric()) {
+        while i < expr.len() && is_name_cont(expr[i]) {
             i += 1;
         }
         return i;
@@ -2035,10 +1969,6 @@ fn parse_braced_name_end(expr: &[u8]) -> usize {
 /// Builds `WordPart` entries for a sub-range of a raw byte buffer.
 /// `base` is added to all positional offsets so they reference positions
 /// in the full `Word.raw` buffer (use 0 when `raw` is already the full buffer).
-fn is_tilde_user_break(b: u8) -> bool {
-    matches!(b, b'/' | b'\'' | b'"' | b'\\' | b'$' | b'`' | b':')
-}
-
 fn build_word_parts_for_slice(
     raw: &[u8],
     start: usize,
@@ -2067,7 +1997,7 @@ fn build_word_parts_impl(
         let user_end = base + i;
         if i < end && raw[i] == b'/' {
             i += 1;
-            while i < end && !matches!(raw[i], b'\'' | b'"' | b'\\' | b'$' | b'`') {
+            while i < end && !is_quote(raw[i]) {
                 i += 1;
             }
         }
@@ -2177,12 +2107,12 @@ fn build_word_parts_impl(
             }
             _ => {
                 let lit_start = i;
-                while i < end && !matches!(raw[i], b'\'' | b'"' | b'\\' | b'$' | b'`') {
+                while i < end && !is_quote(raw[i]) {
                     i += 1;
                 }
                 flush_quoted_buf(&mut qbuf, &mut parts);
                 let span = &raw[lit_start..i];
-                let has_glob = span.iter().any(|&b| matches!(b, b'*' | b'?' | b'['));
+                let has_glob = span.iter().any(|&b| is_glob_char(b));
                 let newlines = span.iter().filter(|&&b| b == b'\n').count() as u16;
                 parts.push(WordPart::Literal {
                     start: base + lit_start,

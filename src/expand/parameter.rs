@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 
 use crate::bstr;
+use crate::syntax::byte_class::{is_digit, is_name, is_name_cont, is_name_start};
 
 use super::arithmetic::{eval_arithmetic, expand_arithmetic_expression};
 use super::core::{Context, ExpandError};
@@ -106,7 +107,7 @@ pub(super) fn expand_dollar<C: Context>(
             };
             Ok((Expansion::One(value.into_owned()), 2))
         }
-        next if next.is_ascii_digit() => Ok((
+        next if is_digit(next) => Ok((
             Expansion::One(
                 require_set_parameter(
                     ctx,
@@ -117,11 +118,11 @@ pub(super) fn expand_dollar<C: Context>(
             ),
             2,
         )),
-        next if next == b'_' || next.is_ascii_alphabetic() => {
+        next if is_name_start(next) => {
             let mut index = 1usize;
             while index < source.len() {
                 let b = source[index];
-                if b == b'_' || b.is_ascii_alphanumeric() {
+                if is_name_cont(b) {
                     index += 1;
                 } else {
                     break;
@@ -165,18 +166,18 @@ pub(super) fn expand_parameter_dollar<C: Context>(
             };
             Ok((value.into_owned(), 2))
         }
-        next if next.is_ascii_digit() => {
+        next if is_digit(next) => {
             let value = ctx.positional_param((next - b'0') as usize);
             Ok((
                 require_set_parameter(ctx, &source[1..2], value)?.into_owned(),
                 2,
             ))
         }
-        next if next == b'_' || next.is_ascii_alphabetic() => {
+        next if is_name_start(next) => {
             let mut index = 1usize;
             while index < source.len() {
                 let b = source[index];
-                if b == b'_' || b.is_ascii_alphanumeric() {
+                if is_name_cont(b) {
                     index += 1;
                 } else {
                     break;
@@ -478,7 +479,7 @@ pub(super) fn parse_variable_base_escape(
 }
 
 pub(super) fn is_digit_for_base(b: u8, base: u32) -> bool {
-    let digit = if b.is_ascii_digit() {
+    let digit = if is_digit(b) {
         (b - b'0') as u32
     } else if b.is_ascii_lowercase() {
         (b - b'a') as u32 + 10
@@ -846,16 +847,16 @@ pub(super) fn parse_parameter_expression(
     }
     let mut index = 0usize;
     let b0 = expr[0];
-    let name: &[u8] = if b0.is_ascii_digit() {
-        while index < expr.len() && expr[index].is_ascii_digit() {
+    let name: &[u8] = if is_digit(b0) {
+        while index < expr.len() && is_digit(expr[index]) {
             index += 1;
         }
         &expr[..index]
     } else if matches!(b0, b'?' | b'$' | b'!' | b'#' | b'*' | b'@') {
         index = 1;
         &expr[..index]
-    } else if b0 == b'_' || b0.is_ascii_alphabetic() {
-        while index < expr.len() && (expr[index] == b'_' || expr[index].is_ascii_alphanumeric()) {
+    } else if is_name_start(b0) {
+        while index < expr.len() && is_name_cont(expr[index]) {
             index += 1;
         }
         &expr[..index]
@@ -895,7 +896,7 @@ pub(super) fn lookup_param<'a, C: Context>(ctx: &'a C, name: &[u8]) -> Option<Co
     if name == b"0" {
         return Some(Cow::Borrowed(ctx.shell_name()));
     }
-    if !name.is_empty() && name.iter().all(|b| b.is_ascii_digit()) {
+    if !name.is_empty() && name.iter().all(|&b| is_digit(b)) {
         return bstr::parse_i64(name)
             .and_then(|n| if n >= 0 { Some(n as usize) } else { None })
             .and_then(|index| ctx.positional_param(index));
@@ -971,19 +972,6 @@ pub(super) fn remove_parameter_pattern(
         }
     }
     Ok(value)
-}
-
-pub(super) fn is_name(name: &[u8]) -> bool {
-    if name.is_empty() {
-        return false;
-    }
-    let first = name[0];
-    if !first.is_ascii_alphabetic() && first != b'_' {
-        return false;
-    }
-    name[1..]
-        .iter()
-        .all(|&b| b == b'_' || b.is_ascii_alphanumeric())
 }
 
 #[cfg(test)]
