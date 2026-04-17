@@ -73,7 +73,7 @@ pub(crate) fn first_char_len(bytes: &[u8]) -> usize {
     if len == 0 { 1 } else { len }
 }
 
-#[allow(dead_code)]
+#[cfg(test)]
 pub(crate) fn mb_cur_max() -> usize {
     (sys_interface().mb_cur_max)()
 }
@@ -110,23 +110,6 @@ pub(crate) fn decimal_point() -> u8 {
     (sys_interface().decimal_point)()
 }
 
-/// Iterate over multi-byte character boundaries in `bytes`.
-/// Yields the byte offset of each character start (excluding 0).
-#[allow(dead_code)]
-pub(crate) fn char_boundaries(bytes: &[u8]) -> Vec<usize> {
-    let mut boundaries = Vec::new();
-    let mut i = 0;
-    while i < bytes.len() {
-        let (_, len) = decode_char(&bytes[i..]);
-        let step = if len == 0 { 1 } else { len };
-        i += step;
-        if i <= bytes.len() {
-            boundaries.push(i);
-        }
-    }
-    boundaries
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -155,6 +138,14 @@ mod tests {
     }
 
     #[test]
+    fn count_chars_stops_at_nul() {
+        assert_no_syscalls(|| {
+            set_test_locale_c();
+            assert_eq!(count_chars(b"ab\x00cd"), 2);
+        });
+    }
+
+    #[test]
     fn first_char_len_c_vs_utf8() {
         assert_no_syscalls(|| {
             set_test_locale_c();
@@ -162,6 +153,39 @@ mod tests {
 
             set_test_locale_utf8();
             assert_eq!(first_char_len(b"\xc3\xa9"), 2);
+        });
+    }
+
+    #[test]
+    fn first_char_len_empty() {
+        assert_no_syscalls(|| {
+            assert_eq!(first_char_len(b""), 0);
+        });
+    }
+
+    #[test]
+    fn mb_cur_max_c_vs_utf8() {
+        assert_no_syscalls(|| {
+            set_test_locale_c();
+            assert_eq!(mb_cur_max(), 1);
+
+            set_test_locale_utf8();
+            assert_eq!(mb_cur_max(), 4);
+        });
+    }
+
+    #[test]
+    fn reinit_locale_reads_env() {
+        test_support::run_trace(trace_entries![], || {
+            unsafe { std::env::set_var("LC_ALL", "C.UTF-8") };
+            reinit_locale();
+            assert_eq!(mb_cur_max(), 4);
+
+            unsafe { std::env::set_var("LC_ALL", "C") };
+            reinit_locale();
+            assert_eq!(mb_cur_max(), 1);
+
+            unsafe { std::env::remove_var("LC_ALL") };
         });
     }
 }

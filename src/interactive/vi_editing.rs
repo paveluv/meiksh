@@ -650,11 +650,7 @@ impl ViState {
                         actions.push(ViAction::Bell);
                         break;
                     }
-                    self.cursor = if self.line.is_empty() {
-                        0
-                    } else {
-                        next.min(last_char_start(&self.line))
-                    };
+                    self.cursor = next.min(last_char_start(&self.line));
                 }
                 actions.push(ViAction::Redraw);
             }
@@ -665,11 +661,7 @@ impl ViState {
                         actions.push(ViAction::Bell);
                         break;
                     }
-                    self.cursor = if self.line.is_empty() {
-                        0
-                    } else {
-                        next.min(last_char_start(&self.line))
-                    };
+                    self.cursor = next.min(last_char_start(&self.line));
                 }
                 actions.push(ViAction::Redraw);
             }
@@ -715,14 +707,10 @@ impl ViState {
                     p += char_len_at(&self.line, p);
                     col += 1;
                 }
-                self.cursor = if p > self.line.len() {
-                    last_char_start(&self.line)
+                self.cursor = if self.line.is_empty() {
+                    0
                 } else {
-                    p.min(if self.line.is_empty() {
-                        0
-                    } else {
-                        last_char_start(&self.line)
-                    })
+                    p.min(last_char_start(&self.line))
                 };
                 actions.push(ViAction::Redraw);
             }
@@ -1120,11 +1108,7 @@ impl ViState {
                         self.line.insert(word_start + i, *b);
                     }
                     let end = word_start + replacement.len();
-                    self.cursor = if end > 0 {
-                        last_char_start(&self.line[..end])
-                    } else {
-                        0
-                    };
+                    self.cursor = last_char_start(&self.line[..end]);
                 }
                 actions.push(ViAction::Redraw);
             }
@@ -1164,11 +1148,7 @@ impl ViState {
                         if is_dir {
                             self.cursor = end;
                         } else {
-                            self.cursor = if end > 0 {
-                                last_char_start(&self.line[..end])
-                            } else {
-                                0
-                            };
+                            self.cursor = last_char_start(&self.line[..end]);
                         }
                     } else {
                         actions.push(ViAction::Bell);
@@ -1276,11 +1256,7 @@ impl ViState {
                     if history[idx].windows(pat.len()).any(|w| w == pat.as_slice()) {
                         self.hist_index = Some(idx);
                         self.line = history[idx].to_vec();
-                        self.cursor = if self.line.is_empty() {
-                            0
-                        } else {
-                            last_char_start(&self.line)
-                        };
+                        self.cursor = last_char_start(&self.line);
                         found = true;
                         break;
                     }
@@ -1297,11 +1273,7 @@ impl ViState {
                     if history[idx].windows(pat.len()).any(|w| w == pat.as_slice()) {
                         self.hist_index = Some(idx);
                         self.line = history[idx].to_vec();
-                        self.cursor = if self.line.is_empty() {
-                            0
-                        } else {
-                            last_char_start(&self.line)
-                        };
+                        self.cursor = last_char_start(&self.line);
                         found = true;
                         break;
                     }
@@ -1700,8 +1672,8 @@ mod tests {
     mod vi_tests {
         use super::super::{
             PendingInput, ViAction, ViState, bigword_backward, bigword_end, bigword_forward,
-            do_find, glob_expand, is_word_char, last_char_start,
-            replay_cmd, resolve_motion, word_backward, word_end, word_forward,
+            do_find, glob_expand, is_word_char, last_char_start, replay_cmd, resolve_motion,
+            word_backward, word_end, word_forward,
         };
         use super::{feed_bytes, get_return, has_bell, has_return};
         use crate::sys::test_support::{assert_no_syscalls, run_trace, set_test_locale_utf8};
@@ -4216,6 +4188,296 @@ mod tests {
                 let mut yank = vec![];
                 replay_cmd(&mut line, &mut cursor, &mut yank, b'r', 1, Some(b'X'));
                 assert_eq!(line, b"aXb");
+            });
+        }
+
+        #[test]
+        fn replay_cmd_d_motion_on_empty_line() {
+            assert_no_syscalls(|| {
+                let mut line = Vec::new();
+                let mut cursor = 0usize;
+                let mut yank = vec![];
+                replay_cmd(&mut line, &mut cursor, &mut yank, b'd', 1, Some(b'w'));
+                assert!(line.is_empty());
+                assert_eq!(cursor, 0);
+            });
+        }
+
+        #[test]
+        fn resolve_motion_h_and_l() {
+            assert_no_syscalls(|| {
+                let line = b"abcde";
+                let (s, e) = resolve_motion(line, 3, b'h', 2);
+                assert_eq!((s, e), (1, 3));
+
+                let (s, e) = resolve_motion(line, 1, b'l', 2);
+                assert_eq!((s, e), (1, 3));
+
+                let (s, e) = resolve_motion(line, 0, b'h', 5);
+                assert_eq!((s, e), (0, 0));
+
+                let (s, e) = resolve_motion(line, 4, b'l', 5);
+                assert_eq!((s, e), (4, 5));
+            });
+        }
+
+        #[test]
+        fn tilde_on_non_alpha_advances_cursor() {
+            run_trace(trace_entries![], || {
+                set_test_locale_utf8();
+                let mut state = ViState::new(0x7f, 0);
+                state.line = b"1a2".to_vec();
+                state.cursor = 0;
+                feed_bytes(&mut state, b"\x1b~", &[]);
+                assert_eq!(state.cursor, 1);
+                assert_eq!(state.line, b"1a2");
+                feed_bytes(&mut state, b"~", &[]);
+                assert_eq!(state.cursor, 2);
+                assert_eq!(state.line, b"1A2");
+            });
+        }
+
+        #[test]
+        fn tilde_at_end_of_line_stops() {
+            run_trace(trace_entries![], || {
+                set_test_locale_utf8();
+                let mut state = ViState::new(0x7f, 0);
+                state.line = b"a".to_vec();
+                state.cursor = 0;
+                feed_bytes(&mut state, b"\x1b~", &[]);
+                assert_eq!(state.line, b"A");
+            });
+        }
+
+        #[test]
+        fn w_W_on_empty_line_bells() {
+            run_trace(trace_entries![], || {
+                set_test_locale_utf8();
+                let mut state = ViState::new(0x7f, 0);
+                state.line = Vec::new();
+                state.cursor = 0;
+                let actions = feed_bytes(&mut state, b"\x1bw", &[]);
+                assert!(has_bell(&actions));
+                let actions = feed_bytes(&mut state, b"W", &[]);
+                assert!(has_bell(&actions));
+            });
+        }
+
+        #[test]
+        fn pipe_column_motion_clamps_to_last_char() {
+            run_trace(trace_entries![], || {
+                set_test_locale_utf8();
+                let mut state = ViState::new(0x7f, 0);
+                state.line = b"ab".to_vec();
+                state.cursor = 0;
+                feed_bytes(&mut state, b"\x1b99|", &[]);
+                assert_eq!(state.cursor, 1);
+            });
+        }
+
+        #[test]
+        fn put_p_on_empty_line() {
+            run_trace(trace_entries![], || {
+                set_test_locale_utf8();
+                let mut state = ViState::new(0x7f, 0);
+                state.line = Vec::new();
+                state.cursor = 0;
+                state.yank_buf = b"x".to_vec();
+                feed_bytes(&mut state, b"\x1bp", &[]);
+                assert_eq!(state.line, b"x");
+            });
+        }
+
+        #[test]
+        fn undo_on_empty_edit_line() {
+            run_trace(trace_entries![], || {
+                set_test_locale_utf8();
+                let mut state = ViState::new(0x7f, 0);
+                state.line = b"abc".to_vec();
+                state.edit_line = Vec::new();
+                state.cursor = 2;
+                feed_bytes(&mut state, b"\x1bu", &[]);
+                assert!(state.line.is_empty());
+                assert_eq!(state.cursor, 0);
+            });
+        }
+
+        #[test]
+        fn delete_d_motion_on_whole_line() {
+            run_trace(trace_entries![], || {
+                set_test_locale_utf8();
+                let mut state = ViState::new(0x7f, 0);
+                state.line = b"abc".to_vec();
+                state.cursor = 0;
+                feed_bytes(&mut state, b"\x1bd$", &[]);
+                assert!(state.line.is_empty());
+                assert_eq!(state.cursor, 0);
+            });
+        }
+
+        #[test]
+        fn search_backward_on_empty_hist_entry() {
+            run_trace(trace_entries![], || {
+                set_test_locale_utf8();
+                let hist: Vec<Box<[u8]>> = vec![
+                    b"first".to_vec().into_boxed_slice(),
+                    b"".to_vec().into_boxed_slice(),
+                    b"third".to_vec().into_boxed_slice(),
+                ];
+                let mut state = ViState::new(0x7f, 0);
+                state.line = b"third".to_vec();
+                state.hist_index = Some(2);
+                state.search_buf = b"first".to_vec();
+                feed_bytes(&mut state, b"\x1b/first\r", &hist);
+            });
+        }
+
+        #[test]
+        fn find_char_with_multibyte_collects_bytes() {
+            run_trace(trace_entries![], || {
+                set_test_locale_utf8();
+                let mut state = ViState::new(0x7f, 0);
+                state.line = b"a\xc3\xa9b".to_vec();
+                state.cursor = 0;
+                feed_bytes(&mut state, b"\x1bf\xc3\xa9", &[]);
+                assert_eq!(state.cursor, 1);
+            });
+        }
+
+        #[test]
+        fn replace_char_with_invalid_byte() {
+            run_trace(trace_entries![], || {
+                set_test_locale_utf8();
+                let mut state = ViState::new(0x7f, 0);
+                state.line = b"abc".to_vec();
+                state.cursor = 0;
+                feed_bytes(&mut state, b"\x1br\x80", &[]);
+                assert_eq!(state.line[0], 0x80);
+            });
+        }
+
+        #[test]
+        fn expected_utf8_len_branches() {
+            assert_no_syscalls(|| {
+                assert_eq!(super::super::expected_utf8_len(0x00), 1);
+                assert_eq!(super::super::expected_utf8_len(0x7F), 1);
+                assert_eq!(super::super::expected_utf8_len(0x80), 1);
+                assert_eq!(super::super::expected_utf8_len(0xBF), 1);
+                assert_eq!(super::super::expected_utf8_len(0xC0), 2);
+                assert_eq!(super::super::expected_utf8_len(0xDF), 2);
+                assert_eq!(super::super::expected_utf8_len(0xE0), 3);
+                assert_eq!(super::super::expected_utf8_len(0xEF), 3);
+                assert_eq!(super::super::expected_utf8_len(0xF0), 4);
+                assert_eq!(super::super::expected_utf8_len(0xFF), 4);
+            });
+        }
+
+        #[test]
+        fn char_len_at_past_end_returns_zero() {
+            assert_no_syscalls(|| {
+                assert_eq!(super::super::char_len_at(b"a", 5), 0);
+                assert_eq!(super::super::char_len_at(b"", 0), 0);
+            });
+        }
+
+        #[test]
+        fn prev_char_start_at_zero() {
+            assert_no_syscalls(|| {
+                assert_eq!(super::super::prev_char_start(b"abc", 0), 0);
+            });
+        }
+
+        #[test]
+        fn replace_char_multibyte_collects_bytes() {
+            run_trace(trace_entries![], || {
+                set_test_locale_utf8();
+                let mut state = ViState::new(0x7f, 0);
+                state.line = b"abc".to_vec();
+                state.cursor = 0;
+                let actions = feed_bytes(&mut state, b"\x1br\xc3", &[]);
+                assert!(actions.iter().any(|a| matches!(a, ViAction::ReadByte)));
+                feed_bytes(&mut state, b"\xa9", &[]);
+                assert_eq!(state.line[0], 0xc3);
+                assert_eq!(state.line[1], 0xa9);
+            });
+        }
+
+        #[test]
+        fn replace_char_invalid_multibyte_uses_first_byte() {
+            run_trace(trace_entries![], || {
+                set_test_locale_utf8();
+                let mut state = ViState::new(0x7f, 0);
+                state.line = b"abc".to_vec();
+                state.cursor = 0;
+                feed_bytes(&mut state, b"\x1br\xc3\xff", &[]);
+                assert_eq!(state.line[0], 0xc3);
+            });
+        }
+
+        #[test]
+        fn replace_char_nul_uses_fallback() {
+            run_trace(trace_entries![], || {
+                set_test_locale_utf8();
+                let mut state = ViState::new(0x7f, 0);
+                state.line = b"abc".to_vec();
+                state.cursor = 0;
+                feed_bytes(&mut state, b"\x1br\x00", &[]);
+                assert_eq!(state.line[0], 0x00);
+            });
+        }
+
+        #[test]
+        fn tilde_non_alpha_at_end_stops() {
+            run_trace(trace_entries![], || {
+                set_test_locale_utf8();
+                let mut state = ViState::new(0x7f, 0);
+                state.line = b"1".to_vec();
+                state.cursor = 0;
+                feed_bytes(&mut state, b"\x1b~", &[]);
+                assert_eq!(state.cursor, 0);
+                assert_eq!(state.line, b"1");
+            });
+        }
+
+        #[test]
+        fn pipe_on_empty_line() {
+            run_trace(trace_entries![], || {
+                set_test_locale_utf8();
+                let mut state = ViState::new(0x7f, 0);
+                state.line = Vec::new();
+                state.cursor = 0;
+                feed_bytes(&mut state, b"\x1b|", &[]);
+                assert_eq!(state.cursor, 0);
+            });
+        }
+
+        #[test]
+        fn delete_motion_empties_line() {
+            run_trace(trace_entries![], || {
+                set_test_locale_utf8();
+                let mut state = ViState::new(0x7f, 0);
+                state.line = b"abc".to_vec();
+                state.cursor = 0;
+                feed_bytes(&mut state, b"\x1bd$", &[]);
+                assert!(state.line.is_empty());
+                assert_eq!(state.cursor, 0);
+            });
+        }
+
+        #[test]
+        fn dot_repeat_delete_empties_line() {
+            run_trace(trace_entries![], || {
+                set_test_locale_utf8();
+                let mut state = ViState::new(0x7f, 0);
+                state.line = b"ab cd".to_vec();
+                state.cursor = 0;
+                feed_bytes(&mut state, b"\x1bd$", &[]);
+                assert!(state.line.is_empty());
+                state.line = b"xyz".to_vec();
+                state.cursor = 0;
+                feed_bytes(&mut state, b".", &[]);
+                assert!(state.line.is_empty());
+                assert_eq!(state.cursor, 0);
             });
         }
     }

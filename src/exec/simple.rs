@@ -565,6 +565,21 @@ mod tests {
     }
 
     #[test]
+    fn restore_vars_with_path_clears_cache() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            shell
+                .env_mut()
+                .insert(b"PATH".to_vec(), b"/usr/bin".to_vec());
+            let assignments = vec![(b"PATH".to_vec(), b"/tmp".to_vec())];
+            let saved = save_vars(&shell, &assignments);
+            shell.set_var(b"PATH", b"/tmp").unwrap();
+            restore_vars(&mut shell, saved);
+            assert_eq!(shell.get_var(b"PATH"), Some(b"/usr/bin" as &[u8]));
+        });
+    }
+
+    #[test]
     fn non_special_builtin_prefix_assignments_are_temporary() {
         assert_no_syscalls(|| {
             let mut shell = test_shell();

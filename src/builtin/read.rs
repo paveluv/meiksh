@@ -729,6 +729,22 @@ mod tests {
     }
 
     #[test]
+    fn split_read_assignments_quoted_ifs_delimiter_skipped() {
+        assert_no_syscalls(|| {
+            let result = split_read_assignments(
+                &[
+                    (b"a".to_vec(), false),
+                    (b" ".to_vec(), true),
+                    (b" b".to_vec(), false),
+                ],
+                &[b"X".to_vec(), b"Y".to_vec()],
+                None,
+            );
+            assert_eq!(result, vec![b"a ".to_vec(), b"b".to_vec()]);
+        });
+    }
+
+    #[test]
     fn read_logical_line_quoted_to_unquoted_transition() {
         let reads = byte_reads(42, b"\\ab\n");
         run_trace(trace_entries![..reads], || {

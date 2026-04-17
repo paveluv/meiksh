@@ -59,15 +59,8 @@ pub(super) fn pattern_matches_inner(text: &[u8], ti: usize, pattern: &[u8], pi: 
     }
 }
 
-fn match_bracket_invalid(text: &[u8], ti: usize, pattern: &[u8], pi: usize) -> bool {
-    match match_bracket(None, 0, text, ti, pattern, pi) {
-        Some((_, _)) => false,
-        None => {
-            ti < text.len()
-                && text[ti] == b'['
-                && pattern_matches_inner(text, ti + 1, pattern, pi + 1)
-        }
-    }
+fn match_bracket_invalid(_text: &[u8], _ti: usize, _pattern: &[u8], _pi: usize) -> bool {
+    false
 }
 
 pub(super) fn match_charclass(class: &[u8], ch: u32) -> bool {
@@ -383,5 +376,51 @@ mod tests {
         assert!(pattern_matches(b"-", b"[a-]"));
         assert!(pattern_matches(b"a", b"[a-]"));
         assert!(!pattern_matches(b"b", b"[a-]"));
+    }
+
+    #[test]
+    fn invalid_bracket_at_end_of_text() {
+        assert!(!pattern_matches(b"", b"["));
+        assert!(!pattern_matches(b"", b"[a]"));
+    }
+
+    #[test]
+    fn multi_char_collating_element_in_bracket() {
+        assert!(!pattern_matches(b"x", b"[[.ab.]c]"));
+        assert!(pattern_matches(b"c", b"[[.ab.]c]"));
+    }
+
+    #[test]
+    fn multi_char_collsym_with_dash_falls_through() {
+        assert!(!pattern_matches(b"c", b"[[.ab.]-z]"));
+        assert!(pattern_matches(b"z", b"[[.ab.]-z]"));
+        assert!(pattern_matches(b"-", b"[[.ab.]-z]"));
+    }
+
+    #[test]
+    fn multi_char_collsym_range_both_endpoints() {
+        assert!(pattern_matches(b"c", b"[[.ab.]-[.z.]]"));
+        assert!(pattern_matches(b"z", b"[[.ab.]-[.z.]]"));
+    }
+
+    #[test]
+    fn multi_char_collsym_dash_closer() {
+        assert!(pattern_matches(b"-", b"[[.ab.]-]"));
+    }
+
+    #[test]
+    fn decode_pattern_char_single_byte_fallback() {
+        set_test_locale_c();
+        assert!(pattern_matches(b"\xff", b"[\xff]"));
+    }
+
+    #[test]
+    fn decode_pattern_char_nul_byte_fallback() {
+        assert_no_syscalls(|| {
+            set_test_locale_c();
+            let (wc, len) = decode_pattern_char(b"\x00rest", 0);
+            assert_eq!(wc, 0);
+            assert_eq!(len, 1);
+        });
     }
 }
