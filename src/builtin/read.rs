@@ -153,6 +153,36 @@ pub(super) fn push_read_piece(
     pieces.push((std::mem::take(current), quoted));
 }
 
+struct ReadIfsChar {
+    byte_seq: Box<[u8]>,
+    is_ws: bool,
+}
+
+fn decompose_read_ifs(ifs: &[u8]) -> Vec<ReadIfsChar> {
+    let mut result = Vec::new();
+    let mut i = 0;
+    while i < ifs.len() {
+        let (_, len) = crate::sys::locale::decode_char(&ifs[i..]);
+        let step = if len == 0 { 1 } else { len };
+        let is_ws = step == 1 && matches!(ifs[i], b' ' | b'\t' | b'\n');
+        result.push(ReadIfsChar {
+            byte_seq: ifs[i..i + step].into(),
+            is_ws,
+        });
+        i += step;
+    }
+    result
+}
+
+fn find_read_ifs_at<'a>(ifs_chars: &'a [ReadIfsChar], bytes: &[u8]) -> Option<(&'a [u8], bool)> {
+    for ic in ifs_chars {
+        if bytes.len() >= ic.byte_seq.len() && bytes[..ic.byte_seq.len()] == *ic.byte_seq {
+            return Some((&ic.byte_seq, ic.is_ws));
+        }
+    }
+    None
+}
+
 pub(super) fn split_read_assignments(
     pieces: &[(Vec<u8>, bool)],
     vars: &[Vec<u8>],
@@ -168,53 +198,45 @@ pub(super) fn split_read_assignments(
         return values;
     }
 
-    let ifs_ws: Vec<u8> = ifs
-        .iter()
-        .copied()
-        .filter(|&ch| matches!(ch, b' ' | b'\t' | b'\n'))
-        .collect();
-    let ifs_other: Vec<u8> = ifs
-        .iter()
-        .copied()
-        .filter(|&ch| !matches!(ch, b' ' | b'\t' | b'\n'))
-        .collect();
-    let chars = flatten_read_chars(pieces);
+    let ifs_chars = decompose_read_ifs(&ifs);
+    let bytes = flatten_read_bytes(pieces);
     if vars.len() == 1 {
-        return vec![trim_read_ifs_whitespace(&chars, &ifs_ws)];
+        return vec![trim_read_ifs_ws(&bytes, &ifs_chars)];
     }
 
     let mut values = Vec::new();
     let mut index = 0usize;
-    skip_read_ifs_whitespace(&chars, &ifs_ws, &mut index);
-    while index < chars.len() && values.len() + 1 < vars.len() {
+    skip_read_ifs_ws(&bytes, &ifs_chars, &mut index);
+    while index < bytes.len() && values.len() + 1 < vars.len() {
         let mut current = Vec::new();
         loop {
-            if index >= chars.len() {
+            if index >= bytes.len() {
                 values.push(current);
                 break;
             }
-            let (ch, quoted) = chars[index];
-            if !quoted && ifs_other.contains(&ch) {
-                values.push(current);
-                index += 1;
-                skip_read_ifs_whitespace(&chars, &ifs_ws, &mut index);
-                break;
+            let (_, quoted) = bytes[index];
+            if !quoted {
+                if let Some((seq, is_ws)) =
+                    find_read_ifs_at(&ifs_chars, &unquoted_tail(&bytes, index))
+                {
+                    if is_ws {
+                        debug_assert!(
+                            !current.is_empty(),
+                            "leading IFS whitespace should already be skipped"
+                        );
+                    }
+                    values.push(current);
+                    index += seq.len();
+                    skip_read_ifs_ws(&bytes, &ifs_chars, &mut index);
+                    break;
+                }
             }
-            if !quoted && ifs_ws.contains(&ch) {
-                debug_assert!(
-                    !current.is_empty(),
-                    "leading IFS whitespace should already be skipped"
-                );
-                values.push(current);
-                skip_read_ifs_whitespace(&chars, &ifs_ws, &mut index);
-                break;
-            }
-            current.push(ch);
+            current.push(bytes[index].0);
             index += 1;
         }
     }
 
-    values.push(trim_read_ifs_whitespace(&chars[index..], &ifs_ws));
+    values.push(trim_read_ifs_ws(&bytes[index..], &ifs_chars));
     values.resize(vars.len(), Vec::new());
     values
 }
@@ -227,32 +249,67 @@ pub(super) fn flatten_read_pieces(pieces: &[(Vec<u8>, bool)]) -> Vec<u8> {
     out
 }
 
-pub(super) fn flatten_read_chars(pieces: &[(Vec<u8>, bool)]) -> Vec<(u8, bool)> {
-    let mut chars = Vec::new();
+fn flatten_read_bytes(pieces: &[(Vec<u8>, bool)]) -> Vec<(u8, bool)> {
+    let mut out = Vec::new();
     for (text, quoted) in pieces {
-        for &ch in text.iter() {
-            chars.push((ch, *quoted));
+        for &b in text.iter() {
+            out.push((b, *quoted));
         }
     }
-    chars
+    out
 }
 
-pub(super) fn skip_read_ifs_whitespace(chars: &[(u8, bool)], ifs_ws: &[u8], index: &mut usize) {
-    while *index < chars.len() && !chars[*index].1 && ifs_ws.contains(&chars[*index].0) {
-        *index += 1;
+fn unquoted_tail(bytes: &[(u8, bool)], start: usize) -> Vec<u8> {
+    let mut out = Vec::new();
+    for &(b, q) in &bytes[start..] {
+        if q {
+            break;
+        }
+        out.push(b);
+    }
+    out
+}
+
+fn skip_read_ifs_ws(bytes: &[(u8, bool)], ifs_chars: &[ReadIfsChar], index: &mut usize) {
+    while *index < bytes.len() && !bytes[*index].1 {
+        let tail = unquoted_tail(bytes, *index);
+        if let Some((seq, true)) = find_read_ifs_at(ifs_chars, &tail) {
+            *index += seq.len();
+        } else {
+            break;
+        }
     }
 }
 
-pub(super) fn trim_read_ifs_whitespace(chars: &[(u8, bool)], ifs_ws: &[u8]) -> Vec<u8> {
+fn trim_read_ifs_ws(bytes: &[(u8, bool)], ifs_chars: &[ReadIfsChar]) -> Vec<u8> {
     let mut start = 0usize;
-    let mut end = chars.len();
-    while start < end && !chars[start].1 && ifs_ws.contains(&chars[start].0) {
-        start += 1;
+    skip_read_ifs_ws(bytes, ifs_chars, &mut start);
+    let mut end = bytes.len();
+    loop {
+        let mut found = false;
+        for ic in ifs_chars {
+            if !ic.is_ws {
+                continue;
+            }
+            let slen = ic.byte_seq.len();
+            if end >= start + slen {
+                let candidate = end - slen;
+                if bytes[candidate..end]
+                    .iter()
+                    .zip(ic.byte_seq.iter())
+                    .all(|(&(b, q), &ib)| b == ib && !q)
+                {
+                    end = candidate;
+                    found = true;
+                    break;
+                }
+            }
+        }
+        if !found {
+            break;
+        }
     }
-    while end > start && !chars[end - 1].1 && ifs_ws.contains(&chars[end - 1].0) {
-        end -= 1;
-    }
-    chars[start..end].iter().map(|(ch, _)| *ch).collect()
+    bytes[start..end].iter().map(|&(b, _)| b).collect()
 }
 
 #[cfg(test)]
@@ -636,6 +693,48 @@ mod tests {
                 assert_eq!(text, b"firstsecond");
             },
         );
+    }
+
+    #[test]
+    fn split_read_assignments_multibyte_ifs_char() {
+        // decompose_read_ifs + find_read_ifs_at are pure-logic functions that
+        // call decode_char.  In the ASCII test interface decode_char returns 1
+        // for every byte, so multi-byte IFS chars appear as separate entries.
+        // Verify the algorithm directly: two-byte IFS "\xC3\xA9" must be kept
+        // as one entry by decompose_read_ifs when decode_char reports len=2.
+        assert_no_syscalls(|| {
+            let ifs = decompose_read_ifs(b"\xc3\xa9");
+            // ASCII fallback: each byte is its own char → 2 entries
+            assert_eq!(ifs.len(), 2);
+        });
+
+        // Functional test via the matrix suite covers the real UTF-8 path.
+        // Here we unit-test the split logic assuming correct decomposition:
+        // construct a ReadIfsChar manually and verify find + split.
+        assert_no_syscalls(|| {
+            let ifs_chars = vec![ReadIfsChar {
+                byte_seq: b"\xc3\xa9".to_vec().into(),
+                is_ws: false,
+            }];
+            // find_read_ifs_at should match the two-byte sequence
+            assert!(find_read_ifs_at(&ifs_chars, b"\xc3\xa9b").is_some());
+            assert!(find_read_ifs_at(&ifs_chars, b"\xc3").is_none());
+            assert!(find_read_ifs_at(&ifs_chars, b"a").is_none());
+
+            // Build flat bytes and verify splitting
+            let bytes: Vec<(u8, bool)> = b"a\xc3\xa9b".iter().map(|&b| (b, false)).collect();
+            let mut idx = 0;
+            // 'a' is not IFS
+            assert!(find_read_ifs_at(&ifs_chars, &unquoted_tail(&bytes, idx)).is_none());
+            idx += 1;
+            // '\xc3\xa9' matches the multi-byte IFS char
+            let (seq, is_ws) = find_read_ifs_at(&ifs_chars, &unquoted_tail(&bytes, idx)).unwrap();
+            assert_eq!(seq.len(), 2);
+            assert!(!is_ws);
+            idx += seq.len();
+            // 'b' is not IFS
+            assert!(find_read_ifs_at(&ifs_chars, &unquoted_tail(&bytes, idx)).is_none());
+        });
     }
 
     #[test]
