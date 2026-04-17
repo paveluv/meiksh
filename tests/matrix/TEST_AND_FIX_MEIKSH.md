@@ -11,23 +11,22 @@ When the user asks to run this procedure on a test suite file (e.g.
 
 ## Phase 1 — Run the test suite against meiksh
 
+Use `tests/matrix/run.sh`, which builds meiksh and invokes `expect_pty`
+with the right `--shell` default.  All flags are forwarded to
+`expect_pty`.
+
 ```bash
-cargo build --quiet
-cargo run --quiet --bin expect_pty -- \
-  --shell "$(pwd)/target/debug/meiksh" \
-  tests/matrix/tests/<FILE>.md
+# Run a single suite:
+bash tests/matrix/run.sh tests/matrix/tests/<FILE>.md
+
+# Run all suites:
+bash tests/matrix/run.sh
+
+# Run a single test by name:
+bash tests/matrix/run.sh --test "test name" tests/matrix/tests/<FILE>.md
 ```
 
 Collect every `FAIL` line. If all tests pass, skip to Phase 4.
-
-To re-run a single test for debugging:
-
-```bash
-cargo run --quiet --bin expect_pty -- \
-  --shell "$(pwd)/target/debug/meiksh" \
-  --test "test name" \
-  tests/matrix/tests/<FILE>.md
-```
 
 ---
 
@@ -90,9 +89,7 @@ Follow the rules in `tests/matrix/MD_TEST_SUITES.md`:
 After edits, verify parsing and citation integrity:
 
 ```bash
-cargo run --quiet --bin expect_pty -- \
-  --shell /usr/bin/bash --parse-only \
-  tests/matrix/tests/<FILE>.md
+bash tests/matrix/run.sh --parse-only tests/matrix/tests/<FILE>.md
 cargo run --quiet --bin check_integrity -- tests/matrix
 ```
 
@@ -200,9 +197,7 @@ Re-run the original test suite and citation integrity check to confirm
 everything still passes:
 
 ```bash
-cargo run --quiet --bin expect_pty -- \
-  --shell "$(pwd)/target/debug/meiksh" \
-  tests/matrix/tests/<FILE>.md
+bash tests/matrix/run.sh tests/matrix/tests/<FILE>.md
 cargo run --quiet --bin check_integrity -- tests/matrix
 ```
 
