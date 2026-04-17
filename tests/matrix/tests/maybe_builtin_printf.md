@@ -870,12 +870,33 @@ begin test "printf %n$ format reuse"
 end test "printf %n$ format reuse"
 ```
 
+#### Test: printf leading quote gives byte value in C locale
+
+In the C locale, a leading single-quote causes the numeric value of the next
+byte to be used. The byte `\303` (first byte of UTF-8 `é`) has decimal
+value 195.
+
+```
+begin test "printf leading quote gives byte value in C locale"
+  setenv "LC_ALL" "C"
+  script
+    printf "%d\n" "'$(printf '\303\251')"
+  expect
+    stdout "195"
+    stderr ""
+    exit_code 0
+end test "printf leading quote gives byte value in C locale"
+```
+
 #### Test: printf leading quote gives wchar_t codepoint value
+
+In C.UTF-8, a leading single-quote causes the `wchar_t` value of the next
+character to be used. `\303\251` (U+00E9, `é`) has codepoint value 233.
 
 ```
 begin test "printf leading quote gives wchar_t codepoint value"
+  setenv "LC_ALL" "C.UTF-8"
   script
-    export LC_ALL=C.UTF-8
     printf "%d\n" "'$(printf '\303\251')"
   expect
     stdout "233"

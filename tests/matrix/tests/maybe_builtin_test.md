@@ -1106,8 +1106,12 @@ end test "test -f resolves symlink to regular file"
 
 #### Test: test string comparison uses C locale byte order
 
+In the C locale, string comparison uses byte ordering. Uppercase `A` (0x41)
+sorts before lowercase `a` (0x61).
+
 ```
 begin test "test string comparison uses C locale byte order"
+  setenv "LC_ALL" "C"
   script
     test A \< a && echo yes || echo no
   expect
@@ -1115,4 +1119,21 @@ begin test "test string comparison uses C locale byte order"
     stderr ""
     exit_code 0
 end test "test string comparison uses C locale byte order"
+```
+
+#### Test: test string comparison uses UTF-8 locale collation
+
+In C.UTF-8, `LC_COLLATE` determines the collation order. For ASCII
+characters in C.UTF-8, the order matches the C locale byte order.
+
+```
+begin test "test string comparison uses UTF-8 locale collation"
+  setenv "LC_ALL" "C.UTF-8"
+  script
+    test A \< a && echo yes || echo no
+  expect
+    stdout "yes"
+    stderr ""
+    exit_code 0
+end test "test string comparison uses UTF-8 locale collation"
 ```

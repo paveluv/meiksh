@@ -1071,3 +1071,39 @@ begin test "read -d with custom delimiter"
 end test "read -d with custom delimiter"
 ```
 
+#### Test: read with multi-byte IFS bytes split independently in C locale
+
+In the C locale, each byte of the IFS value is a separate delimiter. Setting
+IFS to the two-byte sequence `\303\251` causes each byte to act as an
+independent single-byte delimiter.
+
+```
+begin test "read with multi-byte IFS bytes split independently in C locale"
+  setenv "LC_ALL" "C"
+  script
+    printf 'a\303\251b\n' | { IFS=$(printf '\303\251') read x y z; echo "$x|$y|$z"; }
+  expect
+    stdout "a\|\|b"
+    stderr ""
+    exit_code 0
+end test "read with multi-byte IFS bytes split independently in C locale"
+```
+
+#### Test: read with multi-byte IFS character splits as one delimiter
+
+In C.UTF-8, `\303\251` (U+00E9) is a single character. When used as IFS,
+it acts as one non-whitespace delimiter, splitting `a\303\251b` into two
+fields.
+
+```
+begin test "read with multi-byte IFS character splits as one delimiter"
+  setenv "LC_ALL" "C.UTF-8"
+  script
+    printf 'a\303\251b\n' | { IFS=$(printf '\303\251') read x y; echo "$x|$y"; }
+  expect
+    stdout "a\|b"
+    stderr ""
+    exit_code 0
+end test "read with multi-byte IFS character splits as one delimiter"
+```
+

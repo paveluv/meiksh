@@ -429,6 +429,26 @@ begin test "quoted $* uses only the first character of multi-character IFS"
 end test "quoted $* uses only the first character of multi-character IFS"
 ```
 
+#### Test: quoted $* uses full multi-byte first IFS character in UTF-8
+
+In C.UTF-8, the first character of IFS may be a multi-byte character.
+`"$*"` shall use the entire multi-byte character (not just its first byte)
+as the separator.
+
+```
+begin test "quoted $* uses full multi-byte first IFS character in UTF-8"
+  setenv "LC_ALL" "C.UTF-8"
+  script
+    IFS=$(printf '\303\251')
+    set -- a b
+    printf '%s' "$*" | od -An -t x1 | tr -d ' \n'
+  expect
+    stdout "61c3a962"
+    stderr ""
+    exit_code 0
+end test "quoted $* uses full multi-byte first IFS character in UTF-8"
+```
+
 #### Test: quoted $* uses space when IFS is unset
 
 When `"$*"` is expanded and `IFS` is unset, the positional parameters are

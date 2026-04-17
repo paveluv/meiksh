@@ -350,13 +350,15 @@ begin test "pattern without special chars left unchanged"
 end test "pattern without special chars left unchanged"
 ```
 
-#### Test: glob results sorted by collating sequence
+#### Test: glob results sorted by collating sequence in C locale
 
 When a pattern matches multiple filenames, they are returned sorted
-according to the collating sequence in effect.
+according to the collating sequence in effect. In the C locale this is
+byte-value order.
 
 ```
-begin test "glob results sorted by collating sequence"
+begin test "glob results sorted by collating sequence in C locale"
+  setenv "LC_ALL" "C"
   script
     mkdir -p tmp_pattern
     touch tmp_pattern/c.txt tmp_pattern/a.txt tmp_pattern/b.txt
@@ -365,7 +367,26 @@ begin test "glob results sorted by collating sequence"
     stdout "tmp_pattern/a\.txt tmp_pattern/b\.txt tmp_pattern/c\.txt"
     stderr ""
     exit_code 0
-end test "glob results sorted by collating sequence"
+end test "glob results sorted by collating sequence in C locale"
+```
+
+#### Test: glob results sorted by collating sequence in UTF-8 locale
+
+In C.UTF-8, glob results are sorted by the locale's collating sequence.
+For ASCII-only filenames, the result is the same as C locale byte order.
+
+```
+begin test "glob results sorted by collating sequence in UTF-8 locale"
+  setenv "LC_ALL" "C.UTF-8"
+  script
+    mkdir -p tmp_pattern
+    touch tmp_pattern/c.txt tmp_pattern/a.txt tmp_pattern/b.txt
+    echo tmp_pattern/*.txt
+  expect
+    stdout "tmp_pattern/a\.txt tmp_pattern/b\.txt tmp_pattern/c\.txt"
+    stderr ""
+    exit_code 0
+end test "glob results sorted by collating sequence in UTF-8 locale"
 ```
 
 #### Test: question mark does not match leading dot
@@ -441,12 +462,36 @@ begin test "slash before closing bracket makes open bracket literal"
 end test "slash before closing bracket makes open bracket literal"
 ```
 
+#### Test: question-mark matches single byte in C locale
+
+In the C locale each byte is a character, so `?` matches one byte.
+The two-byte sequence `\303\251` is two characters.
+
+```
+begin test "question-mark matches single byte in C locale"
+  setenv "LC_ALL" "C"
+  script
+    v=$(printf '\303\251')
+    case "$v" in
+      (??) echo two;;
+      (?) echo one;;
+      (*) echo no;;
+    esac
+  expect
+    stdout "two"
+    stderr ""
+    exit_code 0
+end test "question-mark matches single byte in C locale"
+```
+
 #### Test: question-mark matches single multi-byte character
+
+In C.UTF-8, `\303\251` (U+00E9, `é`) is a single character, so `?` matches it.
 
 ```
 begin test "question-mark matches single multi-byte character"
+  setenv "LC_ALL" "C.UTF-8"
   script
-    export LC_ALL=C.UTF-8
     v=$(printf '\303\251')
     case "$v" in
       (?) echo yes;;
@@ -461,10 +506,13 @@ end test "question-mark matches single multi-byte character"
 
 #### Test: question-mark does not match two multi-byte characters
 
+Two multi-byte characters (`\303\251\303\250`) are two characters in C.UTF-8,
+so a single `?` does not match them.
+
 ```
 begin test "question-mark does not match two multi-byte characters"
+  setenv "LC_ALL" "C.UTF-8"
   script
-    export LC_ALL=C.UTF-8
     v=$(printf '\303\251\303\250')
     case "$v" in
       (?) echo yes;;
@@ -477,12 +525,35 @@ begin test "question-mark does not match two multi-byte characters"
 end test "question-mark does not match two multi-byte characters"
 ```
 
+#### Test: bracket alpha class does not match high byte in C locale
+
+In the C locale, bytes `\303` and `\251` are not alphabetic characters, so
+`[[:alpha:]]` does not match the two-byte sequence as a single character.
+
+```
+begin test "bracket alpha class does not match high byte in C locale"
+  setenv "LC_ALL" "C"
+  script
+    v=$(printf '\303\251')
+    case "$v" in
+      ([[:alpha:]]) echo yes;;
+      (*) echo no;;
+    esac
+  expect
+    stdout "no"
+    stderr ""
+    exit_code 0
+end test "bracket alpha class does not match high byte in C locale"
+```
+
 #### Test: bracket alpha class matches multi-byte character
+
+In C.UTF-8, `\303\251` (U+00E9, `é`) is a single alphabetic character.
 
 ```
 begin test "bracket alpha class matches multi-byte character"
+  setenv "LC_ALL" "C.UTF-8"
   script
-    export LC_ALL=C.UTF-8
     v=$(printf '\303\251')
     case "$v" in
       ([[:alpha:]]) echo yes;;
@@ -495,12 +566,36 @@ begin test "bracket alpha class matches multi-byte character"
 end test "bracket alpha class matches multi-byte character"
 ```
 
+#### Test: asterisk matches across bytes in C locale
+
+In the C locale, `a*b` matches `a` followed by any bytes followed by `b`.
+The two-byte UTF-8 sequence between `a` and `b` is matched byte-by-byte.
+
+```
+begin test "asterisk matches across bytes in C locale"
+  setenv "LC_ALL" "C"
+  script
+    v=$(printf 'a\303\251b')
+    case "$v" in
+      (a*b) echo yes;;
+      (*) echo no;;
+    esac
+  expect
+    stdout "yes"
+    stderr ""
+    exit_code 0
+end test "asterisk matches across bytes in C locale"
+```
+
 #### Test: asterisk matches across multi-byte characters
+
+In C.UTF-8, `a*b` matches `a` followed by any characters (including
+multi-byte ones) followed by `b`.
 
 ```
 begin test "asterisk matches across multi-byte characters"
+  setenv "LC_ALL" "C.UTF-8"
   script
-    export LC_ALL=C.UTF-8
     v=$(printf 'a\303\251b')
     case "$v" in
       (a*b) echo yes;;
