@@ -130,13 +130,38 @@ pub(crate) fn char_boundaries(bytes: &[u8]) -> Vec<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sys::test_support;
+    use crate::sys::test_support::{
+        self, assert_no_syscalls, set_test_locale_c, set_test_locale_utf8,
+    };
     use crate::trace_entries;
 
     #[test]
     fn trace_setup_locale_is_noop() {
         test_support::run_trace(trace_entries![], || {
             setup_locale();
+        });
+    }
+
+    #[test]
+    fn count_chars_c_vs_utf8() {
+        assert_no_syscalls(|| {
+            // U+00E9 = 0xC3 0xA9
+            set_test_locale_c();
+            assert_eq!(count_chars(b"\xc3\xa9"), 2);
+
+            set_test_locale_utf8();
+            assert_eq!(count_chars(b"\xc3\xa9"), 1);
+        });
+    }
+
+    #[test]
+    fn first_char_len_c_vs_utf8() {
+        assert_no_syscalls(|| {
+            set_test_locale_c();
+            assert_eq!(first_char_len(b"\xc3\xa9"), 1);
+
+            set_test_locale_utf8();
+            assert_eq!(first_char_len(b"\xc3\xa9"), 2);
         });
     }
 }

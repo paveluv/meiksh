@@ -281,6 +281,32 @@ fn try_consume_range(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sys::test_support::{assert_no_syscalls, set_test_locale_c, set_test_locale_utf8};
+
+    #[test]
+    fn question_mark_c_vs_utf8() {
+        assert_no_syscalls(|| {
+            // U+00E9 is 2 bytes; ? matches one character
+            set_test_locale_c();
+            assert!(!pattern_matches(b"\xc3\xa9", b"?"));
+            assert!(pattern_matches(b"\xc3\xa9", b"??"));
+
+            set_test_locale_utf8();
+            assert!(pattern_matches(b"\xc3\xa9", b"?"));
+            assert!(!pattern_matches(b"\xc3\xa9", b"??"));
+        });
+    }
+
+    #[test]
+    fn alpha_class_c_vs_utf8() {
+        assert_no_syscalls(|| {
+            set_test_locale_c();
+            assert!(!pattern_matches(b"\xc3\xa9", b"[[:alpha:]]"));
+
+            set_test_locale_utf8();
+            assert!(pattern_matches(b"\xc3\xa9", b"[[:alpha:]]"));
+        });
+    }
 
     #[test]
     fn bracket_helpers_cover_missing_closer() {

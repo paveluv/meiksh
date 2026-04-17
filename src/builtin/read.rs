@@ -316,7 +316,10 @@ fn trim_read_ifs_ws(bytes: &[(u8, bool)], ifs_chars: &[ReadIfsChar]) -> Vec<u8> 
 mod tests {
     use super::*;
     use crate::builtin::test_support::{diag, test_shell};
-    use crate::sys::test_support::{ArgMatcher, TraceResult, assert_no_syscalls, run_trace, t};
+    use crate::sys::test_support::{
+        ArgMatcher, TraceResult, assert_no_syscalls, run_trace, set_test_locale_c,
+        set_test_locale_utf8, t,
+    };
     use crate::trace_entries;
 
     fn byte_reads(fd: i32, input: &[u8]) -> Vec<crate::sys::test_support::TraceEntry> {
@@ -696,44 +699,32 @@ mod tests {
     }
 
     #[test]
-    fn split_read_assignments_multibyte_ifs_char() {
-        // decompose_read_ifs + find_read_ifs_at are pure-logic functions that
-        // call decode_char.  In the ASCII test interface decode_char returns 1
-        // for every byte, so multi-byte IFS chars appear as separate entries.
-        // Verify the algorithm directly: two-byte IFS "\xC3\xA9" must be kept
-        // as one entry by decompose_read_ifs when decode_char reports len=2.
+    fn split_read_assignments_multibyte_ifs_c_locale() {
         assert_no_syscalls(|| {
-            let ifs = decompose_read_ifs(b"\xc3\xa9");
-            // ASCII fallback: each byte is its own char → 2 entries
-            assert_eq!(ifs.len(), 2);
+            set_test_locale_c();
+            // In C locale, \xC3\xA9 is two bytes = two separate IFS chars.
+            // Each byte acts as an independent delimiter.
+            let result = split_read_assignments(
+                &[(b"a\xc3\xa9b".to_vec(), false)],
+                &[b"x".to_vec(), b"y".to_vec(), b"z".to_vec()],
+                Some(b"\xc3\xa9".to_vec()),
+            );
+            assert_eq!(result, vec![b"a".to_vec(), Vec::new(), b"b".to_vec()]);
         });
+    }
 
-        // Functional test via the matrix suite covers the real UTF-8 path.
-        // Here we unit-test the split logic assuming correct decomposition:
-        // construct a ReadIfsChar manually and verify find + split.
+    #[test]
+    fn split_read_assignments_multibyte_ifs_utf8_locale() {
         assert_no_syscalls(|| {
-            let ifs_chars = vec![ReadIfsChar {
-                byte_seq: b"\xc3\xa9".to_vec().into(),
-                is_ws: false,
-            }];
-            // find_read_ifs_at should match the two-byte sequence
-            assert!(find_read_ifs_at(&ifs_chars, b"\xc3\xa9b").is_some());
-            assert!(find_read_ifs_at(&ifs_chars, b"\xc3").is_none());
-            assert!(find_read_ifs_at(&ifs_chars, b"a").is_none());
-
-            // Build flat bytes and verify splitting
-            let bytes: Vec<(u8, bool)> = b"a\xc3\xa9b".iter().map(|&b| (b, false)).collect();
-            let mut idx = 0;
-            // 'a' is not IFS
-            assert!(find_read_ifs_at(&ifs_chars, &unquoted_tail(&bytes, idx)).is_none());
-            idx += 1;
-            // '\xc3\xa9' matches the multi-byte IFS char
-            let (seq, is_ws) = find_read_ifs_at(&ifs_chars, &unquoted_tail(&bytes, idx)).unwrap();
-            assert_eq!(seq.len(), 2);
-            assert!(!is_ws);
-            idx += seq.len();
-            // 'b' is not IFS
-            assert!(find_read_ifs_at(&ifs_chars, &unquoted_tail(&bytes, idx)).is_none());
+            set_test_locale_utf8();
+            // In C.UTF-8, \xC3\xA9 is one character (U+00E9).
+            // It acts as a single non-whitespace delimiter.
+            let result = split_read_assignments(
+                &[(b"a\xc3\xa9b".to_vec(), false)],
+                &[b"x".to_vec(), b"y".to_vec()],
+                Some(b"\xc3\xa9".to_vec()),
+            );
+            assert_eq!(result, vec![b"a".to_vec(), b"b".to_vec()]);
         });
     }
 
