@@ -208,7 +208,8 @@ pub(crate) fn file_needs_binary_rejection(path: &[u8]) -> bool {
             || m == [0xcf, 0xfa, 0xed, 0xfe]            // Mach-O 64-bit LE
             || m == [0xfe, 0xed, 0xfa, 0xce]            // Mach-O 32-bit BE
             || m == [0xfe, 0xed, 0xfa, 0xcf]            // Mach-O 64-bit BE
-            || m == [0xca, 0xfe, 0xba, 0xbe]            // Mach-O fat/universal
+            || m == [0xca, 0xfe, 0xba, 0xbe]
+        // Mach-O fat/universal
         {
             return false;
         }

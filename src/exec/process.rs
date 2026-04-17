@@ -70,8 +70,6 @@ impl RedirectionRef for ProcessRedirection {
     }
 }
 
-
-
 pub(super) fn prepare_prepared_process(
     shell: &Shell,
     prepared: &PreparedProcess,
