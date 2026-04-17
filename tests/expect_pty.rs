@@ -146,10 +146,9 @@ fn kill_session(sid: libc::pid_t) {
         }
     );
 
-    let mut killed = 0;
-
     #[cfg(target_os = "linux")]
-    {
+    let killed = {
+        let mut n = 0;
         if let Ok(entries) = fs::read_dir("/proc") {
             for entry in entries.flatten() {
                 let name = entry.file_name();
@@ -165,21 +164,18 @@ fn kill_session(sid: libc::pid_t) {
                     unsafe {
                         libc::kill(pid, libc::SIGKILL);
                     }
-                    killed += 1;
+                    n += 1;
                 }
             }
         }
-    }
+        n
+    };
 
     #[cfg(target_os = "freebsd")]
-    {
-        killed = kill_session_sysctl(sid);
-    }
+    let killed = kill_session_sysctl(sid);
 
     #[cfg(target_os = "macos")]
-    {
-        killed = kill_session_listpids(sid);
-    }
+    let killed = kill_session_listpids(sid);
 
     vlog!("kill_session: killed {killed} session members");
 }
