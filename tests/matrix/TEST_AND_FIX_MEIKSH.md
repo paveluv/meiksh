@@ -82,13 +82,18 @@ Follow the rules in `tests/matrix/MD_TEST_SUITES.md`:
 - Test names must match exactly between the heading and `begin test`/`end test`.
 - Assertions must appear in order: `stdout`, `stderr`, `exit_code` (all three
   required).
+- If the test exercises a locale-sensitive operation (character counting,
+  pattern matching, collation, IFS splitting, etc.), ensure both `C` and
+  `C.UTF-8` variants exist. See "Testing Locale-Sensitive Behavior" in
+  `MD_TEST_SUITES.md`.
 
-After edits, verify parsing:
+After edits, verify parsing and citation integrity:
 
 ```bash
 cargo run --quiet --bin expect_pty -- \
   --shell /usr/bin/bash --parse-only \
   tests/matrix/tests/<FILE>.md
+cargo run --quiet --bin check_integrity -- tests/matrix
 ```
 
 ---
@@ -191,12 +196,14 @@ Re-run `bash scripts/coverage.sh` and repeat until 100%.
 
 ## Phase 5 — Final verification
 
-Re-run the original test suite to confirm everything still passes:
+Re-run the original test suite and citation integrity check to confirm
+everything still passes:
 
 ```bash
 cargo run --quiet --bin expect_pty -- \
   --shell "$(pwd)/target/debug/meiksh" \
   tests/matrix/tests/<FILE>.md
+cargo run --quiet --bin check_integrity -- tests/matrix
 ```
 
 Report a summary: how many tests failed initially, how many were test bugs
