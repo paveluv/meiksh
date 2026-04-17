@@ -1861,16 +1861,6 @@ mod tests {
         }
     }
 
-    fn parsed_assignment_word(source: &[u8]) -> Word {
-        let prog = crate::syntax::parse(source).expect("parse");
-        let item = &prog.items[0];
-        let cmd = &item.and_or.first.commands[0];
-        match cmd {
-            crate::syntax::ast::Command::Simple(sc) => sc.assignments[0].value.clone(),
-            _ => panic!("expected simple command with assignment"),
-        }
-    }
-
     #[test]
     fn expand_word_via_parts_simple_var() {
         let mut ctx = FakeContext::new();
