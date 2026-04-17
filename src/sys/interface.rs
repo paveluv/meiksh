@@ -200,23 +200,21 @@ pub(super) fn default_interface() -> SystemInterface {
             unsafe { libc::_exit(status) }
         },
         setenv: |key, value| {
+            if key.is_empty() || key.contains(&b'=') {
+                return Err(SysError::Errno(libc::EINVAL));
+            }
             let c_key = crate::bstr::to_cstring(key).map_err(|_| SysError::NulInPath)?;
             let c_value = crate::bstr::to_cstring(value).map_err(|_| SysError::NulInPath)?;
-            let result = unsafe { libc::setenv(c_key.as_ptr(), c_value.as_ptr(), 1) };
-            if result == 0 {
-                Ok(())
-            } else {
-                Err(last_error())
-            }
+            let rc = unsafe { libc::setenv(c_key.as_ptr(), c_value.as_ptr(), 1) };
+            if rc == 0 { Ok(()) } else { Err(last_error()) }
         },
         unsetenv: |key| {
-            let c_key = crate::bstr::to_cstring(key).map_err(|_| SysError::NulInPath)?;
-            let result = unsafe { libc::unsetenv(c_key.as_ptr()) };
-            if result == 0 {
-                Ok(())
-            } else {
-                Err(last_error())
+            if key.is_empty() || key.contains(&b'=') {
+                return Err(SysError::Errno(libc::EINVAL));
             }
+            let c_key = crate::bstr::to_cstring(key).map_err(|_| SysError::NulInPath)?;
+            let rc = unsafe { libc::unsetenv(c_key.as_ptr()) };
+            if rc == 0 { Ok(()) } else { Err(last_error()) }
         },
         getenv: |key| {
             let c_key = crate::bstr::to_cstring(key).ok()?;
@@ -604,9 +602,8 @@ mod tests {
     }
 
     #[test]
-    fn default_interface_env_errors() {
+    fn default_interface_env_validation() {
         let tbl = default_interface();
-        // EINVAL cases: empty key, or key containing =
         assert!((tbl.setenv)(b"", b"val").is_err());
         assert!((tbl.setenv)(b"k=v", b"val").is_err());
         assert!((tbl.unsetenv)(b"").is_err());
