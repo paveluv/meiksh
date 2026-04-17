@@ -995,7 +995,7 @@ mod tests {
     use std::collections::HashMap;
     use std::rc::Rc;
 
-    use crate::syntax::token::alias_has_trailing_blank;
+    use crate::syntax::byte_class::alias_has_trailing_blank;
     use crate::syntax::{parse, parse_with_aliases};
 
     fn bx(s: &[u8]) -> Box<[u8]> {

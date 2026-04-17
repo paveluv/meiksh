@@ -1,10 +1,10 @@
 use crate::sys;
 
 use super::glob::pattern_matches;
-use super::model::is_glob_byte;
+use crate::syntax::byte_class::is_glob_char;
 
 pub(super) fn expand_pathname(pattern: &[u8]) -> Vec<Vec<u8>> {
-    if !pattern.iter().any(|&b| is_glob_byte(b)) {
+    if !pattern.iter().any(|&b| is_glob_char(b)) {
         return vec![pattern.to_vec()];
     }
     let absolute = pattern.first() == Some(&b'/');
@@ -46,7 +46,7 @@ pub(super) fn expand_path_segments(
 
     let segment = segments[index];
 
-    if !segment.iter().any(|&b| is_glob_byte(b)) {
+    if !segment.iter().any(|&b| is_glob_char(b)) {
         let next = path_join(base, segment);
         if sys::fs::file_exists(&next) {
             expand_path_segments(&next, segments, index + 1, absolute, matches);

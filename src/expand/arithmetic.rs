@@ -1,4 +1,5 @@
 use crate::bstr;
+use crate::syntax::byte_class::{is_ascii_ws, is_digit, is_name_cont, is_name_start};
 
 use super::core::{Context, ExpandError};
 use super::model::Expansion;
@@ -419,8 +420,8 @@ impl<'a, 'src, C: Context> ArithmeticParser<'a, 'src, C> {
                 return bstr::parse_hex_i64(&self.source[hex_start..self.index])
                     .ok_or_else(|| self.error_at_current(b"invalid hex constant"));
             }
-            if self.peek().map_or(false, |c| c.is_ascii_digit()) {
-                while self.index < self.source.len() && self.source[self.index].is_ascii_digit() {
+            if self.peek().map_or(false, |c| is_digit(c)) {
+                while self.index < self.source.len() && is_digit(self.source[self.index]) {
                     self.index += 1;
                 }
                 return bstr::parse_octal_i64(&self.source[start + 1..self.index])
@@ -429,7 +430,7 @@ impl<'a, 'src, C: Context> ArithmeticParser<'a, 'src, C> {
             return Ok(0);
         }
 
-        while self.index < self.source.len() && self.source[self.index].is_ascii_digit() {
+        while self.index < self.source.len() && is_digit(self.source[self.index]) {
             self.index += 1;
         }
         if start == self.index {
@@ -444,11 +445,11 @@ impl<'a, 'src, C: Context> ArithmeticParser<'a, 'src, C> {
         let start = self.index;
         if self.index < self.source.len() {
             let b = self.source[self.index];
-            if b.is_ascii_alphabetic() || b == b'_' {
+            if is_name_start(b) {
                 self.index += 1;
                 while self.index < self.source.len() {
                     let b2 = self.source[self.index];
-                    if b2.is_ascii_alphanumeric() || b2 == b'_' {
+                    if is_name_cont(b2) {
                         self.index += 1;
                     } else {
                         break;
@@ -477,7 +478,7 @@ impl<'a, 'src, C: Context> ArithmeticParser<'a, 'src, C> {
             bstr::parse_hex_i64(&trimmed[2..])
         } else if trimmed.starts_with(b"0")
             && trimmed.len() > 1
-            && trimmed[1..].iter().all(|b| b.is_ascii_digit())
+            && trimmed[1..].iter().all(|&b| is_digit(b))
         {
             bstr::parse_octal_i64(&trimmed[1..])
         } else {
@@ -493,7 +494,7 @@ impl<'a, 'src, C: Context> ArithmeticParser<'a, 'src, C> {
     }
 
     fn skip_ws(&mut self) {
-        while self.index < self.source.len() && self.source[self.index].is_ascii_whitespace() {
+        while self.index < self.source.len() && is_ascii_ws(self.source[self.index]) {
             self.index += 1;
         }
     }
@@ -530,13 +531,10 @@ impl<'a, 'src, C: Context> ArithmeticParser<'a, 'src, C> {
 }
 
 pub(super) fn trim_ascii_whitespace(s: &[u8]) -> &[u8] {
-    let start = s
-        .iter()
-        .position(|b| !b.is_ascii_whitespace())
-        .unwrap_or(s.len());
+    let start = s.iter().position(|b| !is_ascii_ws(*b)).unwrap_or(s.len());
     let end = s
         .iter()
-        .rposition(|b| !b.is_ascii_whitespace())
+        .rposition(|b| !is_ascii_ws(*b))
         .map_or(start, |p| p + 1);
     &s[start..end]
 }
