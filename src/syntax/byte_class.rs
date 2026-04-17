@@ -22,7 +22,6 @@ const TABLE: [u8; 256] = {
     t[b'<' as usize] = BC_WORD_BREAK | BC_DELIM;
     t[b'>' as usize] = BC_WORD_BREAK | BC_DELIM;
 
-    t[0x0B] = BC_ASCII_WS; // vertical tab
     t[0x0C] = BC_ASCII_WS; // form feed
     t[b'\r' as usize] = BC_ASCII_WS;
 
@@ -125,6 +124,68 @@ mod tests {
     use super::*;
 
     #[test]
+    fn helpers_match_reference_for_all_256_bytes() {
+        for b in 0u8..=255 {
+            assert_eq!(
+                is_word_break(b),
+                matches!(
+                    b,
+                    b' ' | b'\t' | b'\n' | b';' | b'&' | b'|' | b'(' | b')' | b'<' | b'>'
+                ),
+                "is_word_break mismatch for 0x{b:02x}"
+            );
+            assert_eq!(
+                is_delim(b),
+                matches!(
+                    b,
+                    b' ' | b'\t' | b'\n' | b';' | b'&' | b'|' | b'(' | b')' | b'<' | b'>' | b'#'
+                ),
+                "is_delim mismatch for 0x{b:02x}"
+            );
+            assert_eq!(
+                is_ascii_ws(b),
+                b.is_ascii_whitespace(),
+                "is_ascii_ws mismatch for 0x{b:02x}"
+            );
+            assert_eq!(
+                is_quote(b),
+                matches!(b, b'\'' | b'"' | b'\\' | b'$' | b'`'),
+                "is_quote mismatch for 0x{b:02x}"
+            );
+            assert_eq!(
+                is_name_start(b),
+                b == b'_' || b.is_ascii_alphabetic(),
+                "is_name_start mismatch for 0x{b:02x}"
+            );
+            assert_eq!(
+                is_digit(b),
+                b.is_ascii_digit(),
+                "is_digit mismatch for 0x{b:02x}"
+            );
+            assert_eq!(
+                is_name_cont(b),
+                b == b'_' || b.is_ascii_alphanumeric(),
+                "is_name_cont mismatch for 0x{b:02x}"
+            );
+            assert_eq!(
+                is_glob_char(b),
+                matches!(b, b'*' | b'?' | b'['),
+                "is_glob_char mismatch for 0x{b:02x}"
+            );
+            assert_eq!(
+                is_special_param(b),
+                matches!(b, b'@' | b'*' | b'?' | b'$' | b'!' | b'#' | b'-'),
+                "is_special_param mismatch for 0x{b:02x}"
+            );
+            assert_eq!(
+                is_tilde_user_break(b),
+                matches!(b, b'/' | b'\'' | b'"' | b'\\' | b'$' | b'`' | b':'),
+                "is_tilde_user_break mismatch for 0x{b:02x}"
+            );
+        }
+    }
+
+    #[test]
     fn table_flags_are_independent() {
         let flags = [
             BC_WORD_BREAK,
@@ -162,9 +223,10 @@ mod tests {
 
     #[test]
     fn ascii_ws_chars() {
-        for &b in b" \t\n\x0b\x0c\r" {
+        for &b in b" \t\n\x0c\r" {
             assert!(is_ascii_ws(b), "expected ascii_ws for 0x{b:02x}");
         }
+        assert!(!is_ascii_ws(b'\x0b'));
         assert!(!is_ascii_ws(b'a'));
         assert!(!is_ascii_ws(b';'));
     }
@@ -240,6 +302,7 @@ mod tests {
         assert!(!is_name(b""));
         assert!(!is_name(b"1abc"));
         assert!(!is_name(b"-x"));
+        assert!(!is_name(b"a-b"));
     }
 
     #[test]
