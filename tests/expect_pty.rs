@@ -1797,6 +1797,7 @@ fn baseline_env(
     env.insert("LC_ALL".into(), "C".into());
     if let Some(dir) = locale_dir {
         env.insert("LOCPATH".into(), dir.into());
+        env.insert("PATH_LOCALE".into(), dir.into());
     }
     env.insert("PS1".into(), "$ ".into());
     env.insert("PS2".into(), "> ".into());

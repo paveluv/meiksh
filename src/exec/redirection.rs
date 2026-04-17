@@ -296,6 +296,7 @@ pub(super) fn apply_shell_redirection<R: RedirectionRef>(
 
 pub(super) fn replace_shell_fd(fd: i32, target_fd: i32) -> sys::error::SysResult<()> {
     if fd == target_fd {
+        sys::fd_io::clear_cloexec(fd)?;
         return Ok(());
     }
     sys::fd_io::duplicate_fd(fd, target_fd)?;
@@ -651,9 +652,14 @@ mod tests {
 
     #[test]
     fn replace_shell_fd_same_fd() {
-        assert_no_syscalls(|| {
-            replace_shell_fd(42, 42).expect("same-fd replacement");
-        });
+        run_trace(
+            trace_entries![
+                fcntl(fd(42), int(sys::constants::F_SETFD as i64), int(0)) -> 0,
+            ],
+            || {
+                replace_shell_fd(42, 42).expect("same-fd replacement");
+            },
+        );
     }
 
     #[test]

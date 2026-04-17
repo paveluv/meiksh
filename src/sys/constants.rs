@@ -3,6 +3,7 @@ use libc::{c_int, mode_t};
 pub(crate) const SC_CLK_TCK: c_int = libc::_SC_CLK_TCK;
 pub(crate) const F_GETFL: c_int = libc::F_GETFL;
 pub(crate) const F_SETFL: c_int = libc::F_SETFL;
+pub(crate) const F_SETFD: c_int = libc::F_SETFD;
 pub(crate) const F_DUPFD_CLOEXEC: c_int = libc::F_DUPFD_CLOEXEC;
 pub(crate) const O_NONBLOCK: c_int = libc::O_NONBLOCK;
 
