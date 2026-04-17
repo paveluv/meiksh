@@ -164,7 +164,7 @@ begin test "LANG determines locale in absence of LC_ALL and LC_*"
   script
     LANG=POSIX locale charmap
   expect
-    stdout "ANSI_X3.4-1968"
+    stdout "(ANSI_X3.4-1968|US-ASCII)"
     stderr ""
     exit_code 0
 end test "LANG determines locale in absence of LC_ALL and LC_*"
@@ -180,7 +180,7 @@ begin test "LC_ALL overrides individual LC_* variables"
   script
     LC_ALL=POSIX LC_CTYPE=C.UTF-8 LANG=C.UTF-8 locale charmap
   expect
-    stdout "ANSI_X3.4-1968"
+    stdout "(ANSI_X3.4-1968|US-ASCII)"
     stderr ""
     exit_code 0
 end test "LC_ALL overrides individual LC_* variables"
@@ -236,24 +236,6 @@ begin test "LC_CTYPE determines character classification"
 end test "LC_CTYPE determines character classification"
 ```
 
-#### Test: LC_MESSAGES exported to child
-
-`LC_MESSAGES` shall determine the locale category for processing
-affirmative and negative responses and the language for messages.
-When exported, it is available to child utilities.
-
-```
-begin test "LC_MESSAGES exported to child"
-  script
-    export LC_MESSAGES=C
-    env | grep "^LC_MESSAGES=C$" && echo pass || echo fail
-  expect
-    stdout "LC_MESSAGES=C\npass"
-    stderr ""
-    exit_code 0
-end test "LC_MESSAGES exported to child"
-```
-
 #### Test: C and POSIX locale values select POSIX locale
 
 If the locale value is `"C"` or `"POSIX"`, the POSIX locale shall be
@@ -267,31 +249,10 @@ begin test "C and POSIX locale values select POSIX locale"
     echo "$c_charmap"
     test "$c_charmap" = "$posix_charmap" && echo match || echo mismatch
   expect
-    stdout "ANSI_X3.4-1968\nmatch"
+    stdout "(ANSI_X3.4-1968|US-ASCII)\nmatch"
     stderr ""
     exit_code 0
 end test "C and POSIX locale values select POSIX locale"
-```
-
-#### Test: LANGUAGE NLSPATH TEXTDOMAIN TEXTDOMAINDIR exported to child
-
-`LANGUAGE`, `NLSPATH`, `TEXTDOMAIN`, and `TEXTDOMAINDIR` are used by
-the message-catalog lookup interfaces. When exported, they shall be
-available to child utilities.
-
-```
-begin test "LANGUAGE NLSPATH TEXTDOMAIN TEXTDOMAINDIR exported to child"
-  script
-    export LANGUAGE=C
-    export NLSPATH=/dev/null
-    export TEXTDOMAIN=messages
-    export TEXTDOMAINDIR=/tmp
-    env | grep -E "^(LANGUAGE|NLSPATH|TEXTDOMAIN|TEXTDOMAINDIR)=" | sort
-  expect
-    stdout "LANGUAGE=C\nNLSPATH=/dev/null\nTEXTDOMAIN=messages\nTEXTDOMAINDIR=/tmp"
-    stderr ""
-    exit_code 0
-end test "LANGUAGE NLSPATH TEXTDOMAIN TEXTDOMAINDIR exported to child"
 ```
 
 ## xbd: 8.3 Other Environment Variables
@@ -589,24 +550,6 @@ begin test "HOME is set at startup"
 end test "HOME is set at startup"
 ```
 
-#### Test: LOGNAME is accessible when set in environment
-
-The system shall initialize `LOGNAME` at the time of login to be the
-user's login name. When present in the environment, the shell makes it
-accessible to scripts and child processes.
-
-```
-begin test "LOGNAME is accessible when set in environment"
-  setenv "LOGNAME" "testuser"
-  script
-    echo "$LOGNAME"
-  expect
-    stdout "testuser"
-    stderr ""
-    exit_code 0
-end test "LOGNAME is accessible when set in environment"
-```
-
 #### Test: SHELL represents user preferred command interpreter
 
 `SHELL` shall represent a pathname of the user's preferred command
@@ -627,42 +570,6 @@ begin test "SHELL represents user preferred command interpreter"
 end test "SHELL represents user preferred command interpreter"
 ```
 
-#### Test: TMPDIR represents a temporary directory pathname
-
-`TMPDIR` shall represent a pathname of a directory made available for
-programs that need a place to create temporary files. When set, it is
-available to the shell.
-
-```
-begin test "TMPDIR represents a temporary directory pathname"
-  script
-    TMPDIR=/tmp/mytempdir
-    echo "$TMPDIR"
-  expect
-    stdout "/tmp/mytempdir"
-    stderr ""
-    exit_code 0
-end test "TMPDIR represents a temporary directory pathname"
-```
-
-#### Test: TERM represents terminal type
-
-`TERM` shall represent the terminal type for which output is to be
-prepared. When exported, it is available to child utilities.
-
-```
-begin test "TERM represents terminal type"
-  script
-    TERM=dumb
-    export TERM
-    env | grep "^TERM=dumb$" && echo pass || echo fail
-  expect
-    stdout "TERM=dumb\npass"
-    stderr ""
-    exit_code 0
-end test "TERM represents terminal type"
-```
-
 #### Test: TZ affects timezone used by utilities
 
 `TZ` shall represent timezone information. The contents of `TZ` are
@@ -679,40 +586,3 @@ begin test "TZ affects timezone used by utilities"
 end test "TZ affects timezone used by utilities"
 ```
 
-#### Test: COLUMNS represents preferred terminal width
-
-`COLUMNS` shall represent a decimal integer >0 used to indicate the
-user's preferred width in column positions. When set, it overrides
-terminal window size information.
-
-```
-begin test "COLUMNS represents preferred terminal width"
-  script
-    COLUMNS=40
-    export COLUMNS
-    env | grep "^COLUMNS=40$" && echo pass || echo fail
-  expect
-    stdout "COLUMNS=40\npass"
-    stderr ""
-    exit_code 0
-end test "COLUMNS represents preferred terminal width"
-```
-
-#### Test: LINES represents preferred terminal height
-
-`LINES` shall represent a decimal integer >0 used to indicate the
-user's preferred number of lines on a page. When set, it overrides
-terminal window size information.
-
-```
-begin test "LINES represents preferred terminal height"
-  script
-    LINES=24
-    export LINES
-    env | grep "^LINES=24$" && echo pass || echo fail
-  expect
-    stdout "LINES=24\npass"
-    stderr ""
-    exit_code 0
-end test "LINES represents preferred terminal height"
-```

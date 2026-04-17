@@ -506,7 +506,7 @@ grouping command and then piping that compound command.
 ```
 begin test "grouping command allows pipeline around time"
   script
-    lines=$({ time echo hello; } 2>&1 | wc -l)
+    lines=$({ time echo hello; } 2>&1 | wc -l | tr -d ' ')
     [ "$lines" -ge 2 ] && echo "ok" || echo "bad:$lines"
   expect
     stdout "ok"

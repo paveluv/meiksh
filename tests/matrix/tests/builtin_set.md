@@ -375,7 +375,7 @@ begin test "set variable listing follows collation sequence"
     ZZ_coltest=z
     AA_coltest=a
     MM_coltest=m
-    set | sed -n 's/^\(AA_coltest\|MM_coltest\|ZZ_coltest\)=.*/\1/p' | uniq
+    set | sed -E -n 's/^(AA_coltest|MM_coltest|ZZ_coltest)=.*/\1/p' | uniq
   expect
     stdout "AA_coltest\nMM_coltest\nZZ_coltest"
     stderr ""
