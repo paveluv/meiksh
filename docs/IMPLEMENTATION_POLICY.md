@@ -23,9 +23,10 @@ This document records project rules, POSIX implementation-defined choices, and t
 
 ### Banned standard library usage
 
-The following `std` types and methods are banned from production code (enforced via `clippy.toml`). Each has a corresponding `sys::` wrapper that routes through the mockable syscall layer:
+The following `std` types, macros, and methods are banned from production code (enforced via `clippy.toml`). Each has a corresponding `sys::` wrapper or byte-correct alternative:
 
-- **Types**: `std::fs::{File, OpenOptions, DirEntry, ReadDir, Metadata}`, `std::process::{Command, Child, Stdio, ExitStatus}`, `std::io::{Error, Result}`
+- **Types**: `std::fs::{File, OpenOptions, DirEntry, ReadDir, Metadata}`, `std::process::{Command, Child, Stdio, ExitStatus}`, `std::io::{Error, Result}`, `std::string::String`, `std::path::{Path, PathBuf}`, `std::ffi::{OsStr, OsString}` — use `Vec<u8>` / `&[u8]` for strings and paths (byte-correct on Unix), and `sys::` wrappers for I/O and process types
+- **Macros**: `std::{println, eprintln, format, write, writeln}` — use `sys::write_all_fd` for output and `bstr::ByteWriter` for byte-correct formatting
 - **Methods**: `std::env::{var, vars, set_var, remove_var, args_os, args, set_current_dir, current_dir, current_exe}`, `std::fs::{read_to_string, write, metadata, read_dir, create_dir, remove_file}`, `std::path::Path::{exists, is_file, is_dir, metadata, canonicalize}`, `std::io::{Error::last_os_error, stdin, stdout, stderr}`, `std::process::exit`
 - **Errno constants**: production code must use `crate::sys::constants::ENOENT`, `crate::sys::constants::ENOEXEC`, etc. instead of `libc::ENOENT`, `libc::ENOEXEC`, etc.
 
@@ -93,7 +94,7 @@ mod tests {
 
 ## POSIX Implementation-Defined Choices
 
-- Variable values are stored as Rust `String` (UTF-8), not byte arrays.
+- Variable values are stored as byte arrays (`Vec<u8>`, `Box<[u8]>`), not Rust `String`.
 - `ENV` is only sourced when it expands to an absolute path that exists.
 - Default prompt is `meiksh$ ` unless `PS1` is set.
 - `umask` symbolic mode accepts `s` (setuid/setgid) and `X` (conditional execute); `s` contributes zero bits since `umask` only manages the 0o777 permission mask, accepted without error per POSIX's "unspecified" clause.

@@ -1,5 +1,9 @@
 # TEST_AND_FIX_MEIKSH procedure
 
+> **Authority:** `docs/IMPLEMENTATION_POLICY.md` is the canonical source for
+> project-wide rules.  If anything in this procedure conflicts with the
+> implementation policy, the policy takes priority.
+
 When the user asks to run this procedure on a test suite file (e.g.
 `tests/matrix/tests/2_9_2_pipelines.md`), execute these phases **in order**.
 
@@ -94,22 +98,25 @@ cargo run --quiet --bin expect_pty -- \
 For each meiksh bug, follow a **test-first** workflow:
 
 1. **Write a failing test first.** Add a unit test (in the relevant
-   `src/…/mod.rs` `#[cfg(test)]` block) or an integration test (in
-   `tests/integration/`) that reproduces the exact bug. The test must
-   **fail** against the current code — run it to confirm.
+   `src/..` mod tests block) or an integration test (in
+   `tests/integration/`) that reproduces the exact bug. See
+   `docs/TEST_WRITING_GUIDE.md` for guidance on choosing the right test
+   level and for available helpers. The test must **fail** against the
+   current code — run it to confirm.
 2. **Fix the bug** in the meiksh source so the new test passes.
 3. **Run `cargo test`** to verify all existing tests still pass alongside
    the new one.
 
 When writing the fix, apply these constraints strictly:
 
-- **Zero-copy philosophy**: minimize allocations and string copies. Prefer
-  `&str` / `Cow<'_, str>` over `String`. Prefer slicing over cloning.
-  Prefer `Box<str>` over `String` and `Box<[T]>` over `Vec<T>` for
+- **Zero-copy philosophy**: minimize allocations and copies. Prefer
+  `&[u8]` / `Cow<'_, [u8]>` over `Vec<u8>`. Prefer slicing over cloning.
+  Prefer `Box<[u8]>` over `Vec<u8>` and `Box<[T]>` over `Vec<T>` for
   frozen (immutable after creation) owned data — they drop the capacity
-  word and signal the value won't be mutated.
+  word and signal the value won't be mutated. (`String` and `str`-based
+  types are banned in production code — see `docs/IMPLEMENTATION_POLICY.md`.)
 - **No unnecessary allocations**: don't allocate a `Vec` when a fixed-size
-  local or iterator suffices. Don't `to_string()` when a borrow works.
+  local or iterator suffices.
 - **Clean, minimal diffs**: change only what is necessary. Don't refactor
   surrounding code unless the fix requires it.
 - **No narrating comments**: don't add comments that just describe what the
@@ -171,9 +178,12 @@ PY
 ```
 
 For each missed line, read the source, understand the code path, and add a
-unit test that exercises it. Use the project's existing test patterns
-(`test_shell()`, `run_trace`, `assert_no_syscalls`, `t()`, `t_fork()`,
-`TraceResult`, `ArgMatcher`, etc.).
+test that exercises it — either a unit test (in the relevant `src/` module) or
+an integration test (in `tests/integration/`).  Use good judgement: prefer
+whichever level gives the shortest, most readable test.  See
+`docs/TEST_WRITING_GUIDE.md` for guidance on choosing and for the available
+helpers (`test_shell()`, `run_trace`, `assert_no_syscalls`, `meiksh()`,
+`run_meiksh_with_stdin()`, etc.).
 
 Re-run `bash scripts/coverage.sh` and repeat until 100%.
 
