@@ -176,6 +176,11 @@ fn kill_session(sid: libc::pid_t) {
         killed = kill_session_sysctl(sid);
     }
 
+    #[cfg(target_os = "macos")]
+    {
+        killed = kill_session_listpids(sid);
+    }
+
     vlog!("kill_session: killed {killed} session members");
 }
 
@@ -246,6 +251,44 @@ fn kill_session_sysctl(sid: libc::pid_t) -> usize {
             libc::kill(pid, libc::SIGKILL);
         }
         killed += 1;
+    }
+    killed
+}
+
+#[cfg(target_os = "macos")]
+fn kill_session_listpids(sid: libc::pid_t) -> usize {
+    let count = unsafe { libc::proc_listallpids(std::ptr::null_mut(), 0) };
+    if count <= 0 {
+        vlog!("kill_session_listpids: proc_listallpids count failed");
+        return 0;
+    }
+
+    let buf_count = (count as usize) * 3 / 2;
+    let mut pids: Vec<libc::pid_t> = vec![0; buf_count];
+    let actual = unsafe {
+        libc::proc_listallpids(
+            pids.as_mut_ptr() as *mut libc::c_void,
+            (buf_count * std::mem::size_of::<libc::pid_t>()) as libc::c_int,
+        )
+    };
+    if actual <= 0 {
+        vlog!("kill_session_listpids: proc_listallpids data failed");
+        return 0;
+    }
+
+    let mut killed = 0;
+    for &pid in &pids[..actual as usize] {
+        if pid <= 1 {
+            continue;
+        }
+        let got_sid = unsafe { libc::getsid(pid) };
+        if got_sid == sid {
+            vlog!("kill_session_listpids: killing pid={pid}");
+            unsafe {
+                libc::kill(pid, libc::SIGKILL);
+            }
+            killed += 1;
+        }
     }
     killed
 }

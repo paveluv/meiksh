@@ -346,10 +346,13 @@ directory as the parent.
 ```
 begin test "child inherits working directory"
   script
-    cd /tmp
-    $SHELL -c 'pwd'
+    mkdir sub
+    cd sub
+    parent=$(pwd)
+    child=$($SHELL -c 'pwd')
+    test "$parent" = "$child" && echo match
   expect
-    stdout "/tmp"
+    stdout "match"
     stderr ""
     exit_code 0
 end test "child inherits working directory"
