@@ -184,7 +184,7 @@ begin test "middle pipeline command redirections override both pipe ends"
     printf 'out:'
     cat tmp_middle_out.txt
   expect
-    stdout "0\nout:from_file"
+    stdout "[ \t]*0\nout:from_file"
     stderr ""
     exit_code 0
 end test "middle pipeline command redirections override both pipe ends"

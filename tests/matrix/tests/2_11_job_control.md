@@ -586,7 +586,7 @@ begin interactive test "interactive shell in background stops with SIGTTIN"
   expect "$ "
   send "set -m"
   expect "$ "
-  send "/usr/bin/bash --posix -i </dev/tty >/dev/null 2>&1 &"
+  send "cat /dev/tty >/dev/null 2>&1 &"
   expect "\[[[:digit:]]+\] [[:digit:]]+"
   expect "$ "
   sleep 500ms

@@ -412,31 +412,31 @@ pub(crate) fn all_signal_names() -> &'static [(&'static [u8], c_int)] {
 }
 
 fn wifexited(status: c_int) -> bool {
-    (status & 0x7f) == 0
+    libc::WIFEXITED(status)
 }
 
 pub(crate) fn wexitstatus(status: c_int) -> i32 {
-    (status >> 8) & 0xff
+    libc::WEXITSTATUS(status)
 }
 
 pub(crate) fn wifsignaled(status: c_int) -> bool {
-    (status & 0x7f) != 0 && (status & 0x7f) != 0x7f
+    libc::WIFSIGNALED(status)
 }
 
 pub(crate) fn wtermsig(status: c_int) -> i32 {
-    status & 0x7f
+    libc::WTERMSIG(status)
 }
 
 pub(crate) fn wifstopped(status: c_int) -> bool {
-    (status & 0xff) == 0x7f
+    libc::WIFSTOPPED(status)
 }
 
 pub(crate) fn wifcontinued(status: c_int) -> bool {
-    status == 0xffff
+    libc::WIFCONTINUED(status)
 }
 
 pub(crate) fn wstopsig(status: c_int) -> i32 {
-    (status >> 8) & 0xff
+    libc::WSTOPSIG(status)
 }
 
 #[cfg(test)]

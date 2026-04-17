@@ -44,6 +44,15 @@ pub(crate) fn close_fd(fd: c_int) -> SysResult<()> {
     }
 }
 
+pub(crate) fn clear_cloexec(fd: c_int) -> SysResult<()> {
+    let result = (sys_interface().fcntl)(fd, super::constants::F_SETFD, 0);
+    if result >= 0 {
+        Ok(())
+    } else {
+        Err(last_error())
+    }
+}
+
 fn fd_status_flags(fd: c_int) -> SysResult<c_int> {
     let result = (sys_interface().fcntl)(fd, F_GETFL, 0);
     if result >= 0 {
