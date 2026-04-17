@@ -676,12 +676,6 @@ trait AsBytes {
     fn as_bytes(&self) -> &[u8];
 }
 
-impl AsBytes for Vec<u8> {
-    fn as_bytes(&self) -> &[u8] {
-        self
-    }
-}
-
 impl AsBytes for Cow<'_, [u8]> {
     fn as_bytes(&self) -> &[u8] {
         self

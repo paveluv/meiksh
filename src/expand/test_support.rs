@@ -92,6 +92,8 @@ impl Context for FakeContext {
     fn home_dir_for_user(&self, name: &[u8]) -> Option<Cow<'_, [u8]>> {
         if name == b"testuser" {
             Some(Cow::Owned(b"/home/testuser".to_vec()))
+        } else if name == b"slashuser" {
+            Some(Cow::Owned(b"/home/slashuser/".to_vec()))
         } else {
             None
         }

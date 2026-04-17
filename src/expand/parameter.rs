@@ -2225,4 +2225,71 @@ mod tests {
             assert_eq!(&*err.message, b"bad substitution");
         });
     }
+
+    #[test]
+    fn dollar_single_quote_trailing_backslash() {
+        assert_no_syscalls(|| {
+            let result = super::parse_dollar_single_quoted_body(b"abc\\");
+            assert_eq!(result, b"abc");
+        });
+    }
+
+    #[test]
+    fn dollar_single_quote_trailing_ctrl_c() {
+        assert_no_syscalls(|| {
+            let result = super::parse_dollar_single_quoted_body(b"\\c");
+            assert_eq!(result, b"");
+        });
+    }
+
+    #[test]
+    fn dollar_single_quote_ctrl_backslash_escape() {
+        assert_no_syscalls(|| {
+            let result = super::parse_dollar_single_quoted_body(b"\\c\\M");
+            assert_eq!(result, &[0x0d]);
+        });
+    }
+
+    #[test]
+    fn colon_plus_unset_empty() {
+        assert_no_syscalls(|| {
+            let mut ctx = FakeContext::new();
+            let result = expand_braced_parameter(&mut ctx, b"unset:+word", false).unwrap();
+            assert_eq!(result, Expansion::One(Vec::new()));
+        });
+    }
+
+    #[test]
+    fn plus_unset_empty() {
+        assert_no_syscalls(|| {
+            let mut ctx = FakeContext::new();
+            let result = expand_braced_parameter(&mut ctx, b"unset+word", false).unwrap();
+            assert_eq!(result, Expansion::One(Vec::new()));
+        });
+    }
+
+    #[test]
+    fn plus_set_returns_word() {
+        assert_no_syscalls(|| {
+            let mut ctx = FakeContext::new();
+            ctx.env.insert(b"X".to_vec(), b"val".to_vec());
+            let result = expand_braced_parameter(&mut ctx, b"X+alt", false).unwrap();
+            assert_eq!(result, Expansion::One(b"alt".to_vec()));
+        });
+    }
+
+    #[test]
+    fn at_empty_in_braced_default() {
+        assert_no_syscalls(|| {
+            let mut ctx = FakeContext::new();
+            ctx.positional.clear();
+            let result = expand_braced_parameter(&mut ctx, b"unset:-\"$@\"", false).unwrap();
+            match result {
+                Expansion::AtFields(fields) => {
+                    assert_eq!(fields, vec![Vec::<u8>::new()]);
+                }
+                other => panic!("expected AtFields, got {other:?}"),
+            }
+        });
+    }
 }

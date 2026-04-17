@@ -1583,3 +1583,621 @@ fn push_literal_glob_via_tilde_fallback() {
         "~nonexistentuser99999"
     );
 }
+
+// ── Coverage: $'...' edge-case escapes (parameter.rs:204,222,225-226) ──
+
+#[test]
+fn dollar_single_quote_multi_escape_sequences() {
+    let out = Command::new(meiksh())
+        .args(["-c", r"printf '%s' $'\c\M' | od -An -tx1 | tr -d ' \n'"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "0d");
+}
+
+#[test]
+fn dollar_single_quote_trailing_ctrl_c() {
+    let out = Command::new(meiksh())
+        .args(["-c", r"printf '%s' $'\c' | od -An -tx1 | tr -d ' \n'"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "");
+}
+
+#[test]
+fn dollar_single_quote_ctrl_backslash_escape() {
+    let out = Command::new(meiksh())
+        .args(["-c", r"printf '%s' $'\c\\' | od -An -tx1 | tr -d ' \n'"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "1c");
+}
+
+// ── Coverage: ${x:+word} and ${x+word} returning empty (parameter.rs:595,599) ──
+
+#[test]
+fn colon_plus_unset_returns_empty() {
+    let out = Command::new(meiksh())
+        .args(["-c", "unset x; printf '<%s>' \"${x:+word}\""])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "<>");
+}
+
+#[test]
+fn plus_unset_returns_empty() {
+    let out = Command::new(meiksh())
+        .args(["-c", "unset x; printf '<%s>' \"${x+word}\""])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "<>");
+}
+
+// ── Coverage: AtEmpty in parameter word (parameter.rs:822) ──
+
+#[test]
+fn at_empty_in_braced_default_word() {
+    let out = Command::new(meiksh())
+        .args(["-c", r#"set --; unset x; printf '<%s>' "${x:-$@}""#])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "<>");
+}
+
+// ── Coverage: IFS-empty disables splitting (word.rs:214) ──
+
+#[test]
+fn empty_ifs_disables_splitting() {
+    let out = Command::new(meiksh())
+        .args(["-c", "IFS=''; x='a b c'; printf '<%s>' $x"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "<a b c>");
+}
+
+// ── Coverage: Expansion::Static in arithmetic (arithmetic.rs:20) ──
+
+#[test]
+fn arithmetic_with_special_param_static() {
+    let out = Command::new(meiksh())
+        .args(["-c", "echo $(( $? + 1 ))"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "1");
+}
+
+// ── Coverage: Expansion::Static in flatten_expansion (word.rs:455) ──
+
+#[test]
+fn special_param_in_redirect_target() {
+    let td = TempDir::new("redir_sp");
+    let script = format!("cd {} && echo hi > \"$?\" && cat 0", td.path.display());
+    let out = Command::new(meiksh())
+        .args(["-c", &script])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "hi");
+}
+
+// ── Coverage: redirect word expanding to multiple fields (word.rs:258) ──
+
+#[test]
+fn redirect_word_joins_multiple_fields() {
+    let td = TempDir::new("redir_mf");
+    let script = format!(
+        "cd {} && x='a b'; echo hi > \"$x\"; cat 'a b'",
+        td.path.display()
+    );
+    let out = Command::new(meiksh())
+        .args(["-c", &script])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "hi");
+}
+
+// ── Coverage: assignment value via word-parts path (word.rs:308-317) ──
+
+#[test]
+fn assignment_value_via_word_parts_at_expansion() {
+    let out = Command::new(meiksh())
+        .args(["-c", "set -- x y z; v=$@; echo \"$v\""])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "x y z");
+}
+
+// ── Coverage: drain_single_vec with non-empty fields (expand_parts.rs:117-127) ──
+
+#[test]
+fn drain_single_vec_with_star_in_assignment() {
+    let out = Command::new(meiksh())
+        .args(["-c", "IFS=:; set -- a b c; x=$*; echo \"$x\""])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "a:b:c");
+}
+
+// ── Coverage: tilde HOME empty → empty field (word.rs:652-654) ──
+
+#[test]
+fn tilde_home_empty_raw_path() {
+    let out = Command::new(meiksh())
+        .args(["-c", "HOME=''; printf '<%s>' ~"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "<>");
+}
+
+// ── Coverage: tilde HOME unset → literal ~ (word.rs:655-657) ──
+
+#[test]
+fn tilde_home_unset_raw_path() {
+    let out = Command::new(meiksh())
+        .args(["-c", "unset HOME; printf '<%s>' ~"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "<~>");
+}
+
+// ── Coverage: has_command_substitution word-parts path (exec/simple.rs:126-128,134) ──
+
+#[test]
+fn has_command_sub_in_prefix_assignment_triggers_fork() {
+    let out = Command::new(meiksh())
+        .args(["-c", "x=$(echo val) printenv x"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "val");
+}
+
+// ── Coverage: backslash at EOF in raw word (token.rs:1275-1278) ──
+
+#[test]
+fn heredoc_delimiter_with_hash_start() {
+    let out = Command::new(meiksh())
+        .args(["-c", "cat <<\\#END\nhello\n#END"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "hello");
+}
+
+// ── Coverage: line continuation at word start → delimiter (token.rs:1261-1266) ──
+
+#[test]
+fn heredoc_delimiter_with_dollar_construct() {
+    let out = Command::new(meiksh())
+        .args(["-c", "cat <<$EOF\nhello\n$EOF"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "hello");
+}
+
+// ── Coverage: literal dollar at end of input (token.rs:1692-1697) ──
+
+#[test]
+fn literal_dollar_at_end_of_word() {
+    let out = Command::new(meiksh())
+        .args(["-c", "echo \"hello$\""])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "hello$");
+}
+
+// ── Coverage: backtick in raw word scanning (token.rs:1308-1311) ──
+
+#[test]
+fn backtick_in_raw_word_scan() {
+    let out = Command::new(meiksh())
+        .args(["-c", "echo pre`echo mid`post"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "premidpost");
+}
+
+// ── Coverage: unterminated backtick in dquotes (token.rs:1671,1874) ──
+
+#[test]
+fn unterminated_backtick_in_dquotes() {
+    let out = Command::new(meiksh())
+        .args(["-c", "echo \"`echo hi`\""])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "hi");
+}
+
+// ── Coverage: ${HOME} simplifies to SimpleVar (token.rs:1762) ──
+
+#[test]
+fn braced_var_simplifies_to_simple_var() {
+    let out = Command::new(meiksh())
+        .args(["-c", "x=test; echo ${x}end"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "testend");
+}
+
+// ── Coverage: $((literal)) → ArithmeticLiteral (token.rs:1791) ──
+
+#[test]
+fn arithmetic_literal_optimization() {
+    let out = Command::new(meiksh())
+        .args(["-c", "echo $((100))"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "100");
+}
+
+// ── Coverage: tilde user/path + word-break in parts (token.rs:1389,1404,1407,1419) ──
+
+#[test]
+fn tilde_user_slash_path_then_word_break() {
+    let user = std::env::var("USER")
+        .or_else(|_| std::env::var("LOGNAME"))
+        .unwrap();
+    let out = Command::new(meiksh())
+        .args(["-c", &format!("echo ~{user}/path rest")])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let parts: Vec<&str> = stdout.trim().split_whitespace().collect();
+    assert_eq!(parts.len(), 2);
+    assert!(parts[0].ends_with("/path"));
+    assert_eq!(parts[1], "rest");
+}
+
+#[test]
+fn bare_tilde_at_end_of_input() {
+    let out = Command::new(meiksh())
+        .args(["-c", "HOME=/testhome; echo ~"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "/testhome");
+}
+
+// ── Coverage: tilde in braced word (token.rs:1995-1996, expand_parts.rs:601,630) ──
+
+#[test]
+fn tilde_in_braced_default_word() {
+    let user = std::env::var("USER")
+        .or_else(|_| std::env::var("LOGNAME"))
+        .unwrap();
+    let out = Command::new(meiksh())
+        .args(["-c", &format!("unset x; echo ${{x:-~{user}/stuff}}")])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.trim().ends_with("/stuff"),
+        "expected tilde expansion: {stdout}"
+    );
+}
+
+// ── Coverage: non-special backslash in dquotes in word parts (token.rs:2042-2045) ──
+
+#[test]
+fn non_special_backslash_in_dquotes_braced_word() {
+    let out = Command::new(meiksh())
+        .args(["-c", r#"unset x; echo ${x:-"hello\wworld"}"#])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), r"hello\wworld");
+}
+
+// ── Coverage: backslash escape in unquoted braced word (token.rs:2084) ──
+
+#[test]
+fn backslash_escape_in_unquoted_braced_word() {
+    let out = Command::new(meiksh())
+        .args(["-c", r"unset x; echo ${x:-hello\ world}"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "hello world");
+}
+
+// ── Coverage: quoted expansion in pattern (expand_parts.rs:595) ──
+
+#[test]
+fn quoted_expansion_in_trim_pattern() {
+    let out = Command::new(meiksh())
+        .args(["-c", r#"p='.tar'; x=file.tar.gz; echo "${x%"$p".*}""#])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "file");
+}
+
+// ── Coverage: newlines in literal word part (expand_parts.rs:228-229) ──
+
+#[test]
+fn newlines_in_literal_word_part_inc_lineno() {
+    let out = Command::new(meiksh())
+        .args(["-c", "eval 'x=1\ny=2'; echo $x $y"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "1 2");
+}
+
+// ── Coverage: push_literal with glob char (expand_parts.rs:50) ──
+
+#[test]
+fn push_literal_glob_char_in_expansion() {
+    let td = TempDir::new("plglob");
+    fs::write(td.path.join("a.txt"), "").expect("write");
+    let script = format!("cd {} && unset x; echo ${{x:-*.txt}}", td.path.display());
+    let out = Command::new(meiksh())
+        .args(["-c", &script])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "a.txt");
+}
+
+// ── Coverage: tilde with trailing-slash home in expand_parts (expand_parts.rs:284) ──
+
+#[test]
+fn tilde_trailing_slash_home_in_braced_word() {
+    let out = Command::new(meiksh())
+        .args(["-c", "HOME=/home/test/; unset x; echo ${x:-~/foo}"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim(),
+        "/home/test/foo"
+    );
+}
+
+// ── Coverage: flush_literal merging (token.rs:1902,1905) ──
+
+#[test]
+fn flush_literal_merges_adjacent_spans() {
+    let user = std::env::var("USER")
+        .or_else(|_| std::env::var("LOGNAME"))
+        .unwrap();
+    let out = Command::new(meiksh())
+        .args(["-c", &format!("echo ~{user}/a/b/c")])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.trim().ends_with("/a/b/c"));
+}
+
+// ── Coverage: AsBytes for Vec<u8> (expand_parts.rs:680-682) ──
+
+#[test]
+fn as_bytes_vec_used_in_expansion() {
+    let out = Command::new(meiksh())
+        .args(["-c", r#"x="hello world"; echo "${x#hell}""#])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "o world");
+}
+
+// ── Coverage: word-parts path non-at-break (word.rs:160) + empty text (word.rs:193) ──
+// These are dead/unreachable code paths in the raw fallback expansion.
+// word.rs:160 - within has_at_expansion but without AtBreak or AtEmpty (logically impossible)
+// word.rs:193 - raw expansion producing empty non-expanded text
+
+// ── Coverage: tilde user home dir trailing slash (word.rs:662) ──
+
+#[test]
+fn tilde_user_trailing_slash_stripped_in_raw() {
+    let user = std::env::var("USER")
+        .or_else(|_| std::env::var("LOGNAME"))
+        .unwrap();
+    let out = Command::new(meiksh())
+        .args(["-c", &format!("v=~{user}/sub; echo $v")])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.trim().ends_with("/sub"),
+        "expected /sub suffix: {stdout}"
+    );
+    assert!(!stdout.trim().contains("//"), "no double slash: {stdout}");
+}
+
+// ── Coverage: # at start of raw word (token.rs:1254) ──
+
+#[test]
+fn hash_at_raw_word_start_is_comment() {
+    let out = Command::new(meiksh())
+        .args(["-c", "echo ok; #echo nope"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ok");
+}
+
+// ── Coverage: $ in raw word scanning (token.rs:1303) ──
+
+#[test]
+fn dollar_construct_in_raw_word() {
+    let out = Command::new(meiksh())
+        .args(["-c", "x=val; echo pre${x}post"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "prevalpost");
+}
+
+// ── Coverage: word_parts non-empty resume (token.rs:1192) ──
+
+#[test]
+fn word_parts_resume_after_tilde() {
+    let user = std::env::var("USER")
+        .or_else(|_| std::env::var("LOGNAME"))
+        .unwrap();
+    let out = Command::new(meiksh())
+        .args(["-c", &format!("echo ~{user}/dir${{x:-/sub}}")])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.trim().ends_with("/dir/sub"));
+}
+
+// ── Coverage: heredoc with $ in delimiter (scan_raw_word token.rs:1303) ──
+
+#[test]
+fn heredoc_dollar_in_delimiter() {
+    use std::io::Write;
+    use std::process::Stdio;
+    let mut child = Command::new(meiksh())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn");
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(b"cat <<$END\nhello\n$END\n")
+        .unwrap();
+    let out = child.wait_with_output().expect("wait");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "hello");
+}
+
+// ── Coverage: heredoc with backtick in delimiter (scan_raw_word token.rs:1308-1311) ──
+
+#[test]
+fn heredoc_backtick_in_delimiter() {
+    use std::io::Write;
+    use std::process::Stdio;
+    let mut child = Command::new(meiksh())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn");
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(b"cat <<\\`END\\`\nhello\n`END`\n")
+        .unwrap();
+    let out = child.wait_with_output().expect("wait");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "hello");
+}
+
+// ── Coverage: heredoc with backslash-newline at start (scan_raw_word token.rs:1261-1266) ──
+
+#[test]
+fn heredoc_backslash_newline_at_start_of_delim() {
+    let out = Command::new(meiksh())
+        .args(["-c", "cat <<\\\nEOF\nhello\nEOF"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "hello");
+}
+
+#[test]
+fn heredoc_backslash_newline_then_delimiter_break() {
+    let out = Command::new(meiksh())
+        .args(["-c", "cat <<\\\n;\nhello\n;"])
+        .output()
+        .expect("run");
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("expected heredoc delimiter"));
+}
+
+// ── Coverage: heredoc delimiter with trailing backslash at EOF (token.rs:1275-1278) ──
+
+#[test]
+fn heredoc_trailing_backslash_in_delimiter() {
+    let out = Command::new(meiksh())
+        .args(["-c", "cat <<END\\"])
+        .output()
+        .expect("run");
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("unterminated here-document"));
+}
+
+// ── Coverage: literal $ at end of word in dquote word-parts (token.rs:1692-1697) ──
+
+#[test]
+fn literal_dollar_at_end_of_dquoted_word() {
+    let out = Command::new(meiksh())
+        .args(["-c", "echo \"a$\""])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "a$");
+}
+
+// ── Coverage: unterminated backtick in dquoted word (token.rs:1671) ──
+// Note: `find_backtick_end_in_slice` returning raw.len() (line 1671/1874)
+// is a defensive path — the tokenizer rejects unterminated backticks before
+// the word-parts builder runs. This path is effectively unreachable.
+
+// ── Coverage: # at heredoc delimiter start (token.rs:1254) ──
+
+#[test]
+fn heredoc_delimiter_is_hash_comment() {
+    let out = Command::new(meiksh())
+        .args(["-c", "cat <<\\#EOF\nhello\n#EOF"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "hello");
+}
+
+#[test]
+fn heredoc_hash_at_delimiter_start_is_error() {
+    let out = Command::new(meiksh())
+        .args(["-c", "cat << #comment"])
+        .output()
+        .expect("run");
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("expected heredoc delimiter"));
+}
+
+// ── Coverage: backslash at EOF in heredoc delimiter (via -c) ──
+
+#[test]
+fn heredoc_delimiter_has_backslash_escaped_char() {
+    let out = Command::new(meiksh())
+        .args(["-c", "cat <<E\\ND\nhello\nEND"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "hello");
+}
