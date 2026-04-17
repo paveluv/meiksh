@@ -1704,7 +1704,7 @@ mod tests {
             replay_cmd, resolve_motion, word_backward, word_end, word_forward,
         };
         use super::{feed_bytes, get_return, has_bell, has_return};
-        use crate::sys::test_support::{assert_no_syscalls, run_trace};
+        use crate::sys::test_support::{assert_no_syscalls, run_trace, set_test_locale_utf8};
         use crate::trace_entries;
 
         #[test]
@@ -3924,88 +3924,88 @@ mod tests {
 
         #[test]
         fn word_forward_multibyte() {
-            // "café bar" - word_forward from 0 should skip past café (5 bytes) to the space
             run_trace(trace_entries![], || {
+                set_test_locale_utf8();
                 assert_eq!(word_forward(b"caf\xc3\xa9 bar", 0), 6);
             });
         }
 
         #[test]
         fn word_forward_multibyte_punct() {
-            // "é.x" - é is word char, . is punctuation, so word_forward stops at .
             run_trace(trace_entries![], || {
+                set_test_locale_utf8();
                 assert_eq!(word_forward(b"\xc3\xa9.x", 0), 2);
             });
         }
 
         #[test]
         fn word_backward_multibyte() {
-            // "ab éè" - cursor at 7 (past the two 2-byte chars), should go back to byte 3
             run_trace(trace_entries![], || {
+                set_test_locale_utf8();
                 assert_eq!(word_backward(b"ab \xc3\xa9\xc3\xa8", 7), 3);
             });
         }
 
         #[test]
         fn word_end_multibyte() {
-            // "éè x" - word_end from 0 should land on è (byte 2), the last char of the word
             run_trace(trace_entries![], || {
+                set_test_locale_utf8();
                 assert_eq!(word_end(b"\xc3\xa9\xc3\xa8 x", 0), 2);
             });
         }
 
         #[test]
         fn bigword_forward_multibyte() {
-            // "é.è z" - all non-whitespace is one bigword, bigword_forward skips past space
             run_trace(trace_entries![], || {
+                set_test_locale_utf8();
                 assert_eq!(bigword_forward(b"\xc3\xa9.\xc3\xa8 z", 0), 6);
             });
         }
 
         #[test]
         fn resolve_motion_h_multibyte() {
-            // "aéb" - h from byte 3 (b) should move back over é (2 bytes) to byte 1
             run_trace(trace_entries![], || {
+                set_test_locale_utf8();
                 assert_eq!(resolve_motion(b"a\xc3\xa9b", 3, b'h', 1), (1, 3));
             });
         }
 
         #[test]
         fn resolve_motion_l_multibyte() {
-            // "aéb" - l from byte 1 (é) should move forward over é (2 bytes) to byte 3
             run_trace(trace_entries![], || {
+                set_test_locale_utf8();
                 assert_eq!(resolve_motion(b"a\xc3\xa9b", 1, b'l', 1), (1, 3));
             });
         }
 
         #[test]
         fn resolve_motion_e_multibyte() {
-            // "éè" - e from 0 covers both chars: start=0, end=4
             run_trace(trace_entries![], || {
+                set_test_locale_utf8();
                 assert_eq!(resolve_motion(b"\xc3\xa9\xc3\xa8", 0, b'e', 1), (0, 4));
             });
         }
 
         #[test]
         fn do_find_multibyte_target() {
-            // "aéb" - f for é (U+00E9 = 0xE9) from pos 0 should find it at byte 1
             run_trace(trace_entries![], || {
+                set_test_locale_utf8();
                 assert_eq!(do_find(b"a\xc3\xa9b", 0, b'f', 0xe9), Some(1));
             });
         }
 
         #[test]
         fn do_find_skips_continuation_bytes() {
-            // "aéb" - f for b from pos 0 should find at byte 3, not byte 2
             run_trace(trace_entries![], || {
+                set_test_locale_utf8();
                 assert_eq!(do_find(b"a\xc3\xa9b", 0, b'f', b'b' as u32), Some(3));
             });
         }
 
         #[test]
         fn do_find_t_multibyte() {
-            // "aéb" - t for b from pos 0: one char before b is é at byte 1
             run_trace(trace_entries![], || {
+                set_test_locale_utf8();
                 assert_eq!(do_find(b"a\xc3\xa9b", 0, b't', b'b' as u32), Some(1));
             });
         }
@@ -4013,9 +4013,9 @@ mod tests {
         #[test]
         fn vi_x_deletes_multibyte_char() {
             run_trace(trace_entries![], || {
+                set_test_locale_utf8();
                 let mut state = ViState::new(0x7f, 0);
                 let history: Vec<Box<[u8]>> = vec![];
-                // Type "aéb", ESC, h (on é), x
                 feed_bytes(&mut state, b"a\xc3\xa9b", &history);
                 state.process_byte(0x1b, &history);
                 state.process_byte(b'h', &history);
@@ -4027,9 +4027,9 @@ mod tests {
         #[test]
         fn vi_X_deletes_multibyte_char_before() {
             run_trace(trace_entries![], || {
+                set_test_locale_utf8();
                 let mut state = ViState::new(0x7f, 0);
                 let history: Vec<Box<[u8]>> = vec![];
-                // Type "aéb", ESC (cursor on b at byte 3), X deletes é before b
                 feed_bytes(&mut state, b"a\xc3\xa9b", &history);
                 state.process_byte(0x1b, &history);
                 state.process_byte(b'X', &history);
@@ -4040,6 +4040,7 @@ mod tests {
         #[test]
         fn vi_dl_multibyte() {
             run_trace(trace_entries![], || {
+                set_test_locale_utf8();
                 let mut state = ViState::new(0x7f, 0);
                 let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"a\xc3\xa9b", &history);
@@ -4054,6 +4055,7 @@ mod tests {
         #[test]
         fn vi_dw_multibyte() {
             run_trace(trace_entries![], || {
+                set_test_locale_utf8();
                 let mut state = ViState::new(0x7f, 0);
                 let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"\xc3\xa9\xc3\xa8 b", &history);
@@ -4067,6 +4069,7 @@ mod tests {
         #[test]
         fn vi_r_replaces_multibyte() {
             run_trace(trace_entries![], || {
+                set_test_locale_utf8();
                 let mut state = ViState::new(0x7f, 0);
                 let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"a\xc3\xa9b", &history);
@@ -4080,6 +4083,7 @@ mod tests {
         #[test]
         fn vi_a_appends_after_multibyte() {
             run_trace(trace_entries![], || {
+                set_test_locale_utf8();
                 let mut state = ViState::new(0x7f, 0);
                 let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"\xc3\xa9b", &history);
@@ -4095,6 +4099,7 @@ mod tests {
         #[test]
         fn vi_dollar_on_multibyte_end() {
             run_trace(trace_entries![], || {
+                set_test_locale_utf8();
                 let mut state = ViState::new(0x7f, 0);
                 let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"ab\xc3\xa9", &history);
@@ -4108,9 +4113,9 @@ mod tests {
         #[test]
         fn vi_p_after_multibyte() {
             run_trace(trace_entries![], || {
+                set_test_locale_utf8();
                 let mut state = ViState::new(0x7f, 0);
                 let history: Vec<Box<[u8]>> = vec![];
-                // "aéb", ESC, h (on é), x (yank é), l (on b), p (paste after b)
                 feed_bytes(&mut state, b"a\xc3\xa9b", &history);
                 state.process_byte(0x1b, &history);
                 state.process_byte(b'h', &history);
@@ -4123,6 +4128,7 @@ mod tests {
         #[test]
         fn vi_D_multibyte_end() {
             run_trace(trace_entries![], || {
+                set_test_locale_utf8();
                 let mut state = ViState::new(0x7f, 0);
                 let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"a\xc3\xa9", &history);
@@ -4136,12 +4142,11 @@ mod tests {
         #[test]
         fn vi_pipe_column_multibyte() {
             run_trace(trace_entries![], || {
+                set_test_locale_utf8();
                 let mut state = ViState::new(0x7f, 0);
                 let history: Vec<Box<[u8]>> = vec![];
-                // "éèà" (3 two-byte chars)
                 feed_bytes(&mut state, b"\xc3\xa9\xc3\xa8\xc3\xa0", &history);
                 state.process_byte(0x1b, &history);
-                // 2| should go to character 2 (è at byte 2)
                 state.process_byte(b'2', &history);
                 state.process_byte(b'|', &history);
                 assert_eq!(state.cursor, 2);
@@ -4151,16 +4156,14 @@ mod tests {
         #[test]
         fn vi_search_backspace_multibyte() {
             run_trace(trace_entries![], || {
+                set_test_locale_utf8();
                 let mut state = ViState::new(0x7f, 0);
                 let history: Vec<Box<[u8]>> = vec![];
                 feed_bytes(&mut state, b"a", &history);
                 state.process_byte(0x1b, &history);
-                // Enter search mode
                 state.process_byte(b'/', &history);
-                // Type é (2 bytes)
                 state.process_byte(0xc3, &history);
                 state.process_byte(0xa9, &history);
-                // Backspace should remove the entire é, not just one byte
                 state.process_byte(0x7f, &history);
                 assert!(state.search_buf.is_empty());
             });
@@ -4169,6 +4172,7 @@ mod tests {
         #[test]
         fn last_char_start_multibyte() {
             run_trace(trace_entries![], || {
+                set_test_locale_utf8();
                 assert_eq!(last_char_start(b"ab\xc3\xa9"), 2);
                 assert_eq!(last_char_start(b"\xc3\xa9"), 0);
                 assert_eq!(last_char_start(b""), 0);
@@ -4179,6 +4183,7 @@ mod tests {
         #[test]
         fn replay_cmd_x_multibyte() {
             run_trace(trace_entries![], || {
+                set_test_locale_utf8();
                 let mut line = b"a\xc3\xa9b".to_vec();
                 let mut cursor = 1usize;
                 let mut yank = vec![];
@@ -4191,6 +4196,7 @@ mod tests {
         #[test]
         fn replay_cmd_X_multibyte() {
             run_trace(trace_entries![], || {
+                set_test_locale_utf8();
                 let mut line = b"a\xc3\xa9b".to_vec();
                 let mut cursor = 3usize;
                 let mut yank = vec![];
@@ -4204,6 +4210,7 @@ mod tests {
         #[test]
         fn replay_cmd_r_multibyte() {
             run_trace(trace_entries![], || {
+                set_test_locale_utf8();
                 let mut line = b"a\xc3\xa9b".to_vec();
                 let mut cursor = 1usize;
                 let mut yank = vec![];

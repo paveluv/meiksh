@@ -738,3 +738,26 @@ impl AsBytes for Cow<'_, [u8]> {
         self
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sys::test_support::{assert_no_syscalls, set_test_locale_c, set_test_locale_utf8};
+
+    #[test]
+    fn decompose_ifs_c_vs_utf8() {
+        assert_no_syscalls(|| {
+            // U+00E9 = 0xC3 0xA9
+            set_test_locale_c();
+            let ifs = decompose_ifs(b"\xc3\xa9");
+            assert_eq!(ifs.len(), 2);
+            assert_eq!(ifs[0].byte_seq, vec![0xc3]);
+            assert_eq!(ifs[1].byte_seq, vec![0xa9]);
+
+            set_test_locale_utf8();
+            let ifs = decompose_ifs(b"\xc3\xa9");
+            assert_eq!(ifs.len(), 1);
+            assert_eq!(ifs[0].byte_seq, vec![0xc3, 0xa9]);
+        });
+    }
+}

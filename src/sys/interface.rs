@@ -611,7 +611,6 @@ mod tests {
         );
         assert!(catch_unwind(AssertUnwindSafe(|| (tbl.getpwnam)(b"nobody"))).is_err());
         assert!(catch_unwind(AssertUnwindSafe(|| (tbl.monotonic_clock_ns)())).is_err());
-        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.setup_locale)())).is_err());
     }
 
     #[test]
