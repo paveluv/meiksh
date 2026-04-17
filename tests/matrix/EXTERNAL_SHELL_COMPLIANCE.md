@@ -10,14 +10,13 @@ The user provides:
 
 ## Step 1: Run the test suites
 
-Build the test runner and execute all `.md` test suites against the target shell:
+Build the test runner and execute all `.md` test suites against the target shell
+using `tests/matrix/run.sh`:
 
 ```bash
-cargo build --quiet --bin expect_pty
-cargo run --quiet --bin expect_pty -- \
+bash tests/matrix/run.sh \
   --shell "<shell invocation>" \
-  --script-modes dash-c,tempfile,stdin \
-  tests/matrix/tests/*.md
+  --script-modes dash-c,tempfile,stdin
 ```
 
 The `--script-modes dash-c,tempfile,stdin` flag runs each non-interactive test
@@ -28,7 +27,7 @@ that is still a finding worth investigating.
 To re-run a single failing test:
 
 ```bash
-cargo run --quiet --bin expect_pty -- \
+bash tests/matrix/run.sh \
   --shell "<shell invocation>" \
   --test "<test name>" \
   tests/matrix/tests/<file>.md
