@@ -137,28 +137,117 @@ fn wexitstatus(status: CInt) -> i32 {
 fn kill_session(sid: libc::pid_t) {
     vlog!("kill_session: sending SIGKILL to process group -{sid}");
     let ret = unsafe { libc::kill(-sid, libc::SIGKILL) };
-    vlog!("kill_session: kill(-{sid}, SIGKILL) returned {ret} (errno={})",
-        if ret < 0 { io::Error::last_os_error().to_string() } else { "n/a".into() });
-    let Ok(entries) = fs::read_dir("/proc") else {
-        vlog!("kill_session: /proc not available, skipping session scan");
-        return;
-    };
+    vlog!(
+        "kill_session: kill(-{sid}, SIGKILL) returned {ret} (errno={})",
+        if ret < 0 {
+            io::Error::last_os_error().to_string()
+        } else {
+            "n/a".into()
+        }
+    );
+
     let mut killed = 0;
-    for entry in entries.flatten() {
-        let name = entry.file_name();
-        let Ok(pid) = name.to_string_lossy().parse::<libc::pid_t>() else {
-            continue;
-        };
-        let got_sid = unsafe { libc::getsid(pid) };
-        if got_sid == sid {
-            vlog!("kill_session: killing pid={pid} (sid={got_sid})");
-            unsafe {
-                libc::kill(pid, libc::SIGKILL);
+
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(entries) = fs::read_dir("/proc") {
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                let Ok(pid) = name.to_string_lossy().parse::<libc::pid_t>() else {
+                    continue;
+                };
+                if pid <= 1 {
+                    continue;
+                }
+                let got_sid = unsafe { libc::getsid(pid) };
+                if got_sid == sid {
+                    vlog!("kill_session: killing pid={pid} (sid={got_sid})");
+                    unsafe {
+                        libc::kill(pid, libc::SIGKILL);
+                    }
+                    killed += 1;
+                }
             }
-            killed += 1;
         }
     }
-    vlog!("kill_session: killed {killed} processes via /proc scan");
+
+    #[cfg(target_os = "freebsd")]
+    {
+        killed = kill_session_sysctl(sid);
+    }
+
+    vlog!("kill_session: killed {killed} session members");
+}
+
+#[cfg(target_os = "freebsd")]
+fn kill_session_sysctl(sid: libc::pid_t) -> usize {
+    use std::mem;
+
+    let mib: [libc::c_int; 4] = [
+        libc::CTL_KERN,
+        libc::KERN_PROC,
+        libc::KERN_PROC_SESSION,
+        sid as libc::c_int,
+    ];
+
+    let mut buf_len: libc::size_t = 0;
+    let ret = unsafe {
+        libc::sysctl(
+            mib.as_ptr(),
+            mib.len() as libc::c_uint,
+            std::ptr::null_mut(),
+            &mut buf_len,
+            std::ptr::null(),
+            0,
+        )
+    };
+    if ret != 0 || buf_len == 0 {
+        vlog!(
+            "kill_session_sysctl: sysctl size query failed (ret={ret}, errno={})",
+            io::Error::last_os_error()
+        );
+        return 0;
+    }
+
+    buf_len = buf_len * 3 / 2;
+    let kinfo_size = mem::size_of::<libc::kinfo_proc>();
+    let count = buf_len / kinfo_size;
+    let mut buf: Vec<libc::kinfo_proc> = Vec::with_capacity(count);
+
+    let ret = unsafe {
+        libc::sysctl(
+            mib.as_ptr(),
+            mib.len() as libc::c_uint,
+            buf.as_mut_ptr() as *mut libc::c_void,
+            &mut buf_len,
+            std::ptr::null(),
+            0,
+        )
+    };
+    if ret != 0 {
+        vlog!(
+            "kill_session_sysctl: sysctl data query failed (errno={})",
+            io::Error::last_os_error()
+        );
+        return 0;
+    }
+
+    let actual_count = buf_len / kinfo_size;
+    unsafe { buf.set_len(actual_count) };
+
+    let mut killed = 0;
+    for kp in &buf {
+        let pid = kp.ki_pid;
+        if pid <= 1 {
+            continue;
+        }
+        vlog!("kill_session_sysctl: killing pid={pid}");
+        unsafe {
+            libc::kill(pid, libc::SIGKILL);
+        }
+        killed += 1;
+    }
+    killed
 }
 
 // ── PTY spawning ─────────────────────────────────────────────────────────────
@@ -281,6 +370,9 @@ impl PtySession {
                         break;
                     }
                     if fds[1].revents != 0 {
+                        break;
+                    }
+                    if fds[0].revents & libc::POLLNVAL != 0 {
                         break;
                     }
                     if fds[0].revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR) != 0 {
@@ -462,6 +554,7 @@ impl PtySession {
     }
 
     fn stop_reader(&mut self) {
+        vlog!("stop_reader: closing stop_pipe_w={}", self.stop_pipe_w);
         if self.stop_pipe_w >= 0 {
             unsafe {
                 libc::close(self.stop_pipe_w);
@@ -469,7 +562,9 @@ impl PtySession {
             self.stop_pipe_w = -1;
         }
         if let Some(h) = self.reader_handle.take() {
+            vlog!("stop_reader: joining reader thread...");
             let _ = h.join();
+            vlog!("stop_reader: reader thread joined");
         }
     }
 
