@@ -139,9 +139,9 @@ fn mb_cur_max_impl() -> usize {
     #[cfg(target_os = "macos")]
     {
         unsafe extern "C" {
-            fn __mb_cur_max() -> c_int;
+            static __mb_cur_max: c_int;
         }
-        unsafe { __mb_cur_max() as usize }
+        unsafe { __mb_cur_max as usize }
     }
     #[cfg(target_os = "freebsd")]
     {
@@ -278,17 +278,19 @@ pub(super) fn default_interface() -> SystemInterface {
             if bytes.is_empty() {
                 return (0, 0);
             }
+            #[repr(C, align(8))]
+            struct MbState([u8; 128]);
             unsafe extern "C" {
                 fn mbrtowc(
                     pwc: *mut libc::wchar_t,
                     s: *const u8,
                     n: usize,
-                    ps: *mut libc::mbstate_t,
+                    ps: *mut MbState,
                 ) -> usize;
             }
             unsafe {
                 let mut wc: libc::wchar_t = 0;
-                let mut ps: libc::mbstate_t = std::mem::zeroed();
+                let mut ps: MbState = std::mem::zeroed();
                 let n = mbrtowc(&mut wc, bytes.as_ptr(), bytes.len(), &mut ps);
                 if n == 0 {
                     (0, 0)
@@ -300,11 +302,13 @@ pub(super) fn default_interface() -> SystemInterface {
             }
         },
         encode_char: |wc, buf| {
+            #[repr(C, align(8))]
+            struct MbState([u8; 128]);
             unsafe extern "C" {
-                fn wcrtomb(s: *mut u8, wc: libc::wchar_t, ps: *mut libc::mbstate_t) -> usize;
+                fn wcrtomb(s: *mut u8, wc: libc::wchar_t, ps: *mut MbState) -> usize;
             }
             unsafe {
-                let mut ps: libc::mbstate_t = std::mem::zeroed();
+                let mut ps: MbState = std::mem::zeroed();
                 let n = wcrtomb(buf.as_mut_ptr(), wc as libc::wchar_t, &mut ps);
                 if n == usize::MAX { 0 } else { n }
             }
