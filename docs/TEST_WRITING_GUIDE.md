@@ -110,6 +110,8 @@ mod tests {
 
     use crate::sys::test_support::{run_trace, assert_no_syscalls};
     use crate::trace_entries;
+    // For locale-sensitive tests, also import:
+    // use crate::sys::test_support::{set_test_locale_c, set_test_locale_utf8};
 
     // …
 }
@@ -175,6 +177,52 @@ fn parse_returns_none_on_empty() {
 }
 ```
 
+#### 5. Testing locale-sensitive behaviour
+
+The test interface supports two locales: **C** (byte-level / ASCII-only) and
+**C.UTF-8** (full Unicode via Rust's `char` methods).  The default is C.
+
+Use `set_test_locale_c()` and `set_test_locale_utf8()` from
+`crate::sys::test_support` to switch locale inside `assert_no_syscalls` or
+`run_trace` blocks.  This controls how `decode_char`, `classify_char`,
+`encode_char`, `mb_cur_max`, `to_upper`, `to_lower`, and `char_width` behave.
+
+Any code that touches multi-byte characters, character classification,
+character counting, IFS splitting, or pattern matching should have **paired
+tests** — one under C and one under C.UTF-8 — asserting different results
+for the same input.
+
+```rust
+use crate::sys::test_support::{assert_no_syscalls, set_test_locale_c, set_test_locale_utf8};
+
+#[test]
+fn count_chars_c_vs_utf8() {
+    assert_no_syscalls(|| {
+        // U+00E9 = 0xC3 0xA9
+        set_test_locale_c();
+        assert_eq!(count_chars(b"\xc3\xa9"), 2);    // two bytes
+
+        set_test_locale_utf8();
+        assert_eq!(count_chars(b"\xc3\xa9"), 1);    // one character
+    });
+}
+```
+
+| Function | C behaviour | C.UTF-8 behaviour |
+|---|---|---|
+| `decode_char` | `(bytes[0], 1)` — one byte per character | Full UTF-8 decode via `std::str::from_utf8` |
+| `classify_char` | Rejects codepoints > 0x7F | Full Unicode (`is_alphabetic()`, etc.) |
+| `encode_char` | Single byte if `<= 0x7F`, else 0 | Full UTF-8 encode |
+| `mb_cur_max` | 1 | 4 |
+| `to_upper` / `to_lower` | ASCII a-z / A-Z only | Full Unicode case mapping |
+| `char_width` | 0 for control, 1 otherwise | 0 for control, 1 otherwise |
+| `strcoll` | Byte comparison | Byte comparison (same) |
+| `decimal_point` | `b'.'` | `b'.'` (same) |
+
+`setup_locale` resets to C.  `reinit_locale` reads `LC_ALL` / `LANG` from
+`std::env` and sets UTF-8 if the value contains "UTF-8" or "UTF8"
+(case-insensitive); otherwise C.
+
 ---
 
 ### Core API
@@ -185,6 +233,8 @@ fn parse_returns_none_on_empty() {
 | `t(syscall, args, result)` | Build one `TraceEntry` manually (for spread into `trace_entries!`). |
 | `t_fork(result, child_trace)` | `fork` with optional child script. |
 | `assert_no_syscalls(\|\| …)` | Panic if any syscall runs during the closure. |
+| `set_test_locale_c()` | Switch the test locale to C (byte-level, ASCII-only). This is the default. |
+| `set_test_locale_utf8()` | Switch the test locale to C.UTF-8 (full Unicode). |
 
 **FD constants:** prefer `crate::sys::{STDIN_FILENO, STDOUT_FILENO,
 STDERR_FILENO}` (or `libc` names) in traces instead of raw `0`/`1`/`2` where
@@ -494,6 +544,19 @@ In all these cases, wrap the result in `..vec![…]` or `..helper_fn()` inside
 
 8. **Run tests after writing:** `cargo test --lib <module_path>` to run a
    specific module's tests, `cargo test --lib` for the full suite.
+
+9. **Locale-sensitive code needs paired tests.**  Any function that calls
+   `decode_char`, `classify_char`, `count_chars`, `first_char_len`,
+   `decompose_ifs`, or pattern matching with `?` / character classes must
+   have at least one test that runs under both `set_test_locale_c()` and
+   `set_test_locale_utf8()`.  The two locales should produce
+   **observably different** results for multi-byte input (e.g.
+   `"é"` is 2 chars in C, 1 in UTF-8).
+
+10. **Tests that assume UTF-8 must opt in.**  The default test locale is C.
+    If a test relies on multi-byte character semantics (e.g. vi editing
+    tests), call `set_test_locale_utf8()` at the start of the `run_trace`
+    or `assert_no_syscalls` closure.
 
 ---
 
