@@ -203,37 +203,71 @@ begin test "LC_CTYPE overrides LANG when LC_ALL is unset"
 end test "LC_CTYPE overrides LANG when LC_ALL is unset"
 ```
 
-#### Test: LC_COLLATE determines collation locale
+#### Test: LC_COLLATE determines collation in C locale
 
-`LC_COLLATE` shall determine the locale category for character
-collation. In the C locale, uppercase letters sort before lowercase
-in byte order.
+`LC_COLLATE` shall determine the locale category for character collation.
+In the C locale, uppercase letters sort before lowercase in byte order.
 
 ```
-begin test "LC_COLLATE determines collation locale"
+begin test "LC_COLLATE determines collation in C locale"
+  setenv "LC_ALL" "C"
   script
-    printf "b\nA\n" | LC_ALL=C sort
+    printf "b\nA\n" | sort
   expect
     stdout "A\nb"
     stderr ""
     exit_code 0
-end test "LC_COLLATE determines collation locale"
+end test "LC_COLLATE determines collation in C locale"
 ```
 
-#### Test: LC_CTYPE determines character classification
+#### Test: LC_COLLATE determines collation in UTF-8 locale
+
+In C.UTF-8, collation order for ASCII characters matches byte order.
+
+```
+begin test "LC_COLLATE determines collation in UTF-8 locale"
+  setenv "LC_ALL" "C.UTF-8"
+  script
+    printf "b\nA\n" | sort
+  expect
+    stdout "A\nb"
+    stderr ""
+    exit_code 0
+end test "LC_COLLATE determines collation in UTF-8 locale"
+```
+
+#### Test: LC_CTYPE determines character classification in C locale
 
 `LC_CTYPE` shall determine the locale category for character handling
 functions such as character classification and case conversion.
 
 ```
-begin test "LC_CTYPE determines character classification"
+begin test "LC_CTYPE determines character classification in C locale"
+  setenv "LC_ALL" "C"
   script
-    printf "abc" | LC_ALL=C tr "[:lower:]" "[:upper:]"
+    printf "abc" | tr "[:lower:]" "[:upper:]"
   expect
     stdout "ABC"
     stderr ""
     exit_code 0
-end test "LC_CTYPE determines character classification"
+end test "LC_CTYPE determines character classification in C locale"
+```
+
+#### Test: LC_CTYPE determines character classification in UTF-8 locale
+
+In C.UTF-8, `LC_CTYPE` classifies multi-byte characters. The ASCII
+lowercase-to-uppercase conversion still works as expected.
+
+```
+begin test "LC_CTYPE determines character classification in UTF-8 locale"
+  setenv "LC_ALL" "C.UTF-8"
+  script
+    printf "abc" | tr "[:lower:]" "[:upper:]"
+  expect
+    stdout "ABC"
+    stderr ""
+    exit_code 0
+end test "LC_CTYPE determines character classification in UTF-8 locale"
 ```
 
 #### Test: C and POSIX locale values select POSIX locale

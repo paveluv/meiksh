@@ -349,16 +349,16 @@ begin test "time preserves utility stderr on stderr"
 end test "time preserves utility stderr on stderr"
 ```
 
-#### Test: time -p produces POSIX format on stderr
+#### Test: time -p produces POSIX format on stderr in C locale
 
 With `-p`, the timing statistics shall be written to stderr in the POSIX
 locale format using `real`, `user`, and `sys` lines with seconds-valued
-floating-point numbers. This test asserts the POSIX requirement directly,
-even though `bash --posix` currently deviates here and treats `-p` as the
-utility operand instead.
+floating-point numbers. The radix character in the C locale is `.`. This
+test asserts the POSIX requirement directly, even though `bash --posix`
+currently deviates here and treats `-p` as the utility operand instead.
 
 ```
-begin test "time -p produces POSIX format on stderr"
+begin test "time -p produces POSIX format on stderr in C locale"
   setenv "LC_ALL" "C"
   script
     time -p true
@@ -366,7 +366,24 @@ begin test "time -p produces POSIX format on stderr"
     stdout ""
     stderr "\n?real [0-9]+\.[0-9]+\nuser [0-9]+\.[0-9]+\nsys [0-9]+\.[0-9]+(.|\n)*"
     exit_code 0
-end test "time -p produces POSIX format on stderr"
+end test "time -p produces POSIX format on stderr in C locale"
+```
+
+#### Test: time -p produces POSIX format on stderr in UTF-8 locale
+
+In C.UTF-8 the radix character is still `.`, so the POSIX format output
+is the same as in the C locale.
+
+```
+begin test "time -p produces POSIX format on stderr in UTF-8 locale"
+  setenv "LC_ALL" "C.UTF-8"
+  script
+    time -p true
+  expect
+    stdout ""
+    stderr "\n?real [0-9]+\.[0-9]+\nuser [0-9]+\.[0-9]+\nsys [0-9]+\.[0-9]+(.|\n)*"
+    exit_code 0
+end test "time -p produces POSIX format on stderr in UTF-8 locale"
 ```
 
 #### Test: time exit status equals invoked utility exit status

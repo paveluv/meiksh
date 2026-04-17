@@ -777,3 +777,43 @@ begin test "readonly OPTARG causes processing error"
     exit_code >1
 end test "readonly OPTARG causes processing error"
 ```
+
+#### Test: getopts option argument with multi-byte characters in C locale
+
+In the C locale, option arguments containing high bytes are passed through
+verbatim. Each byte is an independent character.
+
+```
+begin test "getopts option argument with multi-byte characters in C locale"
+  setenv "LC_ALL" "C"
+  script
+    OPTIND=1
+    set -- -f "$(printf 'a\303\251b')"
+    getopts f: name
+    printf '%s' "$OPTARG" | od -An -t x1 | tr -d ' \n'
+  expect
+    stdout "61c3a962"
+    stderr ""
+    exit_code 0
+end test "getopts option argument with multi-byte characters in C locale"
+```
+
+#### Test: getopts option argument with multi-byte characters in UTF-8
+
+In C.UTF-8, option arguments containing multi-byte characters are preserved
+intact. The argument `a\303\251b` contains three characters: `a`, U+00E9, `b`.
+
+```
+begin test "getopts option argument with multi-byte characters in UTF-8"
+  setenv "LC_ALL" "C.UTF-8"
+  script
+    OPTIND=1
+    set -- -f "$(printf 'a\303\251b')"
+    getopts f: name
+    printf '%s' "$OPTARG" | od -An -t x1 | tr -d ' \n'
+  expect
+    stdout "61c3a962"
+    stderr ""
+    exit_code 0
+end test "getopts option argument with multi-byte characters in UTF-8"
+```

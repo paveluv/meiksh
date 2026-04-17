@@ -994,6 +994,49 @@ begin test "pattern matching with star"
 end test "pattern matching with star"
 ```
 
+#### Test: case question-mark matches one byte in C locale
+
+In the C locale, `?` matches a single byte. The two-byte UTF-8 sequence
+`\303\251` is two characters, so `?` does not match the whole value.
+
+```
+begin test "case question-mark matches one byte in C locale"
+  setenv "LC_ALL" "C"
+  script
+    v=$(printf '\303\251')
+    case "$v" in
+      (??) echo two;;
+      (?) echo one;;
+      (*) echo no;;
+    esac
+  expect
+    stdout "two"
+    stderr ""
+    exit_code 0
+end test "case question-mark matches one byte in C locale"
+```
+
+#### Test: case question-mark matches one multi-byte character
+
+In C.UTF-8, the two-byte sequence `\303\251` (U+00E9) is a single character,
+so `?` matches the whole value.
+
+```
+begin test "case question-mark matches one multi-byte character"
+  setenv "LC_ALL" "C.UTF-8"
+  script
+    v=$(printf '\303\251')
+    case "$v" in
+      (?) echo one;;
+      (*) echo no;;
+    esac
+  expect
+    stdout "one"
+    stderr ""
+    exit_code 0
+end test "case question-mark matches one multi-byte character"
+```
+
 ## 2.9.4.4 The if Conditional Construct
 
 The **if** command shall execute a *compound-list* and use its exit status to determine whether to execute another *compound-list*.

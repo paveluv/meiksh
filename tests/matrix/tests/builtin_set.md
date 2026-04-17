@@ -364,13 +364,14 @@ begin test "set with no arguments lists shell variables"
 end test "set with no arguments lists shell variables"
 ```
 
-#### Test: set variable listing follows collation sequence
+#### Test: set variable listing follows collation sequence in C locale
 
 The variable names shall be written in the collation sequence of the
-current locale.
+current locale. In the C locale this is byte-value order.
 
 ```
-begin test "set variable listing follows collation sequence"
+begin test "set variable listing follows collation sequence in C locale"
+  setenv "LC_ALL" "C"
   script
     ZZ_coltest=z
     AA_coltest=a
@@ -380,7 +381,27 @@ begin test "set variable listing follows collation sequence"
     stdout "AA_coltest\nMM_coltest\nZZ_coltest"
     stderr ""
     exit_code 0
-end test "set variable listing follows collation sequence"
+end test "set variable listing follows collation sequence in C locale"
+```
+
+#### Test: set variable listing follows collation sequence in UTF-8 locale
+
+In C.UTF-8, variable names are listed in the locale's collation order.
+For ASCII-only names the order is the same as byte order.
+
+```
+begin test "set variable listing follows collation sequence in UTF-8 locale"
+  setenv "LC_ALL" "C.UTF-8"
+  script
+    ZZ_coltest=z
+    AA_coltest=a
+    MM_coltest=m
+    set | sed -E -n 's/^(AA_coltest|MM_coltest|ZZ_coltest)=.*/\1/p' | uniq
+  expect
+    stdout "AA_coltest\nMM_coltest\nZZ_coltest"
+    stderr ""
+    exit_code 0
+end test "set variable listing follows collation sequence in UTF-8 locale"
 ```
 
 #### Test: set output is suitable for reinput

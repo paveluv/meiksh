@@ -2740,25 +2740,14 @@ begin test "dollar-single-quote removed during quote removal"
 end test "dollar-single-quote removed during quote removal"
 ```
 
-#### Test: string length counts characters not bytes
-
-```
-begin test "string length counts characters not bytes"
-  script
-    export LC_ALL=C.UTF-8
-    v=$(printf '\303\251\303\250')
-    echo "${#v}"
-  expect
-    stdout "2"
-    stderr ""
-    exit_code 0
-end test "string length counts characters not bytes"
-```
-
 #### Test: string length counts bytes in C locale
+
+In the C locale, each byte is one character, so `${#v}` returns the byte
+count. The four-byte sequence `\303\251\303\250` has length 4.
 
 ```
 begin test "string length counts bytes in C locale"
+  setenv "LC_ALL" "C"
   script
     v=$(printf '\303\251\303\250')
     echo "${#v}"
@@ -2769,12 +2758,55 @@ begin test "string length counts bytes in C locale"
 end test "string length counts bytes in C locale"
 ```
 
+#### Test: string length counts characters not bytes
+
+In C.UTF-8, `${#v}` returns the character count. The four-byte sequence
+`\303\251\303\250` encodes two characters (U+00E9, U+00E8), so the length
+is 2.
+
+```
+begin test "string length counts characters not bytes"
+  setenv "LC_ALL" "C.UTF-8"
+  script
+    v=$(printf '\303\251\303\250')
+    echo "${#v}"
+  expect
+    stdout "2"
+    stderr ""
+    exit_code 0
+end test "string length counts characters not bytes"
+```
+
+#### Test: multi-byte IFS bytes split independently in C locale
+
+In the C locale, setting IFS to the two-byte sequence `\303\251` means each
+byte is a separate single-byte delimiter, so `a\303\251b` splits into three
+fields: `a`, an empty field (between the two adjacent delimiters), and `b`.
+
+```
+begin test "multi-byte IFS bytes split independently in C locale"
+  setenv "LC_ALL" "C"
+  script
+    IFS=$(printf '\303\251')
+    v=$(printf 'a\303\251b')
+    set -- $v
+    echo "$#|$1|$2|$3"
+  expect
+    stdout "3\|a\|\|b"
+    stderr ""
+    exit_code 0
+end test "multi-byte IFS bytes split independently in C locale"
+```
+
 #### Test: multi-byte IFS character splits fields
+
+In C.UTF-8, `\303\251` is a single character (U+00E9), so it acts as one
+delimiter. `a\303\251b` splits into exactly two fields: `a` and `b`.
 
 ```
 begin test "multi-byte IFS character splits fields"
+  setenv "LC_ALL" "C.UTF-8"
   script
-    export LC_ALL=C.UTF-8
     IFS=$(printf '\303\251')
     v=$(printf 'a\303\251b')
     set -- $v
@@ -2786,12 +2818,35 @@ begin test "multi-byte IFS character splits fields"
 end test "multi-byte IFS character splits fields"
 ```
 
+#### Test: quoted star uses first IFS byte in C locale
+
+In the C locale, the first character of IFS is the first byte. When IFS is
+set to the two-byte sequence `\303\251`, only byte `\303` is used as the
+`$*` separator.
+
+```
+begin test "quoted star uses first IFS byte in C locale"
+  setenv "LC_ALL" "C"
+  script
+    IFS=$(printf '\303\251')
+    set -- a b
+    printf '%s' "$*" | od -An -t x1 | tr -d ' \n'
+  expect
+    stdout "61c362"
+    stderr ""
+    exit_code 0
+end test "quoted star uses first IFS byte in C locale"
+```
+
 #### Test: quoted star uses full multi-byte IFS character
+
+In C.UTF-8, the first character of IFS is the full multi-byte character
+`\303\251` (U+00E9). The `$*` separator is the complete two-byte sequence.
 
 ```
 begin test "quoted star uses full multi-byte IFS character"
+  setenv "LC_ALL" "C.UTF-8"
   script
-    export LC_ALL=C.UTF-8
     IFS=$(printf '\303\251')
     set -- a b
     printf '%s' "$*" | od -An -t x1 | tr -d ' \n'
@@ -2802,12 +2857,33 @@ begin test "quoted star uses full multi-byte IFS character"
 end test "quoted star uses full multi-byte IFS character"
 ```
 
+#### Test: prefix removal removes one byte in C locale
+
+In the C locale, `?` matches one byte. `${v#?}` removes the first byte
+from a string containing multi-byte UTF-8 sequences.
+
+```
+begin test "prefix removal removes one byte in C locale"
+  setenv "LC_ALL" "C"
+  script
+    v=$(printf '\303\251\303\250')
+    echo "${v#?}"| od -An -t x1 | tr -d ' \n'
+  expect
+    stdout "a9c3a80a"
+    stderr ""
+    exit_code 0
+end test "prefix removal removes one byte in C locale"
+```
+
 #### Test: prefix removal respects character boundaries
+
+In C.UTF-8, `?` matches one character. `${v#?}` removes the first
+multi-byte character (two bytes for U+00E9), leaving the second character.
 
 ```
 begin test "prefix removal respects character boundaries"
+  setenv "LC_ALL" "C.UTF-8"
   script
-    export LC_ALL=C.UTF-8
     v=$(printf '\303\251\303\250')
     echo "${v#?}"| od -An -t x1 | tr -d ' \n'
   expect
@@ -2817,12 +2893,33 @@ begin test "prefix removal respects character boundaries"
 end test "prefix removal respects character boundaries"
 ```
 
+#### Test: suffix removal removes one byte in C locale
+
+In the C locale, `?` matches one byte. `${v%?}` removes the last byte
+from a string containing multi-byte UTF-8 sequences.
+
+```
+begin test "suffix removal removes one byte in C locale"
+  setenv "LC_ALL" "C"
+  script
+    v=$(printf '\303\251\303\250')
+    echo "${v%?}" | od -An -t x1 | tr -d ' \n'
+  expect
+    stdout "c3a9c30a"
+    stderr ""
+    exit_code 0
+end test "suffix removal removes one byte in C locale"
+```
+
 #### Test: suffix removal respects character boundaries
+
+In C.UTF-8, `?` matches one character. `${v%?}` removes the last multi-byte
+character (two bytes for U+00E8), leaving the first character intact.
 
 ```
 begin test "suffix removal respects character boundaries"
+  setenv "LC_ALL" "C.UTF-8"
   script
-    export LC_ALL=C.UTF-8
     v=$(printf '\303\251\303\250')
     echo "${v%?}" | od -An -t x1 | tr -d ' \n'
   expect

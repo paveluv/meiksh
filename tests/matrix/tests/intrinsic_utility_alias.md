@@ -506,10 +506,14 @@ begin interactive test "alias with trailing space chains to next word"
 end interactive test "alias with trailing space chains to next word"
 ```
 
-#### Test: alias listing sorted by collation sequence
+#### Test: alias listing sorted by collation sequence in C locale
+
+The alias listing shall be sorted by the collation sequence of the current
+locale. In the C locale, uppercase letters sort before lowercase (byte order).
 
 ```
-begin test "alias listing sorted by collation sequence"
+begin test "alias listing sorted by collation sequence in C locale"
+  setenv "LC_ALL" "C"
   script
     alias Bx=true
     alias ax=true
@@ -520,5 +524,25 @@ begin test "alias listing sorted by collation sequence"
     stdout "Bx\nCx\nax\nbx"
     stderr ""
     exit_code 0
-end test "alias listing sorted by collation sequence"
+end test "alias listing sorted by collation sequence in C locale"
+```
+
+#### Test: alias listing sorted by collation sequence in UTF-8 locale
+
+In C.UTF-8, the collation order for ASCII names is the same as byte order.
+
+```
+begin test "alias listing sorted by collation sequence in UTF-8 locale"
+  setenv "LC_ALL" "C.UTF-8"
+  script
+    alias Bx=true
+    alias ax=true
+    alias Cx=true
+    alias bx=true
+    alias | sed 's/=.*//' | head -4
+  expect
+    stdout "Bx\nCx\nax\nbx"
+    stderr ""
+    exit_code 0
+end test "alias listing sorted by collation sequence in UTF-8 locale"
 ```
