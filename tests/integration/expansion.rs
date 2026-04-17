@@ -2454,3 +2454,13 @@ fn restore_vars_path_clears_cache() {
     assert!(stdout.contains("found"));
     assert!(stdout.contains("miss"));
 }
+
+#[test]
+fn command_not_found_exercises_execvp_failure() {
+    let out = Command::new(meiksh())
+        .args(["-c", "/nonexistent_meiksh_test_xyz 2>/dev/null; echo $?"])
+        .output()
+        .expect("run");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(stdout.trim(), "127");
+}
