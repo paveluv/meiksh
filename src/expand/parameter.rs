@@ -5,7 +5,7 @@ use crate::syntax::byte_class::{is_digit, is_name, is_name_cont, is_name_start};
 
 use super::arithmetic::{eval_arithmetic, expand_arithmetic_expression};
 use super::core::{Context, ExpandError};
-use super::glob::pattern_matches;
+use super::glob::pattern_matches_with_offsets;
 use super::model::{Expansion, Segment, flatten_segments, render_pattern_from_segments};
 use super::word::{expand_parameter_text_owned, expand_raw, trim_trailing_newlines};
 
@@ -942,32 +942,32 @@ pub(super) fn remove_parameter_pattern(
     let offsets = super::expand_parts::char_boundary_offsets(&value);
     match mode {
         PatternRemoval::SmallestPrefix => {
-            for &end in offsets.iter() {
-                if pattern_matches(&value[..end], pattern) {
+            for (k, &end) in offsets.iter().enumerate() {
+                if pattern_matches_with_offsets(&value[..end], &offsets[..=k], 0, pattern) {
                     value.drain(..end);
                     return Ok(value);
                 }
             }
         }
         PatternRemoval::LargestPrefix => {
-            for &end in offsets.iter().rev() {
-                if pattern_matches(&value[..end], pattern) {
+            for (k, &end) in offsets.iter().enumerate().rev() {
+                if pattern_matches_with_offsets(&value[..end], &offsets[..=k], 0, pattern) {
                     value.drain(..end);
                     return Ok(value);
                 }
             }
         }
         PatternRemoval::SmallestSuffix => {
-            for &start in offsets.iter().rev() {
-                if pattern_matches(&value[start..], pattern) {
+            for (k, &start) in offsets.iter().enumerate().rev() {
+                if pattern_matches_with_offsets(&value[start..], &offsets[k..], start, pattern) {
                     value.truncate(start);
                     return Ok(value);
                 }
             }
         }
         PatternRemoval::LargestSuffix => {
-            for &start in offsets.iter() {
-                if pattern_matches(&value[start..], pattern) {
+            for (k, &start) in offsets.iter().enumerate() {
+                if pattern_matches_with_offsets(&value[start..], &offsets[k..], start, pattern) {
                     value.truncate(start);
                     return Ok(value);
                 }

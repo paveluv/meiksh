@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::rc::Rc;
 
+use crate::hash::ShellMap;
 use crate::sys;
 use crate::trace_entries;
 
@@ -25,14 +26,14 @@ pub fn test_shell() -> Shell {
         options: ShellOptions::default(),
         shell_name: b"meiksh"[..].into(),
         shared: Rc::new(SharedEnv {
-            env: HashMap::new(),
+            env: ShellMap::default(),
             exported: BTreeSet::new(),
             readonly: BTreeSet::new(),
-            aliases: HashMap::new(),
-            functions: HashMap::new(),
-            path_cache: HashMap::new(),
+            aliases: ShellMap::default(),
+            functions: ShellMap::default(),
+            path_cache: ShellMap::default(),
             history: Vec::new(),
-            mail_sizes: HashMap::new(),
+            mail_sizes: ShellMap::default(),
         }),
         positional: Vec::new(),
         last_status: 0,

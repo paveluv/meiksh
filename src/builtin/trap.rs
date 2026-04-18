@@ -133,7 +133,7 @@ pub(super) fn parse_trap_action(action: &[u8]) -> Option<TrapAction> {
         _ if action.is_empty() => Some(TrapAction::Ignore),
         _ => {
             let program =
-                crate::syntax::parse_with_aliases(action, &std::collections::HashMap::new())
+                crate::syntax::parse_with_aliases(action, &crate::hash::ShellMap::default())
                     .unwrap_or_else(|_| Program {
                         items: Box::new([]),
                     });

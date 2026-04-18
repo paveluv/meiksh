@@ -1,14 +1,14 @@
 use std::borrow::Cow;
-use std::collections::HashMap;
 use std::rc::Rc;
 
 use crate::bstr;
 use crate::expand::core::{Context, ExpandError};
 use crate::expand::model::Expansion;
+use crate::hash::ShellMap;
 use crate::syntax::ast::Program;
 
 pub(super) struct FakeContext {
-    pub(super) env: HashMap<Vec<u8>, Vec<u8>>,
+    pub(super) env: ShellMap<Vec<u8>, Vec<u8>>,
     pub(super) positional: Vec<Vec<u8>>,
     pub(super) pathname_expansion_enabled: bool,
     pub(super) nounset_enabled: bool,
@@ -16,7 +16,7 @@ pub(super) struct FakeContext {
 
 impl FakeContext {
     pub(super) fn new() -> Self {
-        let mut env = HashMap::new();
+        let mut env = ShellMap::default();
         env.insert(b"HOME".to_vec(), b"/tmp/home".to_vec());
         env.insert(b"USER".to_vec(), b"meiksh".to_vec());
         env.insert(b"IFS".to_vec(), b" \t\n,".to_vec());
@@ -101,13 +101,13 @@ impl Context for FakeContext {
 }
 
 pub(super) struct DefaultPathContext {
-    pub(super) env: HashMap<Vec<u8>, Vec<u8>>,
+    pub(super) env: ShellMap<Vec<u8>, Vec<u8>>,
     pub(super) nounset_enabled: bool,
 }
 
 impl DefaultPathContext {
     pub(super) fn new() -> Self {
-        let mut env = HashMap::new();
+        let mut env = ShellMap::default();
         env.insert(b"HOME".to_vec(), b"/tmp/home".to_vec());
         Self {
             env,

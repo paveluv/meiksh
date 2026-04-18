@@ -6,6 +6,7 @@ pub(crate) mod bstr;
 pub(crate) mod builtin;
 pub(crate) mod exec;
 pub(crate) mod expand;
+pub(crate) mod hash;
 pub(crate) mod interactive;
 pub mod shell;
 pub(crate) mod syntax;
