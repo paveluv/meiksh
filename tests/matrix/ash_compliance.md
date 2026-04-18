@@ -162,7 +162,6 @@ stderr as it is consumed.
 ```sh
 /bin/sh -v -c 'printf hello\n' 2>stderr_capture.txt
 cat stderr_capture.txt
-rm -f stderr_capture.txt
 ```
 
 Expected:
@@ -308,7 +307,6 @@ mkdir -p tmp_pat/sub
 : > tmp_pat/sub/visible
 : > tmp_pat/sub/.hidden
 /bin/sh -c 'set -- tmp_pat/sub/*; printf "%s\n" "$@"'
-rm -rf tmp_pat
 ```
 
 Expected:
@@ -401,7 +399,6 @@ rather than exiting with a non-zero status and a diagnostic.
 printf 'echo first\nexec 0>&-\necho after_close\n' | /bin/sh 2>err.txt
 echo rc=$?
 cat err.txt
-rm -f err.txt
 ```
 
 Expected:
@@ -467,7 +464,6 @@ exhibits the same gap (dash compliance #14).
 
 ```sh
 /bin/sh -c 'exec 10>/tmp/_ash_fd10 2>&1'; echo "rc=$?"
-rm -f /tmp/_ash_fd10
 ```
 
 Expected:
@@ -495,7 +491,6 @@ FreeBSD `/bin/sh` does not print the new working directory.
 base=$(mktemp -d)
 mkdir -p "$base/searchroot/target"
 CDPATH=$base/searchroot /bin/sh -c 'out=$(cd target); printf "[%s]\n" "$out"'
-rm -rf "$base"
 ```
 
 Expected:
@@ -524,7 +519,6 @@ FreeBSD `/bin/sh` does not reliably write the new `PWD` to stdout after
 ```sh
 a=$(mktemp -d); b=$(mktemp -d)
 /bin/sh -c 'cd "$1"; cd "$2"; out=$(cd -); printf "[%s]\n" "$out"' _ "$a" "$b"
-rmdir "$a" "$b"
 ```
 
 Expected:
@@ -666,7 +660,6 @@ echo from-direct
 EOF
 chmod +x "$base/bin1/hello" "$base/bin2/hello"
 PATH=$base/bin1:$PATH /bin/sh -c 'time "$0/bin2/hello"' "$base" 2>/dev/null
-rm -rf "$base"
 ```
 
 Expected:
