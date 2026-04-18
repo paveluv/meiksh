@@ -1,37 +1,9 @@
 use std::ffi::CString;
 
 use crate::sys;
+use crate::sys::locale::sort_cstrings;
 
 use super::glob::pattern_matches;
-
-/// Sort `entries` in the current locale's collating sequence, without
-/// allocating on every comparison.
-///
-/// `readdir` already hands back NUL-terminated `d_name` buffers, which we
-/// keep in `CString` form end-to-end through the glob pipeline. That lets
-/// the comparator call `strcoll(3)` directly on the prebuilt C strings.
-/// glibc's own `__strcoll_l` has a fast path that degrades to `strcmp` in
-/// C-category locales (including `C.UTF-8`), so we do not need a separate
-/// bytewise short-circuit here — the libc call is already cheap, as long
-/// as we are not wrapping it in a fresh `CString` on every invocation.
-///
-/// Under `cfg(test)` we bypass libc entirely to keep the unit-test suite
-/// deterministic and host-locale-independent; the byte order is identical
-/// to `strcoll` for all ASCII test fixtures.
-#[inline]
-fn sort_cstrings(entries: &mut [CString]) {
-    #[cfg(not(test))]
-    {
-        entries.sort_by(|a, b| {
-            let r = unsafe { libc::strcoll(a.as_ptr(), b.as_ptr()) };
-            r.cmp(&0)
-        });
-    }
-    #[cfg(test)]
-    {
-        entries.sort_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
-    }
-}
 
 /// True if `segment` contains at least one unquoted glob metacharacter that
 /// POSIX 2.13.1 treats as active: `*`, `?`, or a well-formed `[...]`

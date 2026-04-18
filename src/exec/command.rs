@@ -675,8 +675,8 @@ mod tests {
             trace_entries![
                 fork() -> pid(100), child: [],
                 waitpid(100, _) -> int(0),
-                waitpid(100, _) -> err(libc::EINTR),
-                waitpid(100, _) -> err(libc::ECHILD),
+                waitpid(100, _) -> err(sys::constants::EINTR),
+                waitpid(100, _) -> err(sys::constants::ECHILD),
                 write(fd(2), bytes(b"meiksh: line 1: No child processes\n")) -> auto,
             ],
             || {
@@ -693,7 +693,7 @@ mod tests {
         run_trace(
             trace_entries![
                 fcntl(int(1), _, _) -> int(10),
-                open(_, _, _) -> err(libc::EACCES),
+                open(_, _, _) -> err(sys::constants::EACCES),
                 dup2(fd(10), fd(1)) -> fd(1),
                 close(fd(10)) -> 0,
                 write(fd(2), bytes(b"meiksh: line 1: Permission denied\n")) -> auto,

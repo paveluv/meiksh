@@ -410,7 +410,7 @@ mod tests {
         run_trace(
             trace_entries![
                 access(str("/bin/noperm"), sys::constants::F_OK) -> 0,
-                access(str("/bin/noperm"), sys::constants::X_OK) -> err(libc::EACCES),
+                access(str("/bin/noperm"), sys::constants::X_OK) -> err(sys::constants::EACCES),
                 write(fd(2), bytes(b"noperm: Permission denied\n")) -> auto,
             ],
             || {
@@ -474,7 +474,7 @@ mod tests {
     fn spawn_child_not_found() {
         run_trace(
             trace_entries![
-                access(str("/bin/missing"), sys::constants::F_OK) -> err(libc::ENOENT),
+                access(str("/bin/missing"), sys::constants::F_OK) -> err(sys::constants::ENOENT),
                 write(fd(2), bytes(b"missing: not found\n")) -> auto,
             ],
             || {
@@ -559,7 +559,7 @@ mod tests {
 
     #[test]
     fn spawn_prepared_exec_generic_error_exits_126() {
-        let eio_msg = sys::error::SysError::Errno(libc::EIO).strerror();
+        let eio_msg = sys::error::SysError::Errno(sys::constants::EIO).strerror();
         let mut expected_stderr = b"/tmp/badexec: ".to_vec();
         expected_stderr.extend_from_slice(&eio_msg);
         expected_stderr.push(b'\n');
@@ -569,7 +569,7 @@ mod tests {
                     open(str("/tmp/badexec"), _, _) -> fd(20),
                     read(fd(20), _) -> bytes(b"echo hello\n"),
                     close(fd(20)) -> int(0),
-                    execvp(str("/tmp/badexec"), _) -> err(libc::EIO),
+                    execvp(str("/tmp/badexec"), _) -> err(sys::constants::EIO),
                     write(fd(2), bytes(&expected_stderr)) -> auto,
                 ],
                 waitpid(202, _) -> status(126),
@@ -596,7 +596,7 @@ mod tests {
         run_trace(
             trace_entries![
                 fork() -> pid(203), child: [
-                    access(str("/nonexistent/cmd"), sys::constants::F_OK) -> err(libc::ENOENT),
+                    access(str("/nonexistent/cmd"), sys::constants::F_OK) -> err(sys::constants::ENOENT),
                     write(fd(2), bytes(b"cmd: not found\n")) -> auto,
                 ],
                 waitpid(203, _) -> status(127),
@@ -627,7 +627,7 @@ mod tests {
                 open(str("file.txt"), _, _) -> fd(10),
                 fork() -> pid(123), child: [
                     setpgid(0, 500) -> 0,
-                    dup2(fd(10), fd(1)) -> err(libc::EBADF),
+                    dup2(fd(10), fd(1)) -> err(sys::constants::EBADF),
                     write(fd(2), bytes(b"/bin/true: Bad file descriptor\n")) -> auto,
                 ],
                 close(fd(10)) -> 0,

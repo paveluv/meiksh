@@ -3,16 +3,16 @@ use crate::shell::state::Shell;
 use crate::sys;
 
 struct RawMode {
-    saved: libc::termios,
+    saved: sys::types::Termios,
 }
 
 impl RawMode {
     fn enter() -> sys::error::SysResult<Self> {
         let saved = sys::tty::get_terminal_attrs(sys::constants::STDIN_FILENO)?;
         let mut raw = saved;
-        raw.c_lflag &= !(libc::ICANON | libc::ECHO | libc::ISIG);
-        raw.c_cc[libc::VMIN] = 1;
-        raw.c_cc[libc::VTIME] = 0;
+        raw.c_lflag &= !(sys::constants::ICANON | sys::constants::ECHO | sys::constants::ISIG);
+        raw.c_cc[sys::constants::VMIN] = 1;
+        raw.c_cc[sys::constants::VTIME] = 0;
         sys::tty::set_terminal_attrs(sys::constants::STDIN_FILENO, &raw)?;
         Ok(Self { saved })
     }
@@ -1295,7 +1295,7 @@ pub(super) fn read_line(
 
     let erase_char = {
         if let Ok(attrs) = sys::tty::get_terminal_attrs(sys::constants::STDIN_FILENO) {
-            attrs.c_cc[libc::VERASE]
+            attrs.c_cc[sys::constants::VERASE]
         } else {
             0x7f
         }
@@ -1345,9 +1345,10 @@ pub(super) fn read_line(
                     edit_cmd.extend_from_slice(&tmp_path);
                     let _ = shell.execute_string(&edit_cmd);
                     let mut raw_restored = _raw.saved;
-                    raw_restored.c_lflag &= !(libc::ICANON | libc::ECHO | libc::ISIG);
-                    raw_restored.c_cc[libc::VMIN] = 1;
-                    raw_restored.c_cc[libc::VTIME] = 0;
+                    raw_restored.c_lflag &=
+                        !(sys::constants::ICANON | sys::constants::ECHO | sys::constants::ISIG);
+                    raw_restored.c_cc[sys::constants::VMIN] = 1;
+                    raw_restored.c_cc[sys::constants::VTIME] = 0;
                     let _ =
                         sys::tty::set_terminal_attrs(sys::constants::STDIN_FILENO, &raw_restored);
                     if let Ok(content) = sys::fs::read_file(&tmp_path) {
@@ -1628,6 +1629,7 @@ fn glob_expand(pattern: &[u8]) -> Result<Vec<Vec<u8>>, ()> {
 mod tests {
     use super::*;
     use crate::interactive::test_support::test_shell;
+    use crate::sys;
     use crate::sys::constants::{STDIN_FILENO, STDOUT_FILENO};
     use crate::sys::test_support::run_trace;
     use crate::trace_entries;
@@ -1663,6 +1665,7 @@ mod tests {
             word_backward, word_end, word_forward,
         };
         use super::{feed_bytes, get_return, has_bell, has_return};
+        use crate::sys;
         use crate::sys::test_support::{assert_no_syscalls, run_trace, set_test_locale_utf8};
         use crate::trace_entries;
 
@@ -1839,7 +1842,7 @@ mod tests {
         fn glob_expand_with_mocked_files() {
             run_trace(
                 trace_entries![
-                    access(str(b"./testdir"), int(libc::F_OK)) -> 0,
+                    access(str(b"./testdir"), int(sys::constants::F_OK)) -> 0,
                     opendir(str(b"./testdir")) -> int(1),
                     readdir(_) -> dir_entry(b"aaa_1"),
                     readdir(_) -> dir_entry(b"aaa_2"),
@@ -1863,7 +1866,7 @@ mod tests {
         fn glob_expand_marks_directories_with_trailing_slash() {
             run_trace(
                 trace_entries![
-                    access(str(b"./testdir"), int(libc::F_OK)) -> 0,
+                    access(str(b"./testdir"), int(sys::constants::F_OK)) -> 0,
                     opendir(str(b"./testdir")) -> int(1),
                     readdir(_) -> dir_entry(b"somedir"),
                     readdir(_) -> int(0),
@@ -1881,7 +1884,7 @@ mod tests {
         fn glob_expand_no_match_returns_err() {
             run_trace(
                 trace_entries![
-                    access(str(b"/nonexistent_path_xyz"), int(libc::F_OK)) -> err(libc::ENOENT),
+                    access(str(b"/nonexistent_path_xyz"), int(sys::constants::F_OK)) -> err(sys::constants::ENOENT),
                 ],
                 || {
                     let result = glob_expand(b"/nonexistent_path_xyz/no_*_match");
@@ -3213,7 +3216,7 @@ mod tests {
         fn vi_star_glob_expand() {
             run_trace(
                 trace_entries![
-                    access(str(b"./testdir"), int(libc::F_OK)) -> 0,
+                    access(str(b"./testdir"), int(sys::constants::F_OK)) -> 0,
                     opendir(str(b"./testdir")) -> int(1),
                     readdir(_) -> dir_entry(b"aaa.txt"),
                     readdir(_) -> dir_entry(b"bbb.txt"),
@@ -3249,7 +3252,7 @@ mod tests {
         fn vi_backslash_unique_completion() {
             run_trace(
                 trace_entries![
-                    access(str(b"./testdir"), int(libc::F_OK)) -> 0,
+                    access(str(b"./testdir"), int(sys::constants::F_OK)) -> 0,
                     opendir(str(b"./testdir")) -> int(1),
                     readdir(_) -> dir_entry(b"unique_file.txt"),
                     readdir(_) -> int(0),
@@ -3279,7 +3282,7 @@ mod tests {
         fn vi_backslash_dir_appends_slash() {
             run_trace(
                 trace_entries![
-                    access(str(b"./testdir"), int(libc::F_OK)) -> 0,
+                    access(str(b"./testdir"), int(sys::constants::F_OK)) -> 0,
                     opendir(str(b"./testdir")) -> int(1),
                     readdir(_) -> dir_entry(b"subdir_only"),
                     readdir(_) -> int(0),
@@ -3302,7 +3305,7 @@ mod tests {
         fn vi_backslash_ambiguous_bells() {
             run_trace(
                 trace_entries![
-                    access(str(b"./testdir"), int(libc::F_OK)) -> 0,
+                    access(str(b"./testdir"), int(sys::constants::F_OK)) -> 0,
                     opendir(str(b"./testdir")) -> int(1),
                     readdir(_) -> dir_entry(b"ab1.txt"),
                     readdir(_) -> dir_entry(b"ab2.txt"),
@@ -3431,7 +3434,7 @@ mod tests {
         fn vi_star_with_explicit_glob_chars() {
             run_trace(
                 trace_entries![
-                    access(str(b"./testdir"), int(libc::F_OK)) -> 0,
+                    access(str(b"./testdir"), int(sys::constants::F_OK)) -> 0,
                     opendir(str(b"./testdir")) -> int(1),
                     readdir(_) -> dir_entry(b"file1.txt"),
                     readdir(_) -> int(0),
@@ -3850,7 +3853,7 @@ mod tests {
         fn glob_expand_nomatch_returns_err() {
             run_trace(
                 trace_entries![
-                    access(str(b"/nonexistent_dir_xyz_42"), int(libc::F_OK)) -> err(libc::ENOENT),
+                    access(str(b"/nonexistent_dir_xyz_42"), int(sys::constants::F_OK)) -> err(sys::constants::ENOENT),
                 ],
                 || {
                     let result = glob_expand(b"/nonexistent_dir_xyz_42/*.qqq");
@@ -3863,7 +3866,7 @@ mod tests {
         fn vi_star_glob_nomatch_leaves_line() {
             run_trace(
                 trace_entries![
-                    access(str(b"/no_such_dir_xyzzy"), int(libc::F_OK)) -> err(libc::ENOENT),
+                    access(str(b"/no_such_dir_xyzzy"), int(sys::constants::F_OK)) -> err(sys::constants::ENOENT),
                 ],
                 || {
                     let mut state = ViState::new(0x7f, 0);
@@ -3922,7 +3925,7 @@ mod tests {
         fn vi_backslash_glob_nomatch_no_change() {
             run_trace(
                 trace_entries![
-                    access(str(b"/no_such_dir_xyzzy"), int(libc::F_OK)) -> err(libc::ENOENT),
+                    access(str(b"/no_such_dir_xyzzy"), int(sys::constants::F_OK)) -> err(sys::constants::ENOENT),
                 ],
                 || {
                     let mut state = ViState::new(0x7f, 0);
@@ -4647,7 +4650,7 @@ mod tests {
             trace_entries![
                 tcgetattr(fd(STDIN_FILENO)) -> 0,
                 tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
-                tcgetattr(fd(STDIN_FILENO)) -> err(libc::EINVAL),
+                tcgetattr(fd(STDIN_FILENO)) -> err(sys::constants::EINVAL),
                 read(fd(STDIN_FILENO), _) -> bytes([b'\n']),
                 write(fd(STDOUT_FILENO), bytes(b"\r\n")) -> auto,
                 tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
@@ -4664,7 +4667,7 @@ mod tests {
     fn vi_read_line_tcgetattr_error_falls_back() {
         run_trace(
             trace_entries![
-                tcgetattr(fd(STDIN_FILENO)) -> err(libc::ENOTTY),
+                tcgetattr(fd(STDIN_FILENO)) -> err(sys::constants::ENOTTY),
                 read(fd(STDIN_FILENO), _) -> bytes(b""),
             ],
             || {
@@ -4710,7 +4713,7 @@ mod tests {
                 tcgetattr(fd(STDIN_FILENO)) -> 0,
                 tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
                 tcgetattr(fd(STDIN_FILENO)) -> 0,
-                read(fd(STDIN_FILENO), _) -> err(libc::EIO),
+                read(fd(STDIN_FILENO), _) -> err(sys::constants::EIO),
                 tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
             ],
             || {
@@ -4812,7 +4815,7 @@ mod tests {
                 tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
                 write(fd(STDOUT_FILENO), bytes(b"\r\n")) -> auto,
                 tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
-                open(_, _, _) -> err(libc::ENOENT),
+                open(_, _, _) -> err(sys::constants::ENOENT),
                 unlink(_) -> 0,
                 write(fd(STDOUT_FILENO), bytes(b"\r\x1b[K")) -> auto,
                 read(fd(STDIN_FILENO), _) -> bytes([b'\r']),

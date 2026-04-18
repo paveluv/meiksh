@@ -61,106 +61,7 @@ pub(super) struct SystemInterface {
     pub(super) tcsetattr: fn(c_int, c_int, *const libc::termios) -> c_int,
     // User database
     pub(super) getpwnam: fn(&[u8]) -> Option<Vec<u8>>,
-    // Signal state
-    pub(super) pending_signal_bits: fn() -> usize,
-    pub(super) take_pending_signal_bits: fn() -> usize,
     pub(super) monotonic_clock_ns: fn() -> u64,
-    // Locale
-    pub(super) setup_locale: fn(),
-    pub(super) reinit_locale: fn(),
-    #[allow(dead_code)]
-    pub(super) classify_byte: fn(&[u8], u8) -> bool,
-    pub(super) classify_char: fn(&[u8], u32) -> bool,
-    pub(super) decode_char: fn(&[u8]) -> (u32, usize),
-    pub(super) encode_char: fn(u32, &mut [u8]) -> usize,
-    #[allow(dead_code)]
-    pub(super) mb_cur_max: fn() -> usize,
-    pub(super) to_upper: fn(u32) -> u32,
-    pub(super) to_lower: fn(u32) -> u32,
-    pub(super) char_width: fn(u32) -> usize,
-    pub(super) strcoll: fn(&[u8], &[u8]) -> std::cmp::Ordering,
-    pub(super) decimal_point: fn() -> u8,
-    // Wait-status decoding. Abstracted so that unit tests do not need to
-    // know the host libc's bit-level encoding of wait(2) status values.
-    pub(super) wifexited: fn(c_int) -> bool,
-    pub(super) wexitstatus: fn(c_int) -> i32,
-    pub(super) wifsignaled: fn(c_int) -> bool,
-    pub(super) wtermsig: fn(c_int) -> i32,
-    pub(super) wifstopped: fn(c_int) -> bool,
-    pub(super) wstopsig: fn(c_int) -> i32,
-    pub(super) wifcontinued: fn(c_int) -> bool,
-}
-
-fn classify_wchar_wctype(class: &[u8], wc: u32) -> bool {
-    unsafe extern "C" {
-        fn wctype(name: *const c_char) -> usize;
-        fn iswctype(wc: u32, desc: usize) -> c_int;
-    }
-    let c_class = crate::bstr::to_cstring(class).unwrap_or_default();
-    let desc = unsafe { wctype(c_class.as_ptr()) };
-    if desc == 0 {
-        false
-    } else {
-        unsafe { iswctype(wc, desc) != 0 }
-    }
-}
-
-fn classify_wchar(class: &[u8], wc: u32) -> bool {
-    unsafe extern "C" {
-        fn iswalnum(wc: u32) -> c_int;
-        fn iswalpha(wc: u32) -> c_int;
-        fn iswblank(wc: u32) -> c_int;
-        fn iswcntrl(wc: u32) -> c_int;
-        fn iswdigit(wc: u32) -> c_int;
-        fn iswgraph(wc: u32) -> c_int;
-        fn iswlower(wc: u32) -> c_int;
-        fn iswprint(wc: u32) -> c_int;
-        fn iswpunct(wc: u32) -> c_int;
-        fn iswspace(wc: u32) -> c_int;
-        fn iswupper(wc: u32) -> c_int;
-        fn iswxdigit(wc: u32) -> c_int;
-    }
-    unsafe {
-        match class {
-            b"alnum" => iswalnum(wc) != 0,
-            b"alpha" => iswalpha(wc) != 0,
-            b"blank" => iswblank(wc) != 0,
-            b"cntrl" => iswcntrl(wc) != 0,
-            b"digit" => iswdigit(wc) != 0,
-            b"graph" => iswgraph(wc) != 0,
-            b"lower" => iswlower(wc) != 0,
-            b"print" => iswprint(wc) != 0,
-            b"punct" => iswpunct(wc) != 0,
-            b"space" => iswspace(wc) != 0,
-            b"upper" => iswupper(wc) != 0,
-            b"xdigit" => iswxdigit(wc) != 0,
-            _ => classify_wchar_wctype(class, wc),
-        }
-    }
-}
-
-fn mb_cur_max_impl() -> usize {
-    #[cfg(target_os = "linux")]
-    {
-        unsafe extern "C" {
-            fn __ctype_get_mb_cur_max() -> usize;
-        }
-        unsafe { __ctype_get_mb_cur_max() }
-    }
-    #[cfg(target_os = "macos")]
-    {
-        unsafe extern "C" {
-            static __mb_cur_max: c_int;
-        }
-        unsafe { __mb_cur_max as usize }
-    }
-    #[cfg(target_os = "freebsd")]
-    {
-        unsafe extern "C" {
-            fn __mb_cur_max() -> usize;
-        }
-        unsafe { __mb_cur_max() }
-    }
 }
 
 pub(super) fn default_interface() -> SystemInterface {
@@ -267,100 +168,15 @@ pub(super) fn default_interface() -> SystemInterface {
             let dir = unsafe { CStr::from_ptr((*pw).pw_dir) };
             Some(crate::bstr::bytes_from_cstr(dir))
         },
-        pending_signal_bits: || PENDING_SIGNALS.load(Ordering::SeqCst),
-        take_pending_signal_bits: || PENDING_SIGNALS.swap(0, Ordering::SeqCst),
         monotonic_clock_ns: || {
             let mut ts = std::mem::MaybeUninit::<libc::timespec>::zeroed();
             unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, ts.as_mut_ptr()) };
             let ts = unsafe { ts.assume_init() };
             ts.tv_sec as u64 * 1_000_000_000 + ts.tv_nsec as u64
         },
-        setup_locale: || unsafe {
-            libc::setlocale(libc::LC_ALL, b"\0".as_ptr().cast());
-        },
-        reinit_locale: || unsafe {
-            libc::setlocale(libc::LC_ALL, b"\0".as_ptr().cast());
-        },
-        classify_byte: |class, byte| classify_wchar(class, byte as u32),
-        classify_char: classify_wchar,
-        decode_char: |bytes| {
-            if bytes.is_empty() {
-                return (0, 0);
-            }
-            #[repr(C, align(8))]
-            struct MbState([u8; 128]);
-            unsafe extern "C" {
-                fn mbrtowc(
-                    pwc: *mut libc::wchar_t,
-                    s: *const u8,
-                    n: usize,
-                    ps: *mut MbState,
-                ) -> usize;
-            }
-            unsafe {
-                let mut wc: libc::wchar_t = 0;
-                let mut ps: MbState = std::mem::zeroed();
-                let n = mbrtowc(&mut wc, bytes.as_ptr(), bytes.len(), &mut ps);
-                if n == 0 {
-                    (0, 0)
-                } else if n == usize::MAX || n == usize::MAX - 1 {
-                    (bytes[0] as u32, 1)
-                } else {
-                    (wc as u32, n)
-                }
-            }
-        },
-        encode_char: |wc, buf| {
-            #[repr(C, align(8))]
-            struct MbState([u8; 128]);
-            unsafe extern "C" {
-                fn wcrtomb(s: *mut u8, wc: libc::wchar_t, ps: *mut MbState) -> usize;
-            }
-            unsafe {
-                let mut ps: MbState = std::mem::zeroed();
-                let n = wcrtomb(buf.as_mut_ptr(), wc as libc::wchar_t, &mut ps);
-                if n == usize::MAX { 0 } else { n }
-            }
-        },
-        mb_cur_max: mb_cur_max_impl,
-        to_upper: |wc| unsafe {
-            unsafe extern "C" {
-                fn towupper(wc: u32) -> u32;
-            }
-            towupper(wc)
-        },
-        to_lower: |wc| unsafe {
-            unsafe extern "C" {
-                fn towlower(wc: u32) -> u32;
-            }
-            towlower(wc)
-        },
-        char_width: |wc| {
-            unsafe extern "C" {
-                fn wcwidth(wc: u32) -> c_int;
-            }
-            let w = unsafe { wcwidth(wc) };
-            if w < 0 { 0 } else { w as usize }
-        },
-        strcoll: |a, b| {
-            let ca = crate::bstr::to_cstring(a).unwrap_or_default();
-            let cb = crate::bstr::to_cstring(b).unwrap_or_default();
-            let r = unsafe { libc::strcoll(ca.as_ptr(), cb.as_ptr()) };
-            r.cmp(&0)
-        },
-        decimal_point: || {
-            let dp = unsafe { *(*libc::localeconv()).decimal_point };
-            if dp == 0 { b'.' } else { dp as u8 }
-        },
-        wifexited: |s| libc::WIFEXITED(s),
-        wexitstatus: |s| libc::WEXITSTATUS(s),
-        wifsignaled: |s| libc::WIFSIGNALED(s),
-        wtermsig: |s| libc::WTERMSIG(s),
-        wifstopped: |s| libc::WIFSTOPPED(s),
-        wstopsig: |s| libc::WSTOPSIG(s),
-        wifcontinued: |s| libc::WIFCONTINUED(s),
     }
 }
+
 pub(super) fn signal_mask(signal: c_int) -> Option<usize> {
     let bit = match signal {
         SIGHUP => 0,
@@ -387,12 +203,40 @@ pub(super) fn signal_mask(signal: c_int) -> Option<usize> {
     };
     Some(1usize << bit)
 }
+
 static PENDING_SIGNALS: AtomicUsize = AtomicUsize::new(0);
 
 pub(super) extern "C" fn record_signal(sig: c_int) {
     if let Some(mask) = signal_mask(sig) {
         PENDING_SIGNALS.fetch_or(mask, Ordering::SeqCst);
     }
+}
+
+// Signal-state helpers. In production they read/clear the real
+// `PENDING_SIGNALS` atomic that `record_signal` updates from the
+// signal handler; in tests they delegate to the thread-local
+// `TEST_PENDING_SIGNALS` maintained by `test_support`. Neither path
+// needs to be traced via `SystemInterface`, so the functions live
+// here as module-local free functions.
+
+#[cfg(not(test))]
+pub(super) fn pending_signal_bits() -> usize {
+    PENDING_SIGNALS.load(Ordering::SeqCst)
+}
+
+#[cfg(test)]
+pub(super) fn pending_signal_bits() -> usize {
+    super::test_support::test_pending_signal_bits()
+}
+
+#[cfg(not(test))]
+pub(super) fn take_pending_signal_bits() -> usize {
+    PENDING_SIGNALS.swap(0, Ordering::SeqCst)
+}
+
+#[cfg(test)]
+pub(super) fn take_pending_signal_bits() -> usize {
+    super::test_support::test_take_pending_signal_bits()
 }
 
 /// Cached production SystemInterface, initialized on first use. All fields are
@@ -405,9 +249,9 @@ static DEFAULT_INTERFACE: OnceLock<SystemInterface> = OnceLock::new();
 ///
 /// Call sites use the form `(sys_interface().syscall)(args)`, which
 /// auto-derefs the returned reference. Returning by reference (rather than
-/// by value as before) avoids rebuilding the ~70-field / ~560-byte struct
-/// on every syscall dispatch, which profiling showed to be 5-27% self time
-/// across the hot sections.
+/// by value as before) avoids rebuilding the multi-field struct on every
+/// syscall dispatch, which profiling showed to be 5-27% self time across
+/// the hot sections.
 #[cfg(not(test))]
 #[inline]
 pub(super) fn sys_interface() -> &'static SystemInterface {

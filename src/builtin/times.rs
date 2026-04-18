@@ -67,7 +67,7 @@ mod tests {
         let msg = crate::builtin::test_support::diag(&expected);
         run_trace(
             trace_entries![
-                times(_) -> err(libc::EACCES),
+                times(_) -> err(sys::constants::EACCES),
                 sysconf(_) -> 100,
                 write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto,
             ],

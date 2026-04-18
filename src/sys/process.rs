@@ -116,7 +116,7 @@ pub(crate) fn default_signal_action(signal: c_int) -> SysResult<()> {
 }
 
 pub(crate) fn has_pending_signal() -> Option<c_int> {
-    let bits = (sys_interface().pending_signal_bits)();
+    let bits = super::interface::pending_signal_bits();
 
     supported_trap_signals().into_iter().find(|signal| {
         signal_mask(*signal)
@@ -126,7 +126,7 @@ pub(crate) fn has_pending_signal() -> Option<c_int> {
 }
 
 pub(crate) fn take_pending_signals() -> Vec<c_int> {
-    let bits = (sys_interface().take_pending_signal_bits)();
+    let bits = super::interface::take_pending_signal_bits();
 
     supported_trap_signals()
         .into_iter()
@@ -411,32 +411,84 @@ pub(crate) fn all_signal_names() -> &'static [(&'static [u8], c_int)] {
     ]
 }
 
+// Wait-status decoders. In production these wrap the host libc's
+// `WIFEXITED(3)` / `WEXITSTATUS(3)` macros directly; in tests they
+// interpret the synthetic tag encoding produced by the `encode_*`
+// helpers in `test_support`. These are pure-logic operations (no
+// syscall), so they do not belong on the `SystemInterface` vtable.
+
+#[cfg(not(test))]
 fn wifexited(status: c_int) -> bool {
-    (sys_interface().wifexited)(status)
+    libc::WIFEXITED(status)
 }
 
+#[cfg(test)]
+fn wifexited(status: c_int) -> bool {
+    use super::test_support::{WAIT_TAG_EXITED, WAIT_TAG_MASK};
+    (status as u32) & WAIT_TAG_MASK == WAIT_TAG_EXITED
+}
+
+#[cfg(not(test))]
 pub(crate) fn wexitstatus(status: c_int) -> i32 {
-    (sys_interface().wexitstatus)(status)
+    libc::WEXITSTATUS(status)
 }
 
+#[cfg(test)]
+pub(crate) fn wexitstatus(status: c_int) -> i32 {
+    (status & 0xff) as i32
+}
+
+#[cfg(not(test))]
 pub(crate) fn wifsignaled(status: c_int) -> bool {
-    (sys_interface().wifsignaled)(status)
+    libc::WIFSIGNALED(status)
 }
 
+#[cfg(test)]
+pub(crate) fn wifsignaled(status: c_int) -> bool {
+    use super::test_support::{WAIT_TAG_MASK, WAIT_TAG_SIGNALED};
+    (status as u32) & WAIT_TAG_MASK == WAIT_TAG_SIGNALED
+}
+
+#[cfg(not(test))]
 pub(crate) fn wtermsig(status: c_int) -> i32 {
-    (sys_interface().wtermsig)(status)
+    libc::WTERMSIG(status)
 }
 
+#[cfg(test)]
+pub(crate) fn wtermsig(status: c_int) -> i32 {
+    (status & 0xff) as i32
+}
+
+#[cfg(not(test))]
 pub(crate) fn wifstopped(status: c_int) -> bool {
-    (sys_interface().wifstopped)(status)
+    libc::WIFSTOPPED(status)
 }
 
+#[cfg(test)]
+pub(crate) fn wifstopped(status: c_int) -> bool {
+    use super::test_support::{WAIT_TAG_MASK, WAIT_TAG_STOPPED};
+    (status as u32) & WAIT_TAG_MASK == WAIT_TAG_STOPPED
+}
+
+#[cfg(not(test))]
 pub(crate) fn wifcontinued(status: c_int) -> bool {
-    (sys_interface().wifcontinued)(status)
+    libc::WIFCONTINUED(status)
 }
 
+#[cfg(test)]
+pub(crate) fn wifcontinued(status: c_int) -> bool {
+    use super::test_support::{WAIT_TAG_CONTINUED, WAIT_TAG_MASK};
+    (status as u32) & WAIT_TAG_MASK == WAIT_TAG_CONTINUED
+}
+
+#[cfg(not(test))]
 pub(crate) fn wstopsig(status: c_int) -> i32 {
-    (sys_interface().wstopsig)(status)
+    libc::WSTOPSIG(status)
+}
+
+#[cfg(test)]
+pub(crate) fn wstopsig(status: c_int) -> i32 {
+    (status & 0xff) as i32
 }
 
 #[cfg(test)]

@@ -30,7 +30,7 @@ mod tests {
         let msg = diag(b"echo: write error: Bad file descriptor");
         run_trace(
             trace_entries![
-                write(fd(1), bytes(b"hello\n")) -> err(libc::EBADF),
+                write(fd(1), bytes(b"hello\n")) -> err(sys::constants::EBADF),
                 write(fd(2), bytes(&msg)) -> auto,
             ],
             || {

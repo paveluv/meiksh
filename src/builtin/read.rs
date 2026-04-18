@@ -503,14 +503,14 @@ mod tests {
 
     #[test]
     fn read_with_input_read_error_returns_diag() {
-        let eio_str = crate::sys::error::SysError::Errno(libc::EIO).strerror();
+        let eio_str = crate::sys::error::SysError::Errno(sys::constants::EIO).strerror();
         let mut diag_body = b"read: ".to_vec();
         diag_body.extend_from_slice(&eio_str);
         let msg = diag(&diag_body);
         let reads = vec![t(
             "read",
             vec![ArgMatcher::Fd(42), ArgMatcher::Any],
-            TraceResult::Err(libc::EIO),
+            TraceResult::Err(sys::constants::EIO),
         )];
         run_trace(
             trace_entries![
