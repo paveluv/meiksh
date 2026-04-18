@@ -430,7 +430,7 @@ mod tests {
     fn which_in_path_with_slash_existing() {
         run_trace(
             trace_entries![
-                access(str(b"./myscript"), int(libc::F_OK)) -> 0,
+                access(str(b"./myscript"), int(sys::constants::F_OK)) -> 0,
                 getcwd() -> cwd("/home/user"),
             ],
             || {
@@ -444,7 +444,7 @@ mod tests {
     #[test]
     fn which_in_path_with_slash_not_found() {
         run_trace(
-            trace_entries![access(str(b"./nosuch"), int(libc::F_OK)) -> err(libc::ENOENT),],
+            trace_entries![access(str(b"./nosuch"), int(sys::constants::F_OK)) -> err(sys::constants::ENOENT),],
             || {
                 let shell = test_shell();
                 let result = which(b"./nosuch", &shell);
@@ -472,7 +472,7 @@ mod tests {
         let msg = diag(b"totally_missing_cmd: not found");
         run_trace(
             trace_entries![
-                access(any, any) -> err(libc::ENOENT),
+                access(any, any) -> err(sys::constants::ENOENT),
                 write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto,
             ],
             || {
@@ -517,7 +517,7 @@ mod tests {
         let msg = diag(b"hash: totally_missing: not found");
         run_trace(
             trace_entries![
-                access(any, any) -> err(libc::ENOENT),
+                access(any, any) -> err(sys::constants::ENOENT),
                 write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto,
             ],
             || {
@@ -619,7 +619,7 @@ mod tests {
     fn command_v_external_found() {
         run_trace(
             trace_entries![
-                access(str(b"/usr/bin/ls"), int(libc::F_OK)) -> 0,
+                access(str(b"/usr/bin/ls"), int(sys::constants::F_OK)) -> 0,
                 write(fd(crate::sys::constants::STDOUT_FILENO), bytes(b"/usr/bin/ls\n")) -> auto,
             ],
             || {
@@ -640,7 +640,7 @@ mod tests {
     #[test]
     fn command_v_external_not_found() {
         run_trace(
-            trace_entries![access(any, any) -> err(libc::ENOENT)],
+            trace_entries![access(any, any) -> err(sys::constants::ENOENT)],
             || {
                 let mut shell = test_shell();
                 shell
@@ -858,7 +858,7 @@ mod tests {
     fn command_big_v_external() {
         run_trace(
             trace_entries![
-                access(str(b"/usr/bin/ls"), int(libc::F_OK)) -> 0,
+                access(str(b"/usr/bin/ls"), int(sys::constants::F_OK)) -> 0,
                 write(fd(crate::sys::constants::STDOUT_FILENO), bytes(b"ls is /usr/bin/ls\n")) -> auto,
             ],
             || {
@@ -879,7 +879,7 @@ mod tests {
     #[test]
     fn command_big_v_not_found() {
         run_trace(
-            trace_entries![access(any, any) -> err(libc::ENOENT)],
+            trace_entries![access(any, any) -> err(sys::constants::ENOENT)],
             || {
                 let mut shell = test_shell();
                 shell
@@ -1028,7 +1028,7 @@ mod tests {
     fn type_external_command() {
         run_trace(
             trace_entries![
-                access(str(b"/usr/bin/ls"), int(libc::F_OK)) -> 0,
+                access(str(b"/usr/bin/ls"), int(sys::constants::F_OK)) -> 0,
                 write(fd(crate::sys::constants::STDOUT_FILENO), bytes(b"ls is /usr/bin/ls\n")) -> auto,
             ],
             || {
@@ -1049,7 +1049,7 @@ mod tests {
         run_trace(
             trace_entries![
                 write(fd(crate::sys::constants::STDOUT_FILENO), bytes(b"echo is a regular built-in utility\n")) -> auto,
-                access(any, any) -> err(libc::ENOENT),
+                access(any, any) -> err(sys::constants::ENOENT),
                 write(fd(crate::sys::constants::STDERR_FILENO), bytes(&not_found_msg)) -> auto,
             ],
             || {
@@ -1094,7 +1094,7 @@ mod tests {
         let msg = diag(b"command: nosuchcmd: not found");
         run_trace(
             trace_entries![
-                access(any, any) -> err(libc::ENOENT),
+                access(any, any) -> err(sys::constants::ENOENT),
                 write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto,
             ],
             || {
@@ -1114,8 +1114,8 @@ mod tests {
         let msg = diag(b"command: noperm: Permission denied");
         run_trace(
             trace_entries![
-                access(str(b"/usr/bin/noperm"), int(libc::F_OK)) -> 0,
-                access(str(b"/usr/bin/noperm"), int(libc::X_OK)) -> err(libc::EACCES),
+                access(str(b"/usr/bin/noperm"), int(sys::constants::F_OK)) -> 0,
+                access(str(b"/usr/bin/noperm"), int(sys::constants::X_OK)) -> err(sys::constants::EACCES),
                 write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto,
             ],
             || {
@@ -1134,8 +1134,8 @@ mod tests {
     fn execute_command_external_spawn_success() {
         run_trace(
             trace_entries![
-                access(str(b"/usr/bin/myext"), int(libc::F_OK)) -> 0,
-                access(str(b"/usr/bin/myext"), int(libc::X_OK)) -> 0,
+                access(str(b"/usr/bin/myext"), int(sys::constants::F_OK)) -> 0,
+                access(str(b"/usr/bin/myext"), int(sys::constants::X_OK)) -> 0,
                 fork() -> pid(42), child: [
                     execvp(str(b"/usr/bin/myext"), _) -> int(-1),
                 ],
@@ -1158,9 +1158,9 @@ mod tests {
         let msg = diag(b"command: myext: not found");
         run_trace(
             trace_entries![
-                access(str(b"/usr/bin/myext"), int(libc::F_OK)) -> 0,
-                access(str(b"/usr/bin/myext"), int(libc::X_OK)) -> 0,
-                fork() -> err(libc::ENOENT),
+                access(str(b"/usr/bin/myext"), int(sys::constants::F_OK)) -> 0,
+                access(str(b"/usr/bin/myext"), int(sys::constants::X_OK)) -> 0,
+                fork() -> err(sys::constants::ENOENT),
                 write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto,
             ],
             || {
@@ -1180,9 +1180,9 @@ mod tests {
         let msg = diag(b"command: myext: Permission denied");
         run_trace(
             trace_entries![
-                access(str(b"/usr/bin/myext"), int(libc::F_OK)) -> 0,
-                access(str(b"/usr/bin/myext"), int(libc::X_OK)) -> 0,
-                fork() -> err(libc::EACCES),
+                access(str(b"/usr/bin/myext"), int(sys::constants::F_OK)) -> 0,
+                access(str(b"/usr/bin/myext"), int(sys::constants::X_OK)) -> 0,
+                fork() -> err(sys::constants::EACCES),
                 write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto,
             ],
             || {
@@ -1201,8 +1201,8 @@ mod tests {
     fn execute_command_with_default_path() {
         run_trace(
             trace_entries![
-                access(str(b"/usr/bin/myext"), int(libc::F_OK)) -> 0,
-                access(str(b"/usr/bin/myext"), int(libc::X_OK)) -> 0,
+                access(str(b"/usr/bin/myext"), int(sys::constants::F_OK)) -> 0,
+                access(str(b"/usr/bin/myext"), int(sys::constants::X_OK)) -> 0,
                 fork() -> pid(50), child: [
                     setenv(str(b"PATH"), str(b"/usr/bin:/bin")) -> 0,
                     execvp(str(b"/usr/bin/myext"), _) -> int(-1),
@@ -1233,8 +1233,8 @@ mod tests {
     fn search_path_empty_dir_segment() {
         run_trace(
             trace_entries![
-                access(str(b"/a/mybin"), int(libc::F_OK)) -> err(libc::ENOENT),
-                access(str(b"./mybin"), int(libc::F_OK)) -> 0,
+                access(str(b"/a/mybin"), int(sys::constants::F_OK)) -> err(sys::constants::ENOENT),
+                access(str(b"./mybin"), int(sys::constants::F_OK)) -> 0,
                 getcwd() -> cwd("/home/user"),
             ],
             || {
@@ -1259,7 +1259,7 @@ mod tests {
                     vec![crate::sys::test_support::ArgMatcher::Str(b"PATH".to_vec())],
                     crate::sys::test_support::TraceResult::StrVal(b"/from/env".to_vec()),
                 )],
-                access(str(b"/from/env/findme"), int(libc::F_OK)) -> 0,
+                access(str(b"/from/env/findme"), int(sys::constants::F_OK)) -> 0,
             ],
             || {
                 let shell = test_shell();

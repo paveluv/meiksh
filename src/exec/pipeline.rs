@@ -414,8 +414,8 @@ mod tests {
     fn wait_for_external_child_stopped_and_signaled() {
         run_trace(
             trace_entries![
-                waitpid(1000, _) -> stopped_sig(libc::SIGTSTP),
-                tcgetattr(fd(sys::constants::STDIN_FILENO)) -> err(libc::ENOTTY),
+                waitpid(1000, _) -> stopped_sig(sys::constants::SIGTSTP),
+                tcgetattr(fd(sys::constants::STDIN_FILENO)) -> err(sys::constants::ENOTTY),
                 write(fd(sys::constants::STDERR_FILENO), bytes(b"[1] Stopped (SIGTSTP)\tdesc\n")) -> auto,
             ],
             || {
@@ -428,17 +428,17 @@ mod tests {
                 let status =
                     wait_for_external_child(&mut shell, &handle, Some(1000), Some(b"desc"))
                         .unwrap();
-                assert_eq!(status, 128 + libc::SIGTSTP);
+                assert_eq!(status, 128 + sys::constants::SIGTSTP);
                 assert_eq!(shell.jobs.len(), 1);
                 assert!(matches!(
                     shell.jobs[0].state,
-                    JobState::Stopped(libc::SIGTSTP)
+                    JobState::Stopped(sys::constants::SIGTSTP)
                 ));
             },
         );
         run_trace(
             trace_entries![
-                waitpid(1000, _) -> signaled_sig(libc::SIGKILL),
+                waitpid(1000, _) -> signaled_sig(sys::constants::SIGKILL),
             ],
             || {
                 let mut shell = test_shell();
@@ -449,7 +449,7 @@ mod tests {
                 let status =
                     wait_for_external_child(&mut shell, &handle, Some(1000), Some(b"desc"))
                         .unwrap();
-                assert_eq!(status, 128 + libc::SIGKILL);
+                assert_eq!(status, 128 + sys::constants::SIGKILL);
             },
         );
     }
@@ -458,8 +458,8 @@ mod tests {
     fn wait_for_pipeline_stopped_and_signaled() {
         run_trace(
             trace_entries![
-                waitpid(1000, _) -> stopped_sig(libc::SIGTSTP),
-                tcgetattr(fd(sys::constants::STDIN_FILENO)) -> err(libc::ENOTTY),
+                waitpid(1000, _) -> stopped_sig(sys::constants::SIGTSTP),
+                tcgetattr(fd(sys::constants::STDIN_FILENO)) -> err(sys::constants::ENOTTY),
                 write(fd(sys::constants::STDERR_FILENO), bytes(b"[1] Stopped (SIGTSTP)\tdesc\n")) -> auto,
             ],
             || {
@@ -473,12 +473,12 @@ mod tests {
                     }],
                 };
                 let last = wait_for_pipeline(&mut shell, spawned, Some(b"desc"), false).unwrap();
-                assert_eq!(last, 128 + libc::SIGTSTP);
+                assert_eq!(last, 128 + sys::constants::SIGTSTP);
             },
         );
         run_trace(
             trace_entries![
-                waitpid(1000, _) -> signaled_sig(libc::SIGKILL),
+                waitpid(1000, _) -> signaled_sig(sys::constants::SIGKILL),
             ],
             || {
                 let mut shell = test_shell();
@@ -490,7 +490,7 @@ mod tests {
                     }],
                 };
                 let last = wait_for_pipeline(&mut shell, spawned, Some(b"desc"), false).unwrap();
-                assert_eq!(last, 128 + libc::SIGKILL);
+                assert_eq!(last, 128 + sys::constants::SIGKILL);
             },
         );
     }
@@ -986,7 +986,7 @@ mod tests {
             trace_entries![
                 isatty(fd(sys::constants::STDIN_FILENO)) -> int(1),
                 isatty(fd(sys::constants::STDERR_FILENO)) -> int(1),
-                tcgetpgrp(fd(sys::constants::STDIN_FILENO)) -> err(libc::ENOTTY),
+                tcgetpgrp(fd(sys::constants::STDIN_FILENO)) -> err(sys::constants::ENOTTY),
             ],
             || {
                 let mut shell = test_shell();

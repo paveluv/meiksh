@@ -219,7 +219,7 @@ mod tests {
                 realpath(any, any) -> realpath("/home"),
                 realpath(any, any) -> realpath("/home"),
                 chdir(str(b"/tmp")) -> 0,
-                getcwd() -> err(libc::ENOENT),
+                getcwd() -> err(sys::constants::ENOENT),
             ],
             || {
                 let mut shell = test_shell();
@@ -370,7 +370,7 @@ mod tests {
                 realpath(any, any) -> realpath("/home"),
                 realpath(any, any) -> realpath("/home"),
                 chdir(str(b"/tmp")) -> 0,
-                getcwd() -> err(libc::ENOENT),
+                getcwd() -> err(sys::constants::ENOENT),
             ],
             || {
                 let mut shell = test_shell();

@@ -350,7 +350,7 @@ mod tests {
             trace_entries![write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto,],
             || {
                 let shell = test_shell();
-                let e = sys::error::SysError::Errno(libc::ENOENT);
+                let e = sys::error::SysError::Errno(sys::constants::ENOENT);
                 let outcome = diag_status_syserr(&shell, 1, b"open: ", &e);
                 assert!(matches!(outcome, BuiltinOutcome::Status(1)));
             },
@@ -399,8 +399,8 @@ mod tests {
     fn resolve_cd_target_cdpath_no_match() {
         run_trace(
             trace_entries![
-                stat(any, any) -> err(libc::ENOENT),
-                stat(any, any) -> err(libc::ENOENT),
+                stat(any, any) -> err(sys::constants::ENOENT),
+                stat(any, any) -> err(sys::constants::ENOENT),
             ],
             || {
                 let mut shell = test_shell();

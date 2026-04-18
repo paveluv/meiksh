@@ -9,6 +9,7 @@ pub(crate) type Pid = libc::pid_t;
 pub(crate) type RawFd = c_int;
 pub(crate) type FileModeMask = libc::mode_t;
 pub(crate) type ClockTicks = libc::clock_t;
+pub(crate) type Termios = libc::termios;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct WaitStatus {

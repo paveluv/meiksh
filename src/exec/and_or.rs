@@ -118,9 +118,9 @@ mod tests {
             crate::trace_entries![
                 fork() -> pid(123), child: [
                     setpgid(int(0), int(0)) -> 0,
-                    signal(int(libc::SIGTSTP), _) -> 0,
-                    signal(int(libc::SIGTTIN), _) -> 0,
-                    signal(int(libc::SIGTTOU), _) -> 0,
+                    signal(int(sys::constants::SIGTSTP), _) -> 0,
+                    signal(int(sys::constants::SIGTTIN), _) -> 0,
+                    signal(int(sys::constants::SIGTTOU), _) -> 0,
                 ],
                 setpgid(int(123), int(123)) -> 0,
             ],

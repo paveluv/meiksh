@@ -1,5 +1,3 @@
-use libc;
-
 use crate::bstr::ByteWriter;
 use crate::sys;
 
@@ -29,7 +27,7 @@ pub(crate) struct Job {
     pub(crate) last_status: Option<i32>,
     pub(crate) children: Vec<sys::types::ChildHandle>,
     pub(crate) state: JobState,
-    pub(crate) saved_termios: Option<libc::termios>,
+    pub(crate) saved_termios: Option<sys::types::Termios>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -703,8 +701,6 @@ mod tests {
 
     use super::*;
 
-    use libc;
-
     use crate::sys;
     use crate::sys::test_support::{ArgMatcher, TraceResult, assert_no_syscalls, run_trace, t};
     use crate::trace_entries;
@@ -1149,7 +1145,7 @@ mod tests {
 
     #[test]
     fn wait_for_job_restores_saved_termios() {
-        let termios = unsafe { std::mem::zeroed::<libc::termios>() };
+        let termios = unsafe { std::mem::zeroed::<sys::types::Termios>() };
         run_trace(
             trace_entries![
                 tcsetattr(fd(sys::constants::STDIN_FILENO), _, _) -> 0,

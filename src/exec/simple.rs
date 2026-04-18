@@ -965,7 +965,7 @@ mod tests {
         run_trace(
             trace_entries![
                 fcntl(int(1), _, _) -> int(10),
-                open(_, _, _) -> err(libc::EACCES),
+                open(_, _, _) -> err(sys::constants::EACCES),
                 dup2(fd(10), fd(1)) -> fd(1),
                 close(fd(10)) -> 0,
                 write(fd(2), bytes(b"meiksh: line 1: Permission denied\n")) -> auto,
@@ -983,7 +983,7 @@ mod tests {
     fn exec_no_cmd_redirection_error() {
         run_trace(
             trace_entries![
-                open(_, _, _) -> err(libc::EACCES),
+                open(_, _, _) -> err(sys::constants::EACCES),
                 write(fd(2), bytes(b"meiksh: line 1: Permission denied\n")) -> auto,
             ],
             || {
@@ -1016,7 +1016,7 @@ mod tests {
         run_trace(
             trace_entries![
                 fcntl(int(1), _, _) -> int(10),
-                open(_, _, _) -> err(libc::EACCES),
+                open(_, _, _) -> err(sys::constants::EACCES),
                 dup2(fd(10), fd(1)) -> fd(1),
                 close(fd(10)) -> 0,
                 write(fd(2), bytes(b"meiksh: line 1: Permission denied\n")) -> auto,
@@ -1069,7 +1069,7 @@ mod tests {
         run_trace(
             trace_entries![
                 fork() -> pid(123), child: [
-                    fork() -> err(libc::ENOMEM),
+                    fork() -> err(sys::constants::ENOMEM),
                     write(fd(2), bytes(b"/bin/fail: Cannot allocate memory\n")) -> auto,
 
                 ],
@@ -1088,7 +1088,7 @@ mod tests {
     fn external_command_spawn_error_main() {
         run_trace(
             trace_entries![
-                fork() -> err(libc::ENOMEM),
+                fork() -> err(sys::constants::ENOMEM),
                 write(fd(2), bytes(b"/bin/fail: Cannot allocate memory\n")) -> auto,
             ],
             || {

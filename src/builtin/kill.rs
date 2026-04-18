@@ -468,7 +468,7 @@ mod tests {
         let msg = diag(b"kill: (100): No such process");
         run_trace(
             trace_entries![
-                kill(int(-100i64), int(sys::constants::SIGTERM as i64)) -> err(libc::ESRCH),
+                kill(int(-100i64), int(sys::constants::SIGTERM as i64)) -> err(sys::constants::ESRCH),
                 write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto,
             ],
             || {
@@ -530,7 +530,7 @@ mod tests {
         let msg = diag(b"kill: (999): No such process");
         run_trace(
             trace_entries![
-                kill(int(999i64), int(sys::constants::SIGTERM as i64)) -> err(libc::ESRCH),
+                kill(int(999i64), int(sys::constants::SIGTERM as i64)) -> err(sys::constants::ESRCH),
                 write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto,
             ],
             || {

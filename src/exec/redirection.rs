@@ -694,11 +694,11 @@ mod tests {
     fn open_for_write_noclobber_other_error() {
         run_trace(
             trace_entries![
-                open(str("/noperm"), _, _) -> err(libc::EACCES),
+                open(str("/noperm"), _, _) -> err(sys::constants::EACCES),
             ],
             || {
                 let err = open_for_write_noclobber(b"/noperm").expect_err("eacces");
-                assert_eq!(err.errno(), Some(libc::EACCES));
+                assert_eq!(err.errno(), Some(sys::constants::EACCES));
             },
         );
     }
@@ -984,7 +984,7 @@ mod tests {
     fn apply_shell_redirections_dup_error() {
         run_trace(
             trace_entries![
-                fcntl(int(1), _, _) -> err(libc::EMFILE),
+                fcntl(int(1), _, _) -> err(sys::constants::EMFILE),
             ],
             || {
                 let expanded = ExpandedRedirection {
@@ -995,7 +995,7 @@ mod tests {
                     line: 1,
                 };
                 let err = apply_shell_redirections(&[expanded], false).unwrap_err();
-                assert_eq!(err.errno(), Some(libc::EMFILE));
+                assert_eq!(err.errno(), Some(sys::constants::EMFILE));
             },
         );
     }
@@ -1004,11 +1004,11 @@ mod tests {
     fn close_shell_fd_other_error() {
         run_trace(
             trace_entries![
-                close(fd(3)) -> err(libc::EIO),
+                close(fd(3)) -> err(sys::constants::EIO),
             ],
             || {
                 let err = close_shell_fd(3).unwrap_err();
-                assert_eq!(err.errno(), Some(libc::EIO));
+                assert_eq!(err.errno(), Some(sys::constants::EIO));
             },
         );
     }
@@ -1042,7 +1042,7 @@ mod tests {
     fn close_shell_fd_ebadf_ok() {
         run_trace(
             trace_entries![
-                close(fd(3)) -> err(libc::EBADF),
+                close(fd(3)) -> err(sys::constants::EBADF),
             ],
             || {
                 close_shell_fd(3).unwrap();
@@ -1054,7 +1054,7 @@ mod tests {
     fn prepare_redirections_read_open_error() {
         run_trace(
             trace_entries![
-                open(str("/no/such/file"), _, _) -> err(libc::ENOENT),
+                open(str("/no/such/file"), _, _) -> err(sys::constants::ENOENT),
             ],
             || {
                 let err = prepare_redirections(
@@ -1068,7 +1068,7 @@ mod tests {
                     false,
                 )
                 .expect_err("read open should fail");
-                assert_eq!(err.errno(), Some(libc::ENOENT));
+                assert_eq!(err.errno(), Some(sys::constants::ENOENT));
             },
         );
     }

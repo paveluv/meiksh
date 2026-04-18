@@ -38,6 +38,7 @@ pub(super) fn exec_builtin(
 #[cfg(test)]
 mod tests {
     use crate::builtin::test_support::{diag, invoke, test_shell};
+    use crate::sys;
     use crate::sys::test_support::run_trace;
     use crate::trace_entries;
 
@@ -58,8 +59,8 @@ mod tests {
         let msg = diag(b"exec: totally_missing: not found");
         run_trace(
             trace_entries![
-                access(any, any) -> err(libc::ENOENT),
-                access(any, any) -> err(libc::ENOENT),
+                access(any, any) -> err(sys::constants::ENOENT),
+                access(any, any) -> err(sys::constants::ENOENT),
                 write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto,
             ],
             || {

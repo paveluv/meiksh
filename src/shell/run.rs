@@ -819,8 +819,6 @@ mod tests {
 
     use super::*;
 
-    use libc;
-
     use crate::syntax;
     use crate::sys;
     use crate::sys::test_support::{ArgMatcher, TraceResult, assert_no_syscalls, run_trace, t};
@@ -1315,7 +1313,7 @@ mod tests {
         run_trace(
             trace_entries![
                 ..stdin_blocking_trace(),
-                read(fd(sys::constants::STDIN_FILENO), _) -> err(libc::EIO),
+                read(fd(sys::constants::STDIN_FILENO), _) -> err(sys::constants::EIO),
                 write(
                     fd(sys::constants::STDERR_FILENO),
                     bytes(b"meiksh: Input/output error\n"),

@@ -39,8 +39,11 @@ pub(crate) fn set_test_locale_utf8() {
     TEST_LOCALE.with(|cell| *cell.borrow_mut() = TestLocale::Utf8);
 }
 
-fn test_locale() -> TestLocale {
-    TEST_LOCALE.with(|cell| *cell.borrow())
+/// Exposed for the `cfg(test)` branches in `sys::locale`: returns `true`
+/// when the current thread's synthetic test locale is set to UTF-8.
+/// The enum itself stays private; callers only need a boolean predicate.
+pub(crate) fn test_locale_is_utf8() -> bool {
+    TEST_LOCALE.with(|cell| *cell.borrow() == TestLocale::Utf8)
 }
 
 fn syscall_lock() -> &'static Mutex<()> {
@@ -313,16 +316,16 @@ fn apply_trace_result_pid(entry: &TraceEntry) -> Pid {
 }
 
 // Abstract, platform-independent wait-status encoding used only inside unit
-// tests. The fake wait-status decoders installed in `trace_interface` /
-// `no_interface_table` interpret the tag in the high byte and carry the
-// subordinate code (exit status or signal number) in the low 8 bits. This
-// keeps tests strictly logical: no unit test needs to know the host libc's
-// actual WIFEXITED / WIFCONTINUED bit layout.
-const WAIT_TAG_MASK: u32 = 0xff00_0000;
-const WAIT_TAG_EXITED: u32 = 0x0100_0000;
-const WAIT_TAG_SIGNALED: u32 = 0x0200_0000;
-const WAIT_TAG_STOPPED: u32 = 0x0300_0000;
-const WAIT_TAG_CONTINUED: u32 = 0x0400_0000;
+// tests. The `#[cfg(test)]` wait-status decoders in `sys::process`
+// interpret the tag in the high byte and carry the subordinate code
+// (exit status or signal number) in the low 8 bits. This keeps tests
+// strictly logical: no unit test needs to know the host libc's actual
+// WIFEXITED / WIFCONTINUED bit layout.
+pub(super) const WAIT_TAG_MASK: u32 = 0xff00_0000;
+pub(super) const WAIT_TAG_EXITED: u32 = 0x0100_0000;
+pub(super) const WAIT_TAG_SIGNALED: u32 = 0x0200_0000;
+pub(super) const WAIT_TAG_STOPPED: u32 = 0x0300_0000;
+pub(super) const WAIT_TAG_CONTINUED: u32 = 0x0400_0000;
 
 /// Build a synthetic wait-status representing normal exit with `code`.
 /// Only meaningful together with the fake decoders installed by the test
@@ -343,28 +346,6 @@ pub(crate) fn encode_stopped(sig: i32) -> c_int {
 #[allow(dead_code)]
 pub(crate) fn encode_continued() -> c_int {
     WAIT_TAG_CONTINUED as c_int
-}
-
-fn test_wifexited(status: c_int) -> bool {
-    (status as u32) & WAIT_TAG_MASK == WAIT_TAG_EXITED
-}
-fn test_wexitstatus(status: c_int) -> i32 {
-    (status & 0xff) as i32
-}
-fn test_wifsignaled(status: c_int) -> bool {
-    (status as u32) & WAIT_TAG_MASK == WAIT_TAG_SIGNALED
-}
-fn test_wtermsig(status: c_int) -> i32 {
-    (status & 0xff) as i32
-}
-fn test_wifstopped(status: c_int) -> bool {
-    (status as u32) & WAIT_TAG_MASK == WAIT_TAG_STOPPED
-}
-fn test_wstopsig(status: c_int) -> i32 {
-    (status & 0xff) as i32
-}
-fn test_wifcontinued(status: c_int) -> bool {
-    (status as u32) & WAIT_TAG_MASK == WAIT_TAG_CONTINUED
 }
 
 // Trace-dispatching syscall implementations
@@ -542,157 +523,6 @@ fn trace_monotonic_clock_ns() -> u64 {
             )
         }
     }
-}
-fn test_setup_locale() {
-    set_test_locale_c();
-}
-fn test_reinit_locale() {
-    let val = trace_getenv(b"LC_ALL").or_else(|| trace_getenv(b"LANG"));
-    let is_utf8 = match val {
-        Some(v) => {
-            let upper: Vec<u8> = v.iter().map(|b| b.to_ascii_uppercase()).collect();
-            upper.windows(5).any(|w| w == b"UTF-8") || upper.windows(4).any(|w| w == b"UTF8")
-        }
-        None => false,
-    };
-    if is_utf8 {
-        set_test_locale_utf8();
-    } else {
-        set_test_locale_c();
-    }
-}
-fn test_classify_byte(class: &[u8], byte: u8) -> bool {
-    test_classify_char(class, byte as u32)
-}
-fn test_classify_char(class: &[u8], wc: u32) -> bool {
-    if wc <= 0x7f {
-        let byte = wc as u8;
-        return byte.is_ascii_alphabetic() && class == b"alpha"
-            || byte.is_ascii_alphanumeric() && class == b"alnum"
-            || byte.is_ascii_digit() && class == b"digit"
-            || byte.is_ascii_lowercase() && class == b"lower"
-            || byte.is_ascii_uppercase() && class == b"upper"
-            || (byte == b' ' || byte == b'\t') && class == b"blank"
-            || byte.is_ascii_whitespace() && class == b"space"
-            || byte.is_ascii_hexdigit() && class == b"xdigit"
-            || byte.is_ascii_punctuation() && class == b"punct"
-            || byte.is_ascii_graphic() && class == b"graph"
-            || (byte.is_ascii_graphic() || byte == b' ') && class == b"print"
-            || byte.is_ascii_control() && class == b"cntrl";
-    }
-    if test_locale() == TestLocale::C {
-        return false;
-    }
-    if let Some(ch) = char::from_u32(wc) {
-        match class {
-            b"alpha" => ch.is_alphabetic(),
-            b"alnum" => ch.is_alphanumeric(),
-            b"digit" => ch.is_ascii_digit(),
-            b"lower" => ch.is_lowercase(),
-            b"upper" => ch.is_uppercase(),
-            b"blank" => ch == ' ' || ch == '\t',
-            b"space" => ch.is_whitespace(),
-            b"xdigit" => ch.is_ascii_hexdigit(),
-            b"punct" => !ch.is_alphanumeric() && !ch.is_whitespace() && !ch.is_control(),
-            b"graph" => !ch.is_whitespace() && !ch.is_control(),
-            b"print" => !ch.is_control(),
-            b"cntrl" => ch.is_control(),
-            _ => false,
-        }
-    } else {
-        false
-    }
-}
-fn test_decode_char(bytes: &[u8]) -> (u32, usize) {
-    if bytes.is_empty() || bytes[0] == 0 {
-        return (0, 0);
-    }
-    if test_locale() == TestLocale::C {
-        return (bytes[0] as u32, 1);
-    }
-    match std::str::from_utf8(bytes) {
-        Ok(s) => {
-            if let Some(ch) = s.chars().next() {
-                (ch as u32, ch.len_utf8())
-            } else {
-                (0, 0)
-            }
-        }
-        Err(e) => {
-            let valid_up_to = e.valid_up_to();
-            if valid_up_to > 0 {
-                let s = &bytes[..valid_up_to];
-                let ch = std::str::from_utf8(s).unwrap().chars().next().unwrap();
-                (ch as u32, ch.len_utf8())
-            } else {
-                (bytes[0] as u32, 1)
-            }
-        }
-    }
-}
-fn test_encode_char(wc: u32, buf: &mut [u8]) -> usize {
-    if test_locale() == TestLocale::C {
-        if wc <= 0x7f {
-            buf[0] = wc as u8;
-            return 1;
-        }
-        return 0;
-    }
-    if let Some(ch) = char::from_u32(wc) {
-        let mut tmp = [0u8; 4];
-        let s = ch.encode_utf8(&mut tmp);
-        let n = s.len();
-        buf[..n].copy_from_slice(&tmp[..n]);
-        n
-    } else {
-        0
-    }
-}
-fn test_mb_cur_max() -> usize {
-    if test_locale() == TestLocale::C { 1 } else { 4 }
-}
-fn test_to_upper(wc: u32) -> u32 {
-    if test_locale() == TestLocale::C {
-        if wc >= b'a' as u32 && wc <= b'z' as u32 {
-            return wc - 32;
-        }
-        return wc;
-    }
-    char::from_u32(wc)
-        .map(|c| {
-            let mut it = c.to_uppercase();
-            it.next().unwrap_or(c) as u32
-        })
-        .unwrap_or(wc)
-}
-fn test_to_lower(wc: u32) -> u32 {
-    if test_locale() == TestLocale::C {
-        if wc >= b'A' as u32 && wc <= b'Z' as u32 {
-            return wc + 32;
-        }
-        return wc;
-    }
-    char::from_u32(wc)
-        .map(|c| {
-            let mut it = c.to_lowercase();
-            it.next().unwrap_or(c) as u32
-        })
-        .unwrap_or(wc)
-}
-fn test_char_width(wc: u32) -> usize {
-    if test_locale() == TestLocale::C {
-        if wc < 0x20 || wc == 0x7f { 0 } else { 1 }
-    } else if let Some(ch) = char::from_u32(wc) {
-        if ch.is_control() { 0 } else { 1 }
-    } else {
-        0
-    }
-}
-fn test_strcoll(a: &[u8], b: &[u8]) -> std::cmp::Ordering {
-    a.cmp(b)
-}
-fn test_decimal_point() -> u8 {
-    b'.'
 }
 fn trace_sysconf(name: c_int) -> c_long {
     let entry = trace_dispatch("sysconf", &[ArgMatcher::Int(name as i64)]);
@@ -1068,28 +898,7 @@ pub(super) fn trace_interface() -> SystemInterface {
         tcgetattr: trace_tcgetattr,
         tcsetattr: trace_tcsetattr,
         getpwnam: trace_getpwnam,
-        pending_signal_bits: test_pending_signal_bits,
-        take_pending_signal_bits: test_take_pending_signal_bits,
         monotonic_clock_ns: trace_monotonic_clock_ns,
-        setup_locale: test_setup_locale,
-        reinit_locale: test_reinit_locale,
-        classify_byte: test_classify_byte,
-        classify_char: test_classify_char,
-        decode_char: test_decode_char,
-        encode_char: test_encode_char,
-        mb_cur_max: test_mb_cur_max,
-        to_upper: test_to_upper,
-        to_lower: test_to_lower,
-        char_width: test_char_width,
-        strcoll: test_strcoll,
-        decimal_point: test_decimal_point,
-        wifexited: test_wifexited,
-        wexitstatus: test_wexitstatus,
-        wifsignaled: test_wifsignaled,
-        wtermsig: test_wtermsig,
-        wifstopped: test_wifstopped,
-        wstopsig: test_wstopsig,
-        wifcontinued: test_wifcontinued,
     }
 }
 
@@ -1262,28 +1071,7 @@ pub(super) fn no_interface_table() -> SystemInterface {
         tcgetattr: panic_tcgetattr,
         tcsetattr: panic_tcsetattr,
         getpwnam: panic_getpwnam,
-        pending_signal_bits: test_pending_signal_bits,
-        take_pending_signal_bits: test_take_pending_signal_bits,
         monotonic_clock_ns: panic_monotonic_clock_ns,
-        setup_locale: test_setup_locale,
-        reinit_locale: test_reinit_locale,
-        classify_byte: test_classify_byte,
-        classify_char: test_classify_char,
-        decode_char: test_decode_char,
-        encode_char: test_encode_char,
-        mb_cur_max: test_mb_cur_max,
-        to_upper: test_to_upper,
-        to_lower: test_to_lower,
-        char_width: test_char_width,
-        strcoll: test_strcoll,
-        decimal_point: test_decimal_point,
-        wifexited: test_wifexited,
-        wexitstatus: test_wexitstatus,
-        wifsignaled: test_wifsignaled,
-        wtermsig: test_wtermsig,
-        wifstopped: test_wifstopped,
-        wstopsig: test_wstopsig,
-        wifcontinued: test_wifcontinued,
     }
 }
 

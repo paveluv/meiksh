@@ -71,7 +71,24 @@ pub(crate) const O_CLOEXEC: c_int = libc::O_CLOEXEC;
 
 pub(crate) const F_OK: c_int = libc::F_OK;
 pub(crate) const R_OK: c_int = libc::R_OK;
+pub(crate) const W_OK: c_int = libc::W_OK;
 pub(crate) const X_OK: c_int = libc::X_OK;
+
+#[cfg(test)]
+pub(crate) const EMFILE: c_int = libc::EMFILE;
+#[cfg(test)]
+pub(crate) const ENOMEM: c_int = libc::ENOMEM;
+#[cfg(test)]
+pub(crate) const ENOTTY: c_int = libc::ENOTTY;
+#[cfg(test)]
+pub(crate) const ESRCH: c_int = libc::ESRCH;
+
+pub(crate) const ICANON: libc::tcflag_t = libc::ICANON;
+pub(crate) const ECHO: libc::tcflag_t = libc::ECHO;
+pub(crate) const ISIG: libc::tcflag_t = libc::ISIG;
+pub(crate) const VMIN: usize = libc::VMIN;
+pub(crate) const VTIME: usize = libc::VTIME;
+pub(crate) const VERASE: usize = libc::VERASE;
 
 pub(crate) const S_IFMT: mode_t = libc::S_IFMT;
 pub(crate) const S_IFDIR: mode_t = libc::S_IFDIR;

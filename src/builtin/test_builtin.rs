@@ -107,7 +107,7 @@ pub(super) fn test_unary(_shell: &Shell, op: &[u8], operand: &[u8]) -> TestResul
         b"-p" => Ok(sys::fs::stat_path(operand)
             .map(|s| s.is_fifo())
             .unwrap_or(false)),
-        b"-r" => Ok(sys::fs::access_path(operand, libc::R_OK).is_ok()),
+        b"-r" => Ok(sys::fs::access_path(operand, sys::constants::R_OK).is_ok()),
         b"-s" => Ok(sys::fs::stat_path(operand)
             .map(|s| s.size > 0)
             .unwrap_or(false)),
@@ -133,8 +133,8 @@ pub(super) fn test_unary(_shell: &Shell, op: &[u8], operand: &[u8]) -> TestResul
         b"-u" => Ok(sys::fs::stat_path(operand)
             .map(|s| s.is_setuid())
             .unwrap_or(false)),
-        b"-w" => Ok(sys::fs::access_path(operand, libc::W_OK).is_ok()),
-        b"-x" => Ok(sys::fs::access_path(operand, libc::X_OK).is_ok()),
+        b"-w" => Ok(sys::fs::access_path(operand, sys::constants::W_OK).is_ok()),
+        b"-x" => Ok(sys::fs::access_path(operand, sys::constants::X_OK).is_ok()),
         _ => {
             let mut msg = b"unknown unary operator: ".to_vec();
             msg.extend_from_slice(op);
@@ -298,7 +298,7 @@ mod tests {
         run_trace(
             trace_entries![
                 stat(str(b"/exists"), any) -> stat_file(0o644),
-                stat(str(b"/gone"), any) -> err(libc::ENOENT),
+                stat(str(b"/gone"), any) -> err(sys::constants::ENOENT),
             ],
             || {
                 let result = test_file_binary(b"/exists", b"-nt", b"/gone");
@@ -325,7 +325,7 @@ mod tests {
     fn test_ot_first_missing_second_exists() {
         run_trace(
             trace_entries![
-                stat(str(b"/gone"), any) -> err(libc::ENOENT),
+                stat(str(b"/gone"), any) -> err(sys::constants::ENOENT),
                 stat(str(b"/exists"), any) -> stat_file(0o644),
             ],
             || {
@@ -395,20 +395,23 @@ mod tests {
 
     #[test]
     fn test_four_args_negated() {
-        run_trace(trace_entries![stat(any, any) -> err(libc::ENOENT),], || {
-            let mut shell = test_shell();
-            let outcome = invoke(
-                &mut shell,
-                &[
-                    b"test".to_vec(),
-                    b"!".to_vec(),
-                    b"-e".to_vec(),
-                    b"/nonexistent_file_xyzzy".to_vec(),
-                ],
-            )
-            .expect("test ! -e /nonexistent");
-            assert!(matches!(outcome, BuiltinOutcome::Status(0)));
-        });
+        run_trace(
+            trace_entries![stat(any, any) -> err(sys::constants::ENOENT),],
+            || {
+                let mut shell = test_shell();
+                let outcome = invoke(
+                    &mut shell,
+                    &[
+                        b"test".to_vec(),
+                        b"!".to_vec(),
+                        b"-e".to_vec(),
+                        b"/nonexistent_file_xyzzy".to_vec(),
+                    ],
+                )
+                .expect("test ! -e /nonexistent");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
     }
 
     #[test]
@@ -480,28 +483,34 @@ mod tests {
 
     #[test]
     fn test_unary_setgid() {
-        run_trace(trace_entries![stat(any, any) -> err(libc::ENOENT),], || {
-            let mut shell = test_shell();
-            let outcome = invoke(
-                &mut shell,
-                &[b"test".to_vec(), b"-g".to_vec(), b"/no".to_vec()],
-            )
-            .expect("test -g");
-            assert!(matches!(outcome, BuiltinOutcome::Status(1)));
-        });
+        run_trace(
+            trace_entries![stat(any, any) -> err(sys::constants::ENOENT),],
+            || {
+                let mut shell = test_shell();
+                let outcome = invoke(
+                    &mut shell,
+                    &[b"test".to_vec(), b"-g".to_vec(), b"/no".to_vec()],
+                )
+                .expect("test -g");
+                assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+            },
+        );
     }
 
     #[test]
     fn test_unary_setuid() {
-        run_trace(trace_entries![stat(any, any) -> err(libc::ENOENT),], || {
-            let mut shell = test_shell();
-            let outcome = invoke(
-                &mut shell,
-                &[b"test".to_vec(), b"-u".to_vec(), b"/no".to_vec()],
-            )
-            .expect("test -u");
-            assert!(matches!(outcome, BuiltinOutcome::Status(1)));
-        });
+        run_trace(
+            trace_entries![stat(any, any) -> err(sys::constants::ENOENT),],
+            || {
+                let mut shell = test_shell();
+                let outcome = invoke(
+                    &mut shell,
+                    &[b"test".to_vec(), b"-u".to_vec(), b"/no".to_vec()],
+                )
+                .expect("test -u");
+                assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+            },
+        );
     }
 
     #[test]
@@ -514,7 +523,7 @@ mod tests {
                         crate::sys::test_support::ArgMatcher::Str(b"/nonexistent_xyzzy".to_vec()),
                         crate::sys::test_support::ArgMatcher::Any
                     ],
-                    crate::sys::test_support::TraceResult::Err(libc::ENOENT),
+                    crate::sys::test_support::TraceResult::Err(sys::constants::ENOENT),
                 )]
             ],
             || {
@@ -535,21 +544,24 @@ mod tests {
 
     #[test]
     fn test_unary_fifo() {
-        run_trace(trace_entries![stat(any, any) -> err(libc::ENOENT),], || {
-            let mut shell = test_shell();
-            let outcome = invoke(
-                &mut shell,
-                &[b"test".to_vec(), b"-p".to_vec(), b"/no".to_vec()],
-            )
-            .expect("test -p");
-            assert!(matches!(outcome, BuiltinOutcome::Status(1)));
-        });
+        run_trace(
+            trace_entries![stat(any, any) -> err(sys::constants::ENOENT),],
+            || {
+                let mut shell = test_shell();
+                let outcome = invoke(
+                    &mut shell,
+                    &[b"test".to_vec(), b"-p".to_vec(), b"/no".to_vec()],
+                )
+                .expect("test -p");
+                assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+            },
+        );
     }
 
     #[test]
     fn test_unary_readable() {
         run_trace(
-            trace_entries![access(any, any) -> err(libc::ENOENT),],
+            trace_entries![access(any, any) -> err(sys::constants::ENOENT),],
             || {
                 let mut shell = test_shell();
                 let outcome = invoke(
@@ -565,7 +577,7 @@ mod tests {
     #[test]
     fn test_unary_writable() {
         run_trace(
-            trace_entries![access(any, any) -> err(libc::ENOENT),],
+            trace_entries![access(any, any) -> err(sys::constants::ENOENT),],
             || {
                 let mut shell = test_shell();
                 let outcome = invoke(
@@ -581,7 +593,7 @@ mod tests {
     #[test]
     fn test_unary_executable() {
         run_trace(
-            trace_entries![access(any, any) -> err(libc::ENOENT),],
+            trace_entries![access(any, any) -> err(sys::constants::ENOENT),],
             || {
                 let mut shell = test_shell();
                 let outcome = invoke(
@@ -596,28 +608,34 @@ mod tests {
 
     #[test]
     fn test_unary_size_nonzero() {
-        run_trace(trace_entries![stat(any, any) -> err(libc::ENOENT),], || {
-            let mut shell = test_shell();
-            let outcome = invoke(
-                &mut shell,
-                &[b"test".to_vec(), b"-s".to_vec(), b"/no".to_vec()],
-            )
-            .expect("test -s");
-            assert!(matches!(outcome, BuiltinOutcome::Status(1)));
-        });
+        run_trace(
+            trace_entries![stat(any, any) -> err(sys::constants::ENOENT),],
+            || {
+                let mut shell = test_shell();
+                let outcome = invoke(
+                    &mut shell,
+                    &[b"test".to_vec(), b"-s".to_vec(), b"/no".to_vec()],
+                )
+                .expect("test -s");
+                assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+            },
+        );
     }
 
     #[test]
     fn test_unary_socket() {
-        run_trace(trace_entries![stat(any, any) -> err(libc::ENOENT),], || {
-            let mut shell = test_shell();
-            let outcome = invoke(
-                &mut shell,
-                &[b"test".to_vec(), b"-S".to_vec(), b"/no".to_vec()],
-            )
-            .expect("test -S");
-            assert!(matches!(outcome, BuiltinOutcome::Status(1)));
-        });
+        run_trace(
+            trace_entries![stat(any, any) -> err(sys::constants::ENOENT),],
+            || {
+                let mut shell = test_shell();
+                let outcome = invoke(
+                    &mut shell,
+                    &[b"test".to_vec(), b"-S".to_vec(), b"/no".to_vec()],
+                )
+                .expect("test -S");
+                assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+            },
+        );
     }
 
     #[test]
@@ -655,7 +673,7 @@ mod tests {
         run_trace(
             trace_entries![
                 stat(any, any) -> stat_file(0o644),
-                stat(any, any) -> err(libc::ENOENT),
+                stat(any, any) -> err(sys::constants::ENOENT),
             ],
             || {
                 let mut shell = test_shell();
@@ -678,8 +696,8 @@ mod tests {
     fn test_file_binary_ot_both_missing() {
         run_trace(
             trace_entries![
-                stat(any, any) -> err(libc::ENOENT),
-                stat(any, any) -> err(libc::ENOENT),
+                stat(any, any) -> err(sys::constants::ENOENT),
+                stat(any, any) -> err(sys::constants::ENOENT),
             ],
             || {
                 let mut shell = test_shell();
@@ -810,20 +828,26 @@ mod tests {
 
     #[test]
     fn test_unary_block_special() {
-        run_trace(trace_entries![stat(any, any) -> err(libc::ENOENT)], || {
-            let shell = test_shell();
-            let result = test_unary(&shell, b"-b", b"/dev/sda");
-            assert_eq!(result, Ok(false));
-        });
+        run_trace(
+            trace_entries![stat(any, any) -> err(sys::constants::ENOENT)],
+            || {
+                let shell = test_shell();
+                let result = test_unary(&shell, b"-b", b"/dev/sda");
+                assert_eq!(result, Ok(false));
+            },
+        );
     }
 
     #[test]
     fn test_unary_char_special() {
-        run_trace(trace_entries![stat(any, any) -> err(libc::ENOENT)], || {
-            let shell = test_shell();
-            let result = test_unary(&shell, b"-c", b"/dev/null");
-            assert_eq!(result, Ok(false));
-        });
+        run_trace(
+            trace_entries![stat(any, any) -> err(sys::constants::ENOENT)],
+            || {
+                let shell = test_shell();
+                let result = test_unary(&shell, b"-c", b"/dev/null");
+                assert_eq!(result, Ok(false));
+            },
+        );
     }
 
     #[test]
@@ -837,11 +861,14 @@ mod tests {
 
     #[test]
     fn test_unary_directory_not_found() {
-        run_trace(trace_entries![stat(any, any) -> err(libc::ENOENT)], || {
-            let shell = test_shell();
-            let result = test_unary(&shell, b"-d", b"/nosuch");
-            assert_eq!(result, Ok(false));
-        });
+        run_trace(
+            trace_entries![stat(any, any) -> err(sys::constants::ENOENT)],
+            || {
+                let shell = test_shell();
+                let result = test_unary(&shell, b"-d", b"/nosuch");
+                assert_eq!(result, Ok(false));
+            },
+        );
     }
 
     #[test]
@@ -865,8 +892,8 @@ mod tests {
     fn test_file_binary_nt_both_missing() {
         run_trace(
             trace_entries![
-                stat(any, any) -> err(libc::ENOENT),
-                stat(any, any) -> err(libc::ENOENT),
+                stat(any, any) -> err(sys::constants::ENOENT),
+                stat(any, any) -> err(sys::constants::ENOENT),
             ],
             || {
                 let result = test_file_binary(b"/no1", b"-nt", b"/no2");
@@ -879,7 +906,7 @@ mod tests {
     fn test_file_binary_nt_first_missing_second_exists() {
         run_trace(
             trace_entries![
-                stat(any, any) -> err(libc::ENOENT),
+                stat(any, any) -> err(sys::constants::ENOENT),
                 stat(any, any) -> stat_file(0o644),
             ],
             || {
