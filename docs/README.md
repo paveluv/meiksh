@@ -43,6 +43,10 @@ That script reads `docs/posix-manifest.txt`, downloads the POSIX tarball, and un
 
 - `docs/implementation-policy.md`: implementation-defined and temporary project choices
 
+## Non-POSIX Feature Specs
+
+The `docs/features/` directory holds normative specifications for shell features that POSIX does not describe but that meiksh implements because they are de-facto expected by users of bash, ksh, and zsh (for example, emacs line editing, the `bind` builtin, and the `inputrc` file format). Each file in that directory is authoritative for the feature it covers and uses RFC 2119 "shall / should / may" language with the same normative weight as the POSIX text mirrored under `docs/posix/`. See `docs/features/README.md` for the charter and the current index of feature specs.
+
 ## Source URLs
 
 Primary publication root:
