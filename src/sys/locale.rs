@@ -198,9 +198,7 @@ mod tests {
     #[test]
     fn reinit_locale_reads_lc_all_c() {
         test_support::run_trace(
-            trace_entries![
-                ..vec![getenv_entry(b"LC_ALL", TraceResult::StrVal(b"C".to_vec()))],
-            ],
+            trace_entries![..vec![getenv_entry(b"LC_ALL", TraceResult::StrVal(b"C".to_vec()))],],
             || {
                 reinit_locale();
                 assert_eq!(mb_cur_max(), 1);

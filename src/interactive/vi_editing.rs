@@ -1607,9 +1607,7 @@ fn glob_expand(pattern: &[u8]) -> Result<Vec<Vec<u8>>, ()> {
     if pattern.contains(&0) {
         return Err(());
     }
-    let has_glob_char = pattern
-        .iter()
-        .any(|&b| b == b'*' || b == b'?' || b == b'[');
+    let has_glob_char = pattern.iter().any(|&b| b == b'*' || b == b'?' || b == b'[');
     let results = crate::expand::pathname::expand_pathname(pattern);
     if !has_glob_char {
         if !sys::fs::file_exists(pattern) {
