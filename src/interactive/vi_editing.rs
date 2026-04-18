@@ -1132,19 +1132,16 @@ impl ViState {
                 glob_pat.push(b'*');
                 if let Ok(matches) = glob_expand(&glob_pat) {
                     if matches.len() == 1 {
+                        // glob_expand already appends '/' for directories
+                        // (GLOB_MARK semantics), so we can distinguish them
+                        // without an extra stat.
                         let replacement = &matches[0];
-                        let is_dir = sys::fs::stat_path(replacement)
-                            .map(|s| s.is_dir())
-                            .unwrap_or(false);
-                        let mut rep = replacement.clone();
-                        if is_dir {
-                            rep.push(b'/');
-                        }
+                        let is_dir = replacement.ends_with(b"/");
                         self.line.drain(word_start..word_end_pos);
-                        for (i, b) in rep.iter().enumerate() {
+                        for (i, b) in replacement.iter().enumerate() {
                             self.line.insert(word_start + i, *b);
                         }
-                        let end = word_start + rep.len();
+                        let end = word_start + replacement.len();
                         if is_dir {
                             self.cursor = end;
                         } else {
@@ -1608,15 +1605,21 @@ fn glob_expand(pattern: &[u8]) -> Result<Vec<Vec<u8>>, ()> {
         return Err(());
     }
     let has_glob_char = pattern.iter().any(|&b| b == b'*' || b == b'?' || b == b'[');
-    let results = crate::expand::pathname::expand_pathname(pattern);
+    let mut results = crate::expand::pathname::expand_pathname(pattern);
     if !has_glob_char {
         if !sys::fs::file_exists(pattern) {
             return Err(());
         }
-        return Ok(results);
-    }
-    if results.is_empty() {
+    } else if results.is_empty() {
         return Err(());
+    }
+    // Mirror libc glob(3)'s GLOB_MARK: append a trailing '/' to any result
+    // that names a directory. vi filename completion relies on this to
+    // distinguish directories from plain files.
+    for result in &mut results {
+        if !result.ends_with(b"/") && sys::fs::is_directory(result) {
+            result.push(b'/');
+        }
     }
     Ok(results)
 }
@@ -1842,6 +1845,8 @@ mod tests {
                     readdir(_) -> dir_entry(b"aaa_2"),
                     readdir(_) -> int(0),
                     closedir(_) -> 0,
+                    stat(str(b"testdir/aaa_1"), _) -> stat_file(0o644),
+                    stat(str(b"testdir/aaa_2"), _) -> stat_file(0o644),
                 ],
                 || {
                     let result = glob_expand(b"testdir/aaa_*");
@@ -1850,6 +1855,24 @@ mod tests {
                     assert_eq!(files.len(), 2);
                     assert_eq!(files[0], b"testdir/aaa_1");
                     assert_eq!(files[1], b"testdir/aaa_2");
+                },
+            );
+        }
+
+        #[test]
+        fn glob_expand_marks_directories_with_trailing_slash() {
+            run_trace(
+                trace_entries![
+                    access(str(b"./testdir"), int(libc::F_OK)) -> 0,
+                    opendir(str(b"./testdir")) -> int(1),
+                    readdir(_) -> dir_entry(b"somedir"),
+                    readdir(_) -> int(0),
+                    closedir(_) -> 0,
+                    stat(str(b"testdir/somedir"), _) -> stat_dir,
+                ],
+                || {
+                    let result = glob_expand(b"testdir/some*").expect("glob");
+                    assert_eq!(result, vec![b"testdir/somedir/".to_vec()]);
                 },
             );
         }
@@ -3196,6 +3219,8 @@ mod tests {
                     readdir(_) -> dir_entry(b"bbb.txt"),
                     readdir(_) -> int(0),
                     closedir(_) -> 0,
+                    stat(str(b"testdir/aaa.txt"), _) -> stat_file(0o644),
+                    stat(str(b"testdir/bbb.txt"), _) -> stat_file(0o644),
                 ],
                 || {
                     let mut state = ViState::new(0x7f, 0);
@@ -3229,6 +3254,8 @@ mod tests {
                     readdir(_) -> dir_entry(b"unique_file.txt"),
                     readdir(_) -> int(0),
                     closedir(_) -> 0,
+                    // glob_expand stats each result to implement GLOB_MARK
+                    // semantics (append '/' for directories).
                     stat(str(b"testdir/unique_file.txt"), _) -> stat_file(0o644),
                 ],
                 || {
@@ -3281,6 +3308,8 @@ mod tests {
                     readdir(_) -> dir_entry(b"ab2.txt"),
                     readdir(_) -> int(0),
                     closedir(_) -> 0,
+                    stat(str(b"testdir/ab1.txt"), _) -> stat_file(0o644),
+                    stat(str(b"testdir/ab2.txt"), _) -> stat_file(0o644),
                 ],
                 || {
                     let mut state = ViState::new(0x7f, 0);
@@ -3407,6 +3436,7 @@ mod tests {
                     readdir(_) -> dir_entry(b"file1.txt"),
                     readdir(_) -> int(0),
                     closedir(_) -> 0,
+                    stat(str(b"testdir/file1.txt"), _) -> stat_file(0o644),
                 ],
                 || {
                     let mut state = ViState::new(0x7f, 0);
