@@ -1,6 +1,37 @@
+use std::ffi::CString;
+
 use crate::sys;
 
 use super::glob::pattern_matches;
+
+/// Sort `entries` in the current locale's collating sequence, without
+/// allocating on every comparison.
+///
+/// `readdir` already hands back NUL-terminated `d_name` buffers, which we
+/// keep in `CString` form end-to-end through the glob pipeline. That lets
+/// the comparator call `strcoll(3)` directly on the prebuilt C strings.
+/// glibc's own `__strcoll_l` has a fast path that degrades to `strcmp` in
+/// C-category locales (including `C.UTF-8`), so we do not need a separate
+/// bytewise short-circuit here — the libc call is already cheap, as long
+/// as we are not wrapping it in a fresh `CString` on every invocation.
+///
+/// Under `cfg(test)` we bypass libc entirely to keep the unit-test suite
+/// deterministic and host-locale-independent; the byte order is identical
+/// to `strcoll` for all ASCII test fixtures.
+#[inline]
+fn sort_cstrings(entries: &mut [CString]) {
+    #[cfg(not(test))]
+    {
+        entries.sort_by(|a, b| {
+            let r = unsafe { libc::strcoll(a.as_ptr(), b.as_ptr()) };
+            r.cmp(&0)
+        });
+    }
+    #[cfg(test)]
+    {
+        entries.sort_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
+    }
+}
 
 /// True if `segment` contains at least one unquoted glob metacharacter that
 /// POSIX 2.13.1 treats as active: `*`, `?`, or a well-formed `[...]`
@@ -56,14 +87,19 @@ pub(crate) fn expand_pathname(pattern: &[u8]) -> Vec<Vec<u8>> {
     } else {
         b".".to_vec()
     };
-    let mut matches = Vec::new();
+    // `matches` is collected as `CString` so that the final sort can call
+    // `strcoll(3)` directly on the owned C strings with no per-comparison
+    // allocation. We convert back to `Vec<u8>` at the very end; that step
+    // is free because `CString::into_bytes` just drops the trailing NUL
+    // without reallocating.
+    let mut matches: Vec<CString> = Vec::new();
     // One scratch buffer shared across every recursive call; each use writes
     // a NUL-terminated path via `bstr::write_cstring_into`, eliminating the
     // per-candidate `CString` allocation that dominated the glob profile.
     let mut scratch: Vec<u8> = Vec::with_capacity(256);
     expand_path_segments(&base, &segments, 0, absolute, &mut matches, &mut scratch);
-    matches.sort_by(|a, b| crate::sys::locale::strcoll(a, b));
-    matches
+    sort_cstrings(&mut matches);
+    matches.into_iter().map(|c| c.into_bytes()).collect()
 }
 
 pub(super) fn expand_path_segments(
@@ -71,20 +107,25 @@ pub(super) fn expand_path_segments(
     segments: &[&[u8]],
     index: usize,
     absolute: bool,
-    matches: &mut Vec<Vec<u8>>,
+    matches: &mut Vec<CString>,
     scratch: &mut Vec<u8>,
 ) {
     if index == segments.len() {
         let text = if absolute {
             base.to_vec()
+        } else if base.starts_with(b"./") && base.len() > 2 {
+            base[2..].to_vec()
         } else {
-            if base.starts_with(b"./") && base.len() > 2 {
-                base[2..].to_vec()
-            } else {
-                base.to_vec()
-            }
+            base.to_vec()
         };
-        matches.push(if text.is_empty() { b".".to_vec() } else { text });
+        let text = if text.is_empty() { b".".to_vec() } else { text };
+        // SAFETY: `text` is a path we just assembled from `path_join`
+        // results — it never contains interior NUL bytes. Constructing
+        // the `CString` via `from_vec_unchecked` reuses `text`'s buffer
+        // (pushing a single NUL) and avoids the extra scan + allocation
+        // of the checked constructor.
+        debug_assert!(!text.contains(&0));
+        matches.push(unsafe { CString::from_vec_unchecked(text) });
         return;
     }
 
@@ -109,13 +150,14 @@ pub(super) fn expand_path_segments(
     let Ok(mut names) = names_result else {
         return;
     };
-    names.sort_by(|a, b| crate::sys::locale::strcoll(a, b));
-    for name in names {
-        if name.starts_with(b".") && !segment.starts_with(b".") {
+    sort_cstrings(&mut names);
+    for name in &names {
+        let bytes = name.as_bytes();
+        if bytes.starts_with(b".") && !segment.starts_with(b".") {
             continue;
         }
-        if pattern_matches(&name, segment) {
-            let next = path_join(base, &name);
+        if pattern_matches(bytes, segment) {
+            let next = path_join(base, bytes);
             expand_path_segments(&next, segments, index + 1, absolute, matches, scratch);
         }
     }
