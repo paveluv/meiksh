@@ -78,6 +78,15 @@ pub(super) struct SystemInterface {
     pub(super) char_width: fn(u32) -> usize,
     pub(super) strcoll: fn(&[u8], &[u8]) -> std::cmp::Ordering,
     pub(super) decimal_point: fn() -> u8,
+    // Wait-status decoding. Abstracted so that unit tests do not need to
+    // know the host libc's bit-level encoding of wait(2) status values.
+    pub(super) wifexited: fn(c_int) -> bool,
+    pub(super) wexitstatus: fn(c_int) -> i32,
+    pub(super) wifsignaled: fn(c_int) -> bool,
+    pub(super) wtermsig: fn(c_int) -> i32,
+    pub(super) wifstopped: fn(c_int) -> bool,
+    pub(super) wstopsig: fn(c_int) -> i32,
+    pub(super) wifcontinued: fn(c_int) -> bool,
 }
 
 fn classify_wchar_wctype(class: &[u8], wc: u32) -> bool {
@@ -341,6 +350,13 @@ pub(super) fn default_interface() -> SystemInterface {
             let dp = unsafe { *(*libc::localeconv()).decimal_point };
             if dp == 0 { b'.' } else { dp as u8 }
         },
+        wifexited: |s| libc::WIFEXITED(s),
+        wexitstatus: |s| libc::WEXITSTATUS(s),
+        wifsignaled: |s| libc::WIFSIGNALED(s),
+        wtermsig: |s| libc::WTERMSIG(s),
+        wifstopped: |s| libc::WIFSTOPPED(s),
+        wstopsig: |s| libc::WSTOPSIG(s),
+        wifcontinued: |s| libc::WIFCONTINUED(s),
     }
 }
 pub(super) fn signal_mask(signal: c_int) -> Option<usize> {
