@@ -266,7 +266,7 @@ mod tests {
 
                 assert_eq!(expand_pathname(b"plain.txt"), vec![b"plain.txt".to_vec()]);
 
-                let mut matches = Vec::new();
+                let mut matches: Vec<std::ffi::CString> = Vec::new();
                 let mut scratch = Vec::new();
                 expand_path_segments(
                     b"/definitely/not/a/real/dir",
@@ -278,9 +278,12 @@ mod tests {
                 );
                 assert!(matches.is_empty());
 
-                let mut matches = Vec::new();
+                let mut matches: Vec<std::ffi::CString> = Vec::new();
                 expand_path_segments(b".", &[], 0, false, &mut matches, &mut scratch);
-                assert_eq!(matches, vec![b".".to_vec()]);
+                assert_eq!(
+                    matches,
+                    vec![std::ffi::CString::new(b".".to_vec()).unwrap()]
+                );
 
                 assert!(pattern_matches(b"x", b"?"));
                 assert!(pattern_matches(b"[", b"["));

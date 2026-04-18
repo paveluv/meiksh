@@ -123,14 +123,20 @@ pub(crate) fn get_cwd() -> SysResult<Vec<u8>> {
 }
 
 #[cfg(test)]
-pub(crate) fn read_dir_entries(path: &[u8]) -> SysResult<Vec<Vec<u8>>> {
+pub(crate) fn read_dir_entries(path: &[u8]) -> SysResult<Vec<CString>> {
     let c_path = to_cstring(path)?;
     read_dir_entries_cstr(c_path.as_c_str())
 }
 
 /// Allocation-free variant of `read_dir_entries` for hot loops that already
 /// have a `&CStr`. See `file_exists_cstr` for rationale.
-pub(crate) fn read_dir_entries_cstr(cstr: &CStr) -> SysResult<Vec<Vec<u8>>> {
+///
+/// Entries are returned as `CString` rather than `Vec<u8>` because `readdir`
+/// already hands us NUL-terminated `d_name` buffers. Keeping them in that
+/// shape lets downstream glob sorting call `strcoll(3)` directly on the
+/// owned C strings — matching what dash/glibc's `glob(3)` do — instead of
+/// rebuilding a fresh `CString` on every comparison.
+pub(crate) fn read_dir_entries_cstr(cstr: &CStr) -> SysResult<Vec<CString>> {
     let dirp = (sys_interface().opendir)(cstr.as_ptr());
     if dirp.is_null() {
         return Err(last_error());
@@ -149,9 +155,9 @@ pub(crate) fn read_dir_entries_cstr(cstr: &CStr) -> SysResult<Vec<Vec<u8>>> {
             return Err(errno);
         }
         let name = unsafe { CStr::from_ptr((*ent).d_name.as_ptr()) };
-        let name = crate::bstr::bytes_from_cstr(name);
-        if name != b"." && name != b".." {
-            entries.push(name);
+        let bytes = name.to_bytes();
+        if bytes != b"." && bytes != b".." {
+            entries.push(name.to_owned());
         }
     }
     Ok(entries)
