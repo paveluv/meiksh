@@ -1,0 +1,28 @@
+---
+description: Always run cargo fmt before creating a git commit
+alwaysApply: true
+---
+
+# Run `cargo fmt` Before Committing
+
+Before creating any git commit in this repository, always run `cargo fmt`
+and stage any resulting changes as part of the same commit. This keeps
+formatting noise out of subsequent commits and avoids CI fmt failures.
+
+## Workflow
+
+```bash
+cargo fmt
+git add -A
+git commit -m "..."
+```
+
+If `cargo fmt` touches files unrelated to your change, include them in
+the same commit rather than creating a separate formatting commit — the
+project's history treats formatting as part of the logical change that
+introduced it.
+
+## Verification
+
+`cargo fmt --check` should exit 0 on the final tree before committing.
+If it does not, run `cargo fmt` and re-stage.
