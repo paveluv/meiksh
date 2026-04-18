@@ -289,6 +289,159 @@ fn kill_session_listpids(sid: libc::pid_t) -> usize {
     killed
 }
 
+// ── Ctrl-C / signal cleanup ──────────────────────────────────────────────────
+//
+// When the user interrupts expect_pty (or the wrapping run.sh) with Ctrl-C,
+// we want every process expect_pty spawned to die too. Several of those
+// descendants run in their own sessions (forkpty + setsid, run_test_isolated's
+// fork + setsid), so they never receive the terminal SIGINT and would leak
+// if we just let the Rust default handler terminate us.
+//
+// The handler installed here only performs async-signal-safe work (one
+// write(2) to a self-pipe). A dedicated thread reads the pipe and runs the
+// real cleanup using the registered handles, then calls process::exit.
+
+#[derive(Default)]
+struct ActiveChildren {
+    // Isolation children (pid == session leader, since run_test_isolated
+    // calls setsid) plus the cgroup path if one was created.
+    isolation: Vec<(libc::pid_t, Option<String>)>,
+    // PtySession children (pid == session leader, since forkpty calls setsid).
+    pty_sessions: Vec<libc::pid_t>,
+}
+
+static ACTIVE_CHILDREN: Mutex<ActiveChildren> = Mutex::new(ActiveChildren {
+    isolation: Vec::new(),
+    pty_sessions: Vec::new(),
+});
+
+static SIGNAL_PIPE_W: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
+static CLEANUP_RUNNING: AtomicBool = AtomicBool::new(false);
+
+extern "C" fn signal_cleanup_handler(sig: CInt) {
+    let fd = SIGNAL_PIPE_W.load(AtomicOrdering::Relaxed);
+    if fd >= 0 {
+        let byte: u8 = sig as u8;
+        unsafe {
+            libc::write(fd, &byte as *const u8 as *const libc::c_void, 1);
+        }
+    }
+}
+
+fn install_signal_cleanup() {
+    let mut fds = [0 as CInt; 2];
+    if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
+        return;
+    }
+    let read_fd = fds[0];
+    let write_fd = fds[1];
+    // Keep the self-pipe out of exec'd shells so it doesn't leak into the
+    // shell under test and doesn't prevent EOF from being observed.
+    unsafe {
+        let flags = libc::fcntl(read_fd, libc::F_GETFD);
+        libc::fcntl(read_fd, libc::F_SETFD, flags | libc::FD_CLOEXEC);
+        let flags = libc::fcntl(write_fd, libc::F_GETFD);
+        libc::fcntl(write_fd, libc::F_SETFD, flags | libc::FD_CLOEXEC);
+    }
+    SIGNAL_PIPE_W.store(write_fd, AtomicOrdering::Relaxed);
+
+    thread::spawn(move || {
+        let mut byte = [0u8; 1];
+        let n = unsafe { libc::read(read_fd, byte.as_mut_ptr() as *mut libc::c_void, 1) };
+        if n <= 0 {
+            return;
+        }
+        if CLEANUP_RUNNING.swap(true, AtomicOrdering::SeqCst) {
+            return;
+        }
+        vlog!(
+            "signal cleanup: received signal {}, killing children",
+            byte[0]
+        );
+        run_signal_cleanup();
+        // 128 + SIGINT(2) = 130, matches the standard shell convention.
+        std::process::exit(128 + byte[0] as i32);
+    });
+
+    unsafe {
+        let mut sa: libc::sigaction = std::mem::zeroed();
+        sa.sa_sigaction = signal_cleanup_handler as *const () as usize;
+        libc::sigemptyset(&mut sa.sa_mask);
+        sa.sa_flags = libc::SA_RESTART;
+        libc::sigaction(libc::SIGINT, &sa, std::ptr::null_mut());
+        libc::sigaction(libc::SIGTERM, &sa, std::ptr::null_mut());
+        libc::sigaction(libc::SIGHUP, &sa, std::ptr::null_mut());
+    }
+}
+
+fn run_signal_cleanup() {
+    // Take a snapshot so we release the lock before calling into kill
+    // helpers (which may block on /proc iteration).
+    let snapshot = {
+        let mut reg = ACTIVE_CHILDREN.lock().unwrap();
+        std::mem::take(&mut *reg)
+    };
+    for (_pid, cg) in &snapshot.isolation {
+        if let Some(cg) = cg {
+            let _ = kill_cgroup(cg);
+        }
+    }
+    for (pid, _) in &snapshot.isolation {
+        unsafe {
+            libc::kill(-*pid, libc::SIGKILL);
+            libc::kill(*pid, libc::SIGKILL);
+        }
+    }
+    for sid in &snapshot.pty_sessions {
+        kill_session(*sid);
+    }
+    for (_pid, cg) in &snapshot.isolation {
+        if let Some(cg) = cg {
+            remove_cgroup(cg);
+        }
+    }
+}
+
+fn register_isolation_child(pid: libc::pid_t, cgroup: Option<String>) {
+    let mut reg = ACTIVE_CHILDREN.lock().unwrap();
+    reg.isolation.push((pid, cgroup));
+}
+
+fn unregister_isolation_child(pid: libc::pid_t) {
+    let mut reg = ACTIVE_CHILDREN.lock().unwrap();
+    reg.isolation.retain(|(p, _)| *p != pid);
+}
+
+fn register_pty_session(pid: libc::pid_t) {
+    let mut reg = ACTIVE_CHILDREN.lock().unwrap();
+    reg.pty_sessions.push(pid);
+}
+
+fn unregister_pty_session(pid: libc::pid_t) {
+    let mut reg = ACTIVE_CHILDREN.lock().unwrap();
+    reg.pty_sessions.retain(|p| *p != pid);
+}
+
+/// Reset cleanup wiring in a freshly-forked child so a signal delivered to
+/// the child cannot reach (and confuse) the parent's cleanup thread through
+/// the inherited self-pipe fd.
+fn reset_signal_cleanup_in_child() {
+    let fd = SIGNAL_PIPE_W.swap(-1, AtomicOrdering::Relaxed);
+    if fd >= 0 {
+        unsafe {
+            libc::close(fd);
+        }
+    }
+    unsafe {
+        let mut sa: libc::sigaction = std::mem::zeroed();
+        sa.sa_sigaction = libc::SIG_DFL;
+        libc::sigemptyset(&mut sa.sa_mask);
+        libc::sigaction(libc::SIGINT, &sa, std::ptr::null_mut());
+        libc::sigaction(libc::SIGTERM, &sa, std::ptr::null_mut());
+        libc::sigaction(libc::SIGHUP, &sa, std::ptr::null_mut());
+    }
+}
+
 // ── PTY spawning ─────────────────────────────────────────────────────────────
 
 struct PtySession {
@@ -430,6 +583,7 @@ impl PtySession {
                 "PtySession::spawn: child_pid={pid}, master_fd={master}, argv={:?}",
                 argv
             );
+            register_pty_session(pid);
             Ok(PtySession {
                 master_fd: master,
                 child_pid: pid,
@@ -591,6 +745,7 @@ impl PtySession {
             status
         );
 
+        unregister_pty_session(self.child_pid);
         kill_session(self.child_pid);
 
         // Now stop the reader thread — all slave holders are dead so the
@@ -628,6 +783,7 @@ impl PtySession {
 
     fn cleanup(&mut self) {
         vlog!("cleanup: killing session for child_pid={}", self.child_pid);
+        unregister_pty_session(self.child_pid);
         kill_session(self.child_pid);
         vlog!("cleanup: stopping reader thread");
         self.stop_reader();
@@ -2350,6 +2506,7 @@ fn run_test_isolated(
 
     if child_pid == 0 {
         // ── Child process ──
+        reset_signal_cleanup_in_child();
         unsafe {
             libc::setsid();
             #[cfg(target_os = "linux")]
@@ -2390,6 +2547,7 @@ fn run_test_isolated(
         test.name
     );
     unsafe { libc::close(pipe_w) };
+    register_isolation_child(child_pid, cgroup_path.clone());
 
     let deadline = Instant::now() + timeout;
     let mut status: CInt = 0;
@@ -2430,6 +2588,7 @@ fn run_test_isolated(
         vlog!("run_test_isolated: blocking waitpid for child_pid={child_pid}");
         unsafe { libc::waitpid(child_pid, &mut status, 0) };
         vlog!("run_test_isolated: child {child_pid} reaped after timeout");
+        unregister_isolation_child(child_pid);
 
         let pipe_read = unsafe { std::fs::File::from_raw_fd(pipe_r) };
         drop(pipe_read);
@@ -2449,6 +2608,8 @@ fn run_test_isolated(
         let mut pipe_read = unsafe { std::fs::File::from_raw_fd(pipe_r) };
         let _ = pipe_read.read_to_string(&mut error_buf);
     }
+
+    unregister_isolation_child(child_pid);
 
     if let Some(ref cg) = cgroup_path {
         remove_cgroup(cg);
@@ -2555,6 +2716,8 @@ fn apply_test_filter(suites: &mut [(String, TestSuite)], test_name: &str) -> usi
 
 fn main() {
     let args: Vec<String> = env::args().collect();
+
+    install_signal_cleanup();
 
     let mut shell_flag: Option<String> = None;
     let mut script_modes_flag: Option<String> = None;
