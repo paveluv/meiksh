@@ -645,12 +645,25 @@ fn expand_arithmetic<C: Context>(
     Ok(())
 }
 
+/// Build the list of character-boundary byte offsets within `value`.
+///
+/// Always includes `0` and `value.len()`. For ASCII bytes we skip the
+/// `sys::locale::decode_char` dispatch entirely (one per byte would
+/// otherwise dominate parameter-expansion pattern stripping on ASCII
+/// inputs). We preallocate with the maximum possible capacity — one
+/// boundary per byte, plus the starting `0` — which is exact for ASCII
+/// and a slight overshoot for multibyte input.
 pub(super) fn char_boundary_offsets(value: &[u8]) -> Vec<usize> {
-    let mut offsets = vec![0usize];
+    let mut offsets = Vec::with_capacity(value.len() + 1);
+    offsets.push(0);
     let mut i = 0;
     while i < value.len() {
-        let (_, len) = crate::sys::locale::decode_char(&value[i..]);
-        let step = if len == 0 { 1 } else { len };
+        let step = if value[i] < 0x80 {
+            1
+        } else {
+            let (_, len) = crate::sys::locale::decode_char(&value[i..]);
+            if len == 0 { 1 } else { len }
+        };
         i += step;
         offsets.push(i);
     }
@@ -706,8 +719,12 @@ pub(super) fn decompose_ifs(ifs: &[u8]) -> Vec<IfsChar> {
     let mut result = Vec::new();
     let mut i = 0;
     while i < ifs.len() {
-        let (_, len) = crate::sys::locale::decode_char(&ifs[i..]);
-        let step = if len == 0 { 1 } else { len };
+        let step = if ifs[i] < 0x80 {
+            1
+        } else {
+            let (_, len) = crate::sys::locale::decode_char(&ifs[i..]);
+            if len == 0 { 1 } else { len }
+        };
         let byte_seq = ifs[i..i + step].to_vec();
         let is_ws = step == 1 && is_ifs_whitespace(ifs[i]);
         result.push(IfsChar { byte_seq, is_ws });

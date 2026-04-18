@@ -1,5 +1,5 @@
 use libc::{c_char, c_int, c_long, mode_t};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::sync::Mutex;
@@ -10,7 +10,15 @@ use super::interface::{SystemInterface, set_errno, signal_mask};
 use super::types::{ClockTicks, FileModeMask, Pid};
 
 thread_local! {
-    static TEST_INTERFACE: RefCell<Option<SystemInterface>> = const { RefCell::new(None) };
+    // Pointer to the active test `SystemInterface`. The pointer is valid for
+    // the lifetime of the enclosing `with_test_interface` scope, which owns
+    // the `SystemInterface` on its stack and restores the previous pointer
+    // on exit. `current_interface` returns `Option<&'static SystemInterface>`
+    // — the `'static` is a convenience lie justified by the single-threaded
+    // guard and the "never stash the reference" calling convention in
+    // `sys_interface()`; references are used for immediate dispatch only.
+    static TEST_INTERFACE: Cell<*const SystemInterface> =
+        const { Cell::new(std::ptr::null()) };
     static TEST_ERRNO: RefCell<c_int> = const { RefCell::new(0) };
     static TEST_PENDING_SIGNALS: RefCell<usize> = const { RefCell::new(0) };
     static TEST_PROCESS_IDS: RefCell<Option<(libc::uid_t, libc::uid_t, libc::gid_t, libc::gid_t)>> =
@@ -41,8 +49,22 @@ fn syscall_lock() -> &'static Mutex<()> {
     &LOCK
 }
 
-pub(super) fn current_interface() -> Option<SystemInterface> {
-    TEST_INTERFACE.with(|cell| *cell.borrow())
+pub(super) fn current_interface() -> Option<&'static SystemInterface> {
+    TEST_INTERFACE.with(|cell| {
+        let ptr = cell.get();
+        if ptr.is_null() {
+            None
+        } else {
+            // SAFETY: `ptr` is set by `with_test_interface`, whose caller
+            // owns the `SystemInterface` on its stack for the duration of
+            // the call. `current_interface` is only used from within that
+            // scope (indirectly, via `sys_interface()` -> one syscall
+            // dispatch), so the reference is valid for the immediate
+            // dispatch. Returning `'static` is a convenience; callers in
+            // `src/sys/*` never store the reference.
+            Some(unsafe { &*ptr })
+        }
+    })
 }
 
 pub(crate) fn current_process_ids() -> Option<(libc::uid_t, libc::uid_t, libc::gid_t, libc::gid_t)>
@@ -71,10 +93,13 @@ pub(super) fn with_test_interface<T>(iface: SystemInterface, f: impl FnOnce() ->
     let _guard = syscall_lock()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
+    // Own the interface on our stack for the duration of the closure so
+    // that the pointer stashed in `TEST_INTERFACE` stays valid.
+    let iface_slot: SystemInterface = iface;
     TEST_INTERFACE.with(|cell| {
-        let previous = cell.replace(Some(iface));
+        let previous = cell.replace(&iface_slot as *const SystemInterface);
         let result = f();
-        cell.replace(previous);
+        cell.set(previous);
         result
     })
 }

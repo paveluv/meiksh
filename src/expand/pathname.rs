@@ -1,10 +1,49 @@
 use crate::sys;
 
 use super::glob::pattern_matches;
-use crate::syntax::byte_class::is_glob_char;
+
+/// True if `segment` contains at least one unquoted glob metacharacter that
+/// POSIX 2.13.1 treats as active: `*`, `?`, or a well-formed `[...]`
+/// bracket expression.
+///
+/// A lone `[` with no matching `]` in the same segment is NOT a valid
+/// bracket expression under POSIX and must be treated as literal. The
+/// previous byte-level `is_glob_char` unconditionally marked `[` as a
+/// glob char, which caused a bare `[` command name (as used by the `test`
+/// builtin's alternate form) to trigger a full `opendir`/`readdir` scan
+/// of the current directory on every invocation. Profiling showed this
+/// accounting for 61% of the deep-parse benchmark self-time.
+///
+/// The pairing is segment-local: a `/` separates path segments and a `]`
+/// on the other side of `/` does not close a bracket expression on this
+/// side. Callers pass each individual path segment into this function.
+pub(crate) fn has_active_glob_meta(segment: &[u8]) -> bool {
+    let mut i = 0;
+    while i < segment.len() {
+        match segment[i] {
+            b'*' | b'?' => return true,
+            b'[' => {
+                // POSIX requires at least one character inside the bracket
+                // expression (2.13.1: "[<range>]"). A well-formed form is
+                // `[...]` with at least one byte between the brackets.
+                // `[]` alone is not a bracket expression.
+                if let Some(rel) = segment[i + 1..].iter().position(|&b| b == b']') {
+                    if rel >= 1 {
+                        return true;
+                    }
+                }
+                // No matching `]` in this segment, or empty content —
+                // treat this `[` as literal and keep scanning.
+                i += 1;
+            }
+            _ => i += 1,
+        }
+    }
+    false
+}
 
 pub(crate) fn expand_pathname(pattern: &[u8]) -> Vec<Vec<u8>> {
-    if !pattern.iter().any(|&b| is_glob_char(b)) {
+    if !has_active_glob_meta(pattern) {
         return vec![pattern.to_vec()];
     }
     let absolute = pattern.first() == Some(&b'/');
@@ -18,7 +57,11 @@ pub(crate) fn expand_pathname(pattern: &[u8]) -> Vec<Vec<u8>> {
         b".".to_vec()
     };
     let mut matches = Vec::new();
-    expand_path_segments(&base, &segments, 0, absolute, &mut matches);
+    // One scratch buffer shared across every recursive call; each use writes
+    // a NUL-terminated path via `bstr::write_cstring_into`, eliminating the
+    // per-candidate `CString` allocation that dominated the glob profile.
+    let mut scratch: Vec<u8> = Vec::with_capacity(256);
+    expand_path_segments(&base, &segments, 0, absolute, &mut matches, &mut scratch);
     matches.sort_by(|a, b| crate::sys::locale::strcoll(a, b));
     matches
 }
@@ -29,6 +72,7 @@ pub(super) fn expand_path_segments(
     index: usize,
     absolute: bool,
     matches: &mut Vec<Vec<u8>>,
+    scratch: &mut Vec<u8>,
 ) {
     if index == segments.len() {
         let text = if absolute {
@@ -46,15 +90,23 @@ pub(super) fn expand_path_segments(
 
     let segment = segments[index];
 
-    if !segment.iter().any(|&b| is_glob_char(b)) {
+    if !has_active_glob_meta(segment) {
         let next = path_join(base, segment);
-        if sys::fs::file_exists(&next) {
-            expand_path_segments(&next, segments, index + 1, absolute, matches);
+        let exists = match crate::bstr::write_cstring_into(&next, scratch) {
+            Ok(cstr) => sys::fs::file_exists_cstr(cstr),
+            Err(_) => return,
+        };
+        if exists {
+            expand_path_segments(&next, segments, index + 1, absolute, matches, scratch);
         }
         return;
     }
 
-    let Ok(mut names) = sys::fs::read_dir_entries(base) else {
+    let names_result = match crate::bstr::write_cstring_into(base, scratch) {
+        Ok(cstr) => sys::fs::read_dir_entries_cstr(cstr),
+        Err(_) => return,
+    };
+    let Ok(mut names) = names_result else {
         return;
     };
     names.sort_by(|a, b| crate::sys::locale::strcoll(a, b));
@@ -64,7 +116,7 @@ pub(super) fn expand_path_segments(
         }
         if pattern_matches(&name, segment) {
             let next = path_join(base, &name);
-            expand_path_segments(&next, segments, index + 1, absolute, matches);
+            expand_path_segments(&next, segments, index + 1, absolute, matches, scratch);
         }
     }
 }
@@ -240,6 +292,43 @@ mod tests {
                 );
             },
         );
+    }
+
+    #[test]
+    fn has_active_glob_meta_matches_posix_bracket_rules() {
+        // The base star/question cases are unchanged from the previous
+        // byte-level helper.
+        assert!(super::has_active_glob_meta(b"*.txt"));
+        assert!(super::has_active_glob_meta(b"a?c"));
+        assert!(!super::has_active_glob_meta(b"plain.txt"));
+        // Well-formed bracket expression: active.
+        assert!(super::has_active_glob_meta(b"[abc]"));
+        assert!(super::has_active_glob_meta(b"[a-z]"));
+        assert!(super::has_active_glob_meta(b"foo[0-9]bar"));
+        // Lone `[` must not trigger a directory scan. This is the regression
+        // fix: before this change, bare `[` (as used by the `test` builtin's
+        // alternate form) triggered a full readdir sweep on every call.
+        assert!(!super::has_active_glob_meta(b"["));
+        // Empty bracket `[]` is not a valid bracket expression.
+        assert!(!super::has_active_glob_meta(b"[]"));
+        // `]` without a `[` is literal.
+        assert!(!super::has_active_glob_meta(b"]"));
+        // `[` before a `]` later in the string still pairs; even if the
+        // bracket contents are unusual, the cheap check errs on the side
+        // of delegating to `pattern_matches` for correctness.
+        assert!(super::has_active_glob_meta(b"[x]y"));
+    }
+
+    #[test]
+    fn lone_bracket_command_does_not_opendir() {
+        // This mirrors the hot path from the `test` builtin's alternate
+        // form: the command name is a bare `[`, which was erroneously
+        // triggering a full directory scan per invocation. With the new
+        // helper, `expand_pathname(b"[")` must NOT call opendir/readdir.
+        assert_no_syscalls(|| {
+            let out = super::expand_pathname(b"[");
+            assert_eq!(out, vec![b"[".to_vec()]);
+        });
     }
 
     #[test]

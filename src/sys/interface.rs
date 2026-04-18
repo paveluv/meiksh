@@ -1,6 +1,8 @@
 use libc::{self, c_char, c_int, c_long, mode_t};
 use std::collections::HashMap;
 use std::ffi::CStr;
+#[cfg(not(test))]
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::constants::{
@@ -393,17 +395,33 @@ pub(super) extern "C" fn record_signal(sig: c_int) {
     }
 }
 
-pub(super) fn sys_interface() -> SystemInterface {
-    #[cfg(test)]
-    {
-        return super::test_support::current_interface()
-            .expect("sys call without run_trace or assert_no_syscalls");
-    }
+/// Cached production SystemInterface, initialized on first use. All fields are
+/// plain function pointers, so once initialized, subsequent calls return a
+/// stable reference with no per-call struct construction cost.
+#[cfg(not(test))]
+static DEFAULT_INTERFACE: OnceLock<SystemInterface> = OnceLock::new();
 
-    #[cfg(not(test))]
-    {
-        default_interface()
-    }
+/// Returns a reference to the active SystemInterface.
+///
+/// Call sites use the form `(sys_interface().syscall)(args)`, which
+/// auto-derefs the returned reference. Returning by reference (rather than
+/// by value as before) avoids rebuilding the ~70-field / ~560-byte struct
+/// on every syscall dispatch, which profiling showed to be 5-27% self time
+/// across the hot sections.
+#[cfg(not(test))]
+#[inline]
+pub(super) fn sys_interface() -> &'static SystemInterface {
+    DEFAULT_INTERFACE.get_or_init(default_interface)
+}
+
+/// Test variant: dispatch through the thread-local test override installed
+/// by `run_trace` / `assert_no_syscalls` / `with_test_interface`. Panics if
+/// no override is active, matching the previous contract.
+#[cfg(test)]
+#[inline]
+pub(super) fn sys_interface() -> &'static SystemInterface {
+    super::test_support::current_interface()
+        .expect("sys call without run_trace or assert_no_syscalls")
 }
 
 pub(super) fn set_errno(errno: c_int) {
