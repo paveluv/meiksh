@@ -412,31 +412,31 @@ pub(crate) fn all_signal_names() -> &'static [(&'static [u8], c_int)] {
 }
 
 fn wifexited(status: c_int) -> bool {
-    libc::WIFEXITED(status)
+    (sys_interface().wifexited)(status)
 }
 
 pub(crate) fn wexitstatus(status: c_int) -> i32 {
-    libc::WEXITSTATUS(status)
+    (sys_interface().wexitstatus)(status)
 }
 
 pub(crate) fn wifsignaled(status: c_int) -> bool {
-    libc::WIFSIGNALED(status)
+    (sys_interface().wifsignaled)(status)
 }
 
 pub(crate) fn wtermsig(status: c_int) -> i32 {
-    libc::WTERMSIG(status)
+    (sys_interface().wtermsig)(status)
 }
 
 pub(crate) fn wifstopped(status: c_int) -> bool {
-    libc::WIFSTOPPED(status)
+    (sys_interface().wifstopped)(status)
 }
 
 pub(crate) fn wifcontinued(status: c_int) -> bool {
-    libc::WIFCONTINUED(status)
+    (sys_interface().wifcontinued)(status)
 }
 
 pub(crate) fn wstopsig(status: c_int) -> i32 {
-    libc::WSTOPSIG(status)
+    (sys_interface().wstopsig)(status)
 }
 
 #[cfg(test)]
@@ -466,13 +466,15 @@ mod tests {
 
     #[test]
     fn decodes_wait_status_shapes() {
-        assert_eq!(decode_wait_status(0), 0);
-        assert_eq!(decode_wait_status(7 << 8), 7);
-        assert_eq!(
-            format_signal_exit(9),
-            Some(b"terminated by signal 9".to_vec())
-        );
-        assert_eq!(format_signal_exit(0), None);
+        test_support::assert_no_syscalls(|| {
+            assert_eq!(decode_wait_status(test_support::encode_exited(0)), 0);
+            assert_eq!(decode_wait_status(test_support::encode_exited(7)), 7);
+            assert_eq!(
+                format_signal_exit(test_support::encode_signaled(9)),
+                Some(b"terminated by signal 9".to_vec())
+            );
+            assert_eq!(format_signal_exit(test_support::encode_exited(0)), None);
+        });
     }
 
     #[test]
@@ -670,7 +672,12 @@ mod tests {
 
     #[test]
     fn decode_wait_status_covers_fallback_shape() {
-        assert_eq!(decode_wait_status(0x7f), 0x7f);
+        test_support::assert_no_syscalls(|| {
+            // 0x7f has no tag bits set, so it matches neither exited,
+            // signaled, stopped, nor continued -- exercising the fallback
+            // branch that returns the raw status unchanged.
+            assert_eq!(decode_wait_status(0x7f), 0x7f);
+        });
     }
 
     #[test]
@@ -813,7 +820,9 @@ mod tests {
 
     #[test]
     fn decode_wait_status_signal_terminated() {
-        assert_eq!(decode_wait_status(9), 137);
+        test_support::assert_no_syscalls(|| {
+            assert_eq!(decode_wait_status(test_support::encode_signaled(9)), 137);
+        });
     }
 
     #[test]

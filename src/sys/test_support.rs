@@ -288,22 +288,59 @@ fn apply_trace_result_pid(entry: &TraceEntry) -> Pid {
     }
 }
 
-fn continued_wait_status() -> c_int {
-    // Platform-specific wait-status encoding for WIFCONTINUED, matching the
-    // constants used by the host libc's WIFCONTINUED macro. See the `libc`
-    // crate source for each target.
-    #[cfg(any(
-        target_os = "linux",
-        target_os = "android",
-        target_os = "netbsd",
-        target_os = "openbsd",
-    ))]
-    const STATUS: c_int = 0xffff;
-    #[cfg(target_os = "macos")]
-    const STATUS: c_int = 0x137f;
-    #[cfg(any(target_os = "freebsd", target_os = "dragonfly"))]
-    const STATUS: c_int = 0x13;
-    STATUS
+// Abstract, platform-independent wait-status encoding used only inside unit
+// tests. The fake wait-status decoders installed in `trace_interface` /
+// `no_interface_table` interpret the tag in the high byte and carry the
+// subordinate code (exit status or signal number) in the low 8 bits. This
+// keeps tests strictly logical: no unit test needs to know the host libc's
+// actual WIFEXITED / WIFCONTINUED bit layout.
+const WAIT_TAG_MASK: u32 = 0xff00_0000;
+const WAIT_TAG_EXITED: u32 = 0x0100_0000;
+const WAIT_TAG_SIGNALED: u32 = 0x0200_0000;
+const WAIT_TAG_STOPPED: u32 = 0x0300_0000;
+const WAIT_TAG_CONTINUED: u32 = 0x0400_0000;
+
+/// Build a synthetic wait-status representing normal exit with `code`.
+/// Only meaningful together with the fake decoders installed by the test
+/// interface; production code never sees these values.
+#[allow(dead_code)]
+pub(crate) fn encode_exited(code: i32) -> c_int {
+    (WAIT_TAG_EXITED | ((code as u32) & 0xff)) as c_int
+}
+/// Build a synthetic wait-status representing termination by `sig`.
+#[allow(dead_code)]
+pub(crate) fn encode_signaled(sig: i32) -> c_int {
+    (WAIT_TAG_SIGNALED | ((sig as u32) & 0xff)) as c_int
+}
+#[allow(dead_code)]
+pub(crate) fn encode_stopped(sig: i32) -> c_int {
+    (WAIT_TAG_STOPPED | ((sig as u32) & 0xff)) as c_int
+}
+#[allow(dead_code)]
+pub(crate) fn encode_continued() -> c_int {
+    WAIT_TAG_CONTINUED as c_int
+}
+
+fn test_wifexited(status: c_int) -> bool {
+    (status as u32) & WAIT_TAG_MASK == WAIT_TAG_EXITED
+}
+fn test_wexitstatus(status: c_int) -> i32 {
+    (status & 0xff) as i32
+}
+fn test_wifsignaled(status: c_int) -> bool {
+    (status as u32) & WAIT_TAG_MASK == WAIT_TAG_SIGNALED
+}
+fn test_wtermsig(status: c_int) -> i32 {
+    (status & 0xff) as i32
+}
+fn test_wifstopped(status: c_int) -> bool {
+    (status as u32) & WAIT_TAG_MASK == WAIT_TAG_STOPPED
+}
+fn test_wstopsig(status: c_int) -> i32 {
+    (status & 0xff) as i32
+}
+fn test_wifcontinued(status: c_int) -> bool {
+    (status as u32) & WAIT_TAG_MASK == WAIT_TAG_CONTINUED
 }
 
 // Trace-dispatching syscall implementations
@@ -326,27 +363,27 @@ fn trace_waitpid(pid: Pid, status: *mut c_int, options: c_int) -> Pid {
     );
     if !status.is_null() {
         match entry.result {
-            TraceResult::Status(s) => {
+            TraceResult::Status(code) => {
                 unsafe {
-                    *status = s << 8;
+                    *status = encode_exited(code);
                 }
                 return pid;
             }
             TraceResult::StoppedSig(sig) => {
                 unsafe {
-                    *status = (sig << 8) | 0x7f;
+                    *status = encode_stopped(sig);
                 }
                 return pid;
             }
             TraceResult::SignaledSig(sig) => {
                 unsafe {
-                    *status = sig & 0x7f;
+                    *status = encode_signaled(sig);
                 }
                 return pid;
             }
             TraceResult::ContinuedStatus => {
                 unsafe {
-                    *status = continued_wait_status();
+                    *status = encode_continued();
                 }
                 return pid;
             }
@@ -1022,6 +1059,13 @@ pub(super) fn trace_interface() -> SystemInterface {
         char_width: test_char_width,
         strcoll: test_strcoll,
         decimal_point: test_decimal_point,
+        wifexited: test_wifexited,
+        wexitstatus: test_wexitstatus,
+        wifsignaled: test_wifsignaled,
+        wtermsig: test_wtermsig,
+        wifstopped: test_wifstopped,
+        wstopsig: test_wstopsig,
+        wifcontinued: test_wifcontinued,
     }
 }
 
@@ -1209,6 +1253,13 @@ pub(super) fn no_interface_table() -> SystemInterface {
         char_width: test_char_width,
         strcoll: test_strcoll,
         decimal_point: test_decimal_point,
+        wifexited: test_wifexited,
+        wexitstatus: test_wexitstatus,
+        wifsignaled: test_wifsignaled,
+        wtermsig: test_wtermsig,
+        wifstopped: test_wifstopped,
+        wstopsig: test_wstopsig,
+        wifcontinued: test_wifcontinued,
     }
 }
 
