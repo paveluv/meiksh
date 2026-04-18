@@ -11,10 +11,11 @@ For comparison, every other major shell has verified non-compliances against the
 | Shell | Non-compliances |
 |---|---|
 | **meiksh** | **0** |
-| bash 5.2 `--posix` | 10 ([compliance report](tests/matrix/bash_compliance.md)) |
+| bash 5.2 `--posix` | 14 ([compliance report](tests/matrix/bash_compliance.md)) |
 | dash 0.5.12 | 20 ([compliance report](tests/matrix/dash_compliance.md)) |
 | ksh93u+m 1.0.10 | 22 ([compliance report](tests/matrix/ksh_compliance.md)) |
-| zsh 5.9 | 28 native / 35 `emulate sh` ([compliance report](tests/matrix/zsh_compliance.md)) |
+| zsh 5.9 | 49 native / 33 `emulate sh` ([compliance report](tests/matrix/zsh_compliance.md)) |
+| FreeBSD 15.0 `/bin/sh` (ash) | 21 ([compliance report](tests/matrix/ash_compliance.md)) |
 
 **Note:** `meiksh` has not been officially certified by The Open Group. The compliance claim is based solely on the project's own test suites, which are written directly from the POSIX.1-2024 (Issue 8) specification text.
 
@@ -29,17 +30,19 @@ The local `docs/posix/` mirror defined by `docs/posix-manifest.txt` is the only 
 
 ## Repository Layout
 
-- `src/main.rs`: CLI entry point
-- `src/shell.rs`: shell state, option parsing, top-level execution flow, and job table
+- `src/main.rs`, `src/lib.rs`: CLI entry point and crate root
+- `src/bstr.rs`: byte-string utilities for handling arbitrary (non-UTF-8) shell data
+- `src/shell/`: shell state, option parsing, top-level execution flow, and job table
 - `src/syntax/`: tokenizer, parser, AST, alias handling, and here-doc collection
-- `src/expand.rs`: parameter, command, arithmetic, field-splitting, and pathname expansion
-- `src/exec.rs`: command execution, pipelines, redirections, and compound-command runtime
-- `src/builtin.rs`: builtin dispatch and builtin implementations
-- `src/interactive.rs`: prompt loop, `ENV` sourcing, vi-mode line editing, and history
-- `src/sys.rs`: handwritten Unix FFI and wait/fd helpers
+- `src/expand/`: parameter, command, arithmetic, field-splitting, and pathname expansion
+- `src/exec/`: command execution, pipelines, redirections, and compound-command runtime
+- `src/builtin/`: builtin dispatch and builtin implementations
+- `src/interactive/`: prompt loop, `ENV` sourcing, vi-mode line editing, and history
+- `src/sys/`: handwritten Unix FFI behind a mockable `SystemInterface` (fd/process/fs/locale/env helpers)
 - `docs/`: policy, traceability, and local POSIX reference instructions
-- `tests/`: spec-oriented test suites
-- `scripts/`: repository automation such as coverage reporting
+- `tests/matrix/`: `.md`-driven POSIX conformance suites, `expect_pty` driver, and per-shell compliance reports
+- `tests/integration/`, `tests/perf/`: integration and performance tests
+- `scripts/`: repository automation (coverage, benchmarks, POSIX-obligation extraction)
 
 ## POSIX References
 
