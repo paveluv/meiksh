@@ -558,5 +558,62 @@ purposes only.
 
 ---
 
+## 21) Pattern matching is byte-level in all locales (`?`, `[...]`, character classes)
+
+**POSIX passage (exact quote)**
+From `docs/posix/md/utilities/V3_chap02.md`, 2.14.1 Patterns Matching a
+Single Character:
+
+> "`?`: A `<question-mark>` is a pattern that shall match any character."
+
+> "The following patterns shall match a single character: ordinary
+> characters, special pattern characters, and pattern bracket expressions.
+> The pattern bracket expression also shall match a single collating
+> element."
+
+**Why this is non-compliant**
+Dash's pattern matcher (`src/expand.c:1550` `pmatch()`) advances by bytes
+rather than characters; the entire shell contains no `mbrtowc` / `wchar` /
+`MB_CUR_MAX` calls. In a UTF-8 locale such as `C.UTF-8`, `?` therefore
+matches exactly one **byte** of a multi-byte sequence, and the
+`[[:alpha:]]` character class rejects multi-byte characters outright.
+Combined with `${var#pat}` / `${var%pat}` prefix/suffix removal, this
+produces orphaned UTF-8 continuation bytes — strings that are no longer
+valid UTF-8.
+
+Dash ships a `#define pmatch(a,b) !fnmatch(a,b,0)` path that would delegate
+to glibc's locale-aware `fnmatch(3)` when `HAVE_FNMATCH` is set, but the
+Debian `dash 0.5.12-12` build verified here uses the byte-wise `pmatch`
+unconditionally, so locale-aware character matching never applies.
+
+**Reproduction (portable shell commands)**
+
+```sh
+LC_ALL=C.UTF-8 /usr/bin/dash -c 'x=café; printf "%s" "${x%?}"' | od -An -c
+```
+
+Expected:
+- `   c   a   f` (removed the last character, `é`)
+
+Observed:
+- `   c   a   f 303` (removed only `\xa9`, leaving an orphaned `\xc3`
+  that is no longer valid UTF-8)
+
+**Matrix tests covering this non-compliance**
+
+All four currently fail when `tests/matrix/run.sh` is pointed at
+`/usr/bin/dash`:
+
+- `tests/matrix/tests/2_14_pattern_matching_notation.md` —
+  `question-mark matches single multi-byte character`
+- `tests/matrix/tests/2_14_pattern_matching_notation.md` —
+  `bracket alpha class matches multi-byte character`
+- `tests/matrix/tests/2_6_word_expansions.md` —
+  `prefix removal respects character boundaries`
+- `tests/matrix/tests/2_6_word_expansions.md` —
+  `suffix removal respects character boundaries`
+
+---
+
 This file is intentionally strict: only independently reproducible,
 standards-backed dash deviations are included.
