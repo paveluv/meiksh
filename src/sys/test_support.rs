@@ -478,11 +478,15 @@ fn test_setup_locale() {
     set_test_locale_c();
 }
 fn test_reinit_locale() {
-    let val = std::env::var("LC_ALL")
-        .or_else(|_| std::env::var("LANG"))
-        .unwrap_or_default();
-    let upper = val.to_ascii_uppercase();
-    if upper.contains("UTF-8") || upper.contains("UTF8") {
+    let val = trace_getenv(b"LC_ALL").or_else(|| trace_getenv(b"LANG"));
+    let is_utf8 = match val {
+        Some(v) => {
+            let upper: Vec<u8> = v.iter().map(|b| b.to_ascii_uppercase()).collect();
+            upper.windows(5).any(|w| w == b"UTF-8") || upper.windows(4).any(|w| w == b"UTF8")
+        }
+        None => false,
+    };
+    if is_utf8 {
         set_test_locale_utf8();
     } else {
         set_test_locale_c();
