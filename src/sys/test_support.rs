@@ -289,13 +289,21 @@ fn apply_trace_result_pid(entry: &TraceEntry) -> Pid {
 }
 
 fn continued_wait_status() -> c_int {
-    // Linux uses 0xffff; macOS/FreeBSD use (SIGCONT << 8) | 0x7f = 0x137f.
-    for &candidate in &[0xffffi32, 0x137f] {
-        if libc::WIFCONTINUED(candidate) {
-            return candidate;
-        }
-    }
-    panic!("could not derive WIFCONTINUED wait status for this platform");
+    // Platform-specific wait-status encoding for WIFCONTINUED, matching the
+    // constants used by the host libc's WIFCONTINUED macro. See the `libc`
+    // crate source for each target.
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "netbsd",
+        target_os = "openbsd",
+    ))]
+    const STATUS: c_int = 0xffff;
+    #[cfg(target_os = "macos")]
+    const STATUS: c_int = 0x137f;
+    #[cfg(any(target_os = "freebsd", target_os = "dragonfly"))]
+    const STATUS: c_int = 0x13;
+    STATUS
 }
 
 // Trace-dispatching syscall implementations
