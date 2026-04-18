@@ -114,7 +114,8 @@ pub(crate) fn decimal_point() -> u8 {
 mod tests {
     use super::*;
     use crate::sys::test_support::{
-        self, assert_no_syscalls, set_test_locale_c, set_test_locale_utf8,
+        self, ArgMatcher, TraceResult, assert_no_syscalls, set_test_locale_c, set_test_locale_utf8,
+        t,
     };
     use crate::trace_entries;
 
@@ -174,18 +175,68 @@ mod tests {
         });
     }
 
+    fn getenv_entry(key: &[u8], result: TraceResult) -> test_support::TraceEntry {
+        t("getenv", vec![ArgMatcher::Str(key.to_vec())], result)
+    }
+
     #[test]
-    fn reinit_locale_reads_env() {
-        test_support::run_trace(trace_entries![], || {
-            unsafe { std::env::set_var("LC_ALL", "C.UTF-8") };
-            reinit_locale();
-            assert_eq!(mb_cur_max(), 4);
+    fn reinit_locale_reads_lc_all_utf8() {
+        test_support::run_trace(
+            trace_entries![
+                ..vec![getenv_entry(
+                    b"LC_ALL",
+                    TraceResult::StrVal(b"C.UTF-8".to_vec()),
+                )],
+            ],
+            || {
+                reinit_locale();
+                assert_eq!(mb_cur_max(), 4);
+            },
+        );
+    }
 
-            unsafe { std::env::set_var("LC_ALL", "C") };
-            reinit_locale();
-            assert_eq!(mb_cur_max(), 1);
+    #[test]
+    fn reinit_locale_reads_lc_all_c() {
+        test_support::run_trace(
+            trace_entries![
+                ..vec![getenv_entry(b"LC_ALL", TraceResult::StrVal(b"C".to_vec()))],
+            ],
+            || {
+                reinit_locale();
+                assert_eq!(mb_cur_max(), 1);
+            },
+        );
+    }
 
-            unsafe { std::env::remove_var("LC_ALL") };
-        });
+    #[test]
+    fn reinit_locale_falls_back_to_lang() {
+        test_support::run_trace(
+            trace_entries![
+                ..vec![
+                    getenv_entry(b"LC_ALL", TraceResult::NullStr),
+                    getenv_entry(b"LANG", TraceResult::StrVal(b"en_US.UTF8".to_vec())),
+                ],
+            ],
+            || {
+                reinit_locale();
+                assert_eq!(mb_cur_max(), 4);
+            },
+        );
+    }
+
+    #[test]
+    fn reinit_locale_defaults_to_c_when_unset() {
+        test_support::run_trace(
+            trace_entries![
+                ..vec![
+                    getenv_entry(b"LC_ALL", TraceResult::NullStr),
+                    getenv_entry(b"LANG", TraceResult::NullStr),
+                ],
+            ],
+            || {
+                reinit_locale();
+                assert_eq!(mb_cur_max(), 1);
+            },
+        );
     }
 }

@@ -1603,37 +1603,23 @@ fn replay_cmd(
     }
 }
 
-#[cfg(target_os = "linux")]
-const fn glob_tilde() -> libc::c_int {
-    libc::GLOB_TILDE
-}
-
-#[cfg(not(target_os = "linux"))]
-const fn glob_tilde() -> libc::c_int {
-    0x0800
-}
-
 fn glob_expand(pattern: &[u8]) -> Result<Vec<Vec<u8>>, ()> {
-    let c_pattern = std::ffi::CString::new(pattern.to_vec()).map_err(|_| ())?;
-    let mut glob_buf: libc::glob_t = unsafe { std::mem::zeroed() };
-    let ret = unsafe {
-        libc::glob(
-            c_pattern.as_ptr(),
-            glob_tilde() | libc::GLOB_MARK,
-            None,
-            &mut glob_buf,
-        )
-    };
-    if ret != 0 {
-        unsafe { libc::globfree(&mut glob_buf) };
+    if pattern.contains(&0) {
         return Err(());
     }
-    let mut results = Vec::new();
-    for i in 0..glob_buf.gl_pathc {
-        let path = unsafe { std::ffi::CStr::from_ptr(*glob_buf.gl_pathv.add(i)) };
-        results.push(path.to_bytes().to_vec());
+    let has_glob_char = pattern
+        .iter()
+        .any(|&b| b == b'*' || b == b'?' || b == b'[');
+    let results = crate::expand::pathname::expand_pathname(pattern);
+    if !has_glob_char {
+        if !sys::fs::file_exists(pattern) {
+            return Err(());
+        }
+        return Ok(results);
     }
-    unsafe { libc::globfree(&mut glob_buf) };
+    if results.is_empty() {
+        return Err(());
+    }
     Ok(results)
 }
 
@@ -1849,23 +1835,38 @@ mod tests {
         }
 
         #[test]
-        fn glob_expand_with_real_files() {
-            let dir = std::env::temp_dir().join("meiksh_glob_test");
-            let _ = std::fs::create_dir_all(&dir);
-            std::fs::write(dir.join("aaa_1"), "").unwrap();
-            std::fs::write(dir.join("aaa_2"), "").unwrap();
-            let pat = format!("{}/aaa_*", dir.display());
-            let result = glob_expand(pat.as_bytes());
-            assert!(result.is_ok());
-            let files = result.unwrap();
-            assert_eq!(files.len(), 2);
-            let _ = std::fs::remove_dir_all(&dir);
+        fn glob_expand_with_mocked_files() {
+            run_trace(
+                trace_entries![
+                    access(str(b"./testdir"), int(libc::F_OK)) -> 0,
+                    opendir(str(b"./testdir")) -> int(1),
+                    readdir(_) -> dir_entry(b"aaa_1"),
+                    readdir(_) -> dir_entry(b"aaa_2"),
+                    readdir(_) -> int(0),
+                    closedir(_) -> 0,
+                ],
+                || {
+                    let result = glob_expand(b"testdir/aaa_*");
+                    assert!(result.is_ok());
+                    let files = result.unwrap();
+                    assert_eq!(files.len(), 2);
+                    assert_eq!(files[0], b"testdir/aaa_1");
+                    assert_eq!(files[1], b"testdir/aaa_2");
+                },
+            );
         }
 
         #[test]
         fn glob_expand_no_match_returns_err() {
-            let result = glob_expand(b"/nonexistent_path_xyz/no_*_match");
-            assert!(result.is_err());
+            run_trace(
+                trace_entries![
+                    access(str(b"/nonexistent_path_xyz"), int(libc::F_OK)) -> err(libc::ENOENT),
+                ],
+                || {
+                    let result = glob_expand(b"/nonexistent_path_xyz/no_*_match");
+                    assert!(result.is_err());
+                },
+            );
         }
 
         #[test]
@@ -3189,53 +3190,53 @@ mod tests {
 
         #[test]
         fn vi_star_glob_expand() {
-            assert_no_syscalls(|| {
-                let dir = std::env::temp_dir().join("meiksh_vi_star_test");
-                let _ = std::fs::remove_dir_all(&dir);
-                std::fs::create_dir_all(&dir).unwrap();
-                std::fs::write(dir.join("aaa.txt"), b"").unwrap();
-                std::fs::write(dir.join("bbb.txt"), b"").unwrap();
-
-                let pattern = format!("{}/", dir.display());
-                let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<[u8]>> = vec![];
-                state.line = pattern.as_bytes().to_vec();
-                state.cursor = state.line.len().saturating_sub(1);
-                state.insert_mode = false;
-                state.process_byte(b'*', &history);
-                assert!(
-                    state
-                        .line
-                        .windows(b"aaa.txt".len())
-                        .any(|w| w == b"aaa.txt")
-                );
-                assert!(
-                    state
-                        .line
-                        .windows(b"bbb.txt".len())
-                        .any(|w| w == b"bbb.txt")
-                );
-                let _ = std::fs::remove_dir_all(&dir);
-            });
+            run_trace(
+                trace_entries![
+                    access(str(b"./testdir"), int(libc::F_OK)) -> 0,
+                    opendir(str(b"./testdir")) -> int(1),
+                    readdir(_) -> dir_entry(b"aaa.txt"),
+                    readdir(_) -> dir_entry(b"bbb.txt"),
+                    readdir(_) -> int(0),
+                    closedir(_) -> 0,
+                ],
+                || {
+                    let mut state = ViState::new(0x7f, 0);
+                    let history: Vec<Box<[u8]>> = vec![];
+                    state.line = b"testdir/".to_vec();
+                    state.cursor = state.line.len().saturating_sub(1);
+                    state.insert_mode = false;
+                    state.process_byte(b'*', &history);
+                    assert!(
+                        state
+                            .line
+                            .windows(b"aaa.txt".len())
+                            .any(|w| w == b"aaa.txt")
+                    );
+                    assert!(
+                        state
+                            .line
+                            .windows(b"bbb.txt".len())
+                            .any(|w| w == b"bbb.txt")
+                    );
+                },
+            );
         }
 
         #[test]
         fn vi_backslash_unique_completion() {
-            let dir = std::env::temp_dir().join("meiksh_vi_bslash_test");
-            let _ = std::fs::remove_dir_all(&dir);
-            std::fs::create_dir_all(&dir).unwrap();
-            std::fs::write(dir.join("unique_file.txt"), b"").unwrap();
-
-            let expected = format!("{}/unique_file.txt", dir.display());
             run_trace(
                 trace_entries![
-                    stat(str(expected), _) -> stat_file(0o644),
+                    access(str(b"./testdir"), int(libc::F_OK)) -> 0,
+                    opendir(str(b"./testdir")) -> int(1),
+                    readdir(_) -> dir_entry(b"unique_file.txt"),
+                    readdir(_) -> int(0),
+                    closedir(_) -> 0,
+                    stat(str(b"testdir/unique_file.txt"), _) -> stat_file(0o644),
                 ],
                 || {
-                    let prefix = format!("{}/unique_fi", dir.display());
                     let mut state = ViState::new(0x7f, 0);
                     let history: Vec<Box<[u8]>> = vec![];
-                    state.line = prefix.as_bytes().to_vec();
+                    state.line = b"testdir/unique_fi".to_vec();
                     state.cursor = state.line.len().saturating_sub(1);
                     state.insert_mode = false;
                     state.process_byte(b'\\', &history);
@@ -3247,53 +3248,52 @@ mod tests {
                     );
                 },
             );
-            let _ = std::fs::remove_dir_all(&dir);
         }
 
         #[test]
         fn vi_backslash_dir_appends_slash() {
-            let dir = std::env::temp_dir().join("meiksh_vi_bslash_dir_test");
-            let _ = std::fs::remove_dir_all(&dir);
-            std::fs::create_dir_all(dir.join("subdir_only")).unwrap();
-
-            let expected = format!("{}/subdir_only/", dir.display());
             run_trace(
                 trace_entries![
-                    stat(str(expected), _) -> stat_dir,
+                    access(str(b"./testdir"), int(libc::F_OK)) -> 0,
+                    opendir(str(b"./testdir")) -> int(1),
+                    readdir(_) -> dir_entry(b"subdir_only"),
+                    readdir(_) -> int(0),
+                    closedir(_) -> 0,
+                    stat(str(b"testdir/subdir_only"), _) -> stat_dir,
                 ],
                 || {
-                    let prefix = format!("{}/subdir_on", dir.display());
                     let mut state = ViState::new(0x7f, 0);
                     let history: Vec<Box<[u8]>> = vec![];
-                    state.line = prefix.as_bytes().to_vec();
+                    state.line = b"testdir/subdir_on".to_vec();
                     state.cursor = state.line.len().saturating_sub(1);
                     state.insert_mode = false;
                     state.process_byte(b'\\', &history);
                     assert_eq!(state.line.last(), Some(&b'/'));
                 },
             );
-            let _ = std::fs::remove_dir_all(&dir);
         }
 
         #[test]
         fn vi_backslash_ambiguous_bells() {
-            assert_no_syscalls(|| {
-                let dir = std::env::temp_dir().join("meiksh_vi_bslash_amb_test");
-                let _ = std::fs::remove_dir_all(&dir);
-                std::fs::create_dir_all(&dir).unwrap();
-                std::fs::write(dir.join("ab1.txt"), b"").unwrap();
-                std::fs::write(dir.join("ab2.txt"), b"").unwrap();
-
-                let prefix = format!("{}/ab", dir.display());
-                let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<[u8]>> = vec![];
-                state.line = prefix.as_bytes().to_vec();
-                state.cursor = state.line.len().saturating_sub(1);
-                state.insert_mode = false;
-                let actions = state.process_byte(b'\\', &history);
-                assert!(has_bell(&actions));
-                let _ = std::fs::remove_dir_all(&dir);
-            });
+            run_trace(
+                trace_entries![
+                    access(str(b"./testdir"), int(libc::F_OK)) -> 0,
+                    opendir(str(b"./testdir")) -> int(1),
+                    readdir(_) -> dir_entry(b"ab1.txt"),
+                    readdir(_) -> dir_entry(b"ab2.txt"),
+                    readdir(_) -> int(0),
+                    closedir(_) -> 0,
+                ],
+                || {
+                    let mut state = ViState::new(0x7f, 0);
+                    let history: Vec<Box<[u8]>> = vec![];
+                    state.line = b"testdir/ab".to_vec();
+                    state.cursor = state.line.len().saturating_sub(1);
+                    state.insert_mode = false;
+                    let actions = state.process_byte(b'\\', &history);
+                    assert!(has_bell(&actions));
+                },
+            );
         }
 
         #[test]
@@ -3402,27 +3402,29 @@ mod tests {
 
         #[test]
         fn vi_star_with_explicit_glob_chars() {
-            assert_no_syscalls(|| {
-                let dir = std::env::temp_dir().join("meiksh_vi_star_glob_test");
-                let _ = std::fs::remove_dir_all(&dir);
-                std::fs::create_dir_all(&dir).unwrap();
-                std::fs::write(dir.join("file1.txt"), b"").unwrap();
-
-                let pattern = format!("{}/*.txt", dir.display());
-                let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<[u8]>> = vec![];
-                state.line = pattern.as_bytes().to_vec();
-                state.cursor = state.line.len().saturating_sub(1);
-                state.insert_mode = false;
-                state.process_byte(b'*', &history);
-                assert!(
-                    state
-                        .line
-                        .windows(b"file1.txt".len())
-                        .any(|w| w == b"file1.txt")
-                );
-                let _ = std::fs::remove_dir_all(&dir);
-            });
+            run_trace(
+                trace_entries![
+                    access(str(b"./testdir"), int(libc::F_OK)) -> 0,
+                    opendir(str(b"./testdir")) -> int(1),
+                    readdir(_) -> dir_entry(b"file1.txt"),
+                    readdir(_) -> int(0),
+                    closedir(_) -> 0,
+                ],
+                || {
+                    let mut state = ViState::new(0x7f, 0);
+                    let history: Vec<Box<[u8]>> = vec![];
+                    state.line = b"testdir/*.txt".to_vec();
+                    state.cursor = state.line.len().saturating_sub(1);
+                    state.insert_mode = false;
+                    state.process_byte(b'*', &history);
+                    assert!(
+                        state
+                            .line
+                            .windows(b"file1.txt".len())
+                            .any(|w| w == b"file1.txt")
+                    );
+                },
+            );
         }
 
         #[test]
@@ -3818,24 +3820,34 @@ mod tests {
 
         #[test]
         fn glob_expand_nomatch_returns_err() {
-            assert_no_syscalls(|| {
-                let result = glob_expand(b"/nonexistent_dir_xyz_42/*.qqq");
-                assert!(result.is_err());
-            });
+            run_trace(
+                trace_entries![
+                    access(str(b"/nonexistent_dir_xyz_42"), int(libc::F_OK)) -> err(libc::ENOENT),
+                ],
+                || {
+                    let result = glob_expand(b"/nonexistent_dir_xyz_42/*.qqq");
+                    assert!(result.is_err());
+                },
+            );
         }
 
         #[test]
         fn vi_star_glob_nomatch_leaves_line() {
-            assert_no_syscalls(|| {
-                let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<[u8]>> = vec![];
-                let word = b"/no_such_dir_xyzzy/";
-                state.line = word.to_vec();
-                state.cursor = state.line.len().saturating_sub(1);
-                state.insert_mode = false;
-                state.process_byte(b'*', &history);
-                assert_eq!(state.line, word);
-            });
+            run_trace(
+                trace_entries![
+                    access(str(b"/no_such_dir_xyzzy"), int(libc::F_OK)) -> err(libc::ENOENT),
+                ],
+                || {
+                    let mut state = ViState::new(0x7f, 0);
+                    let history: Vec<Box<[u8]>> = vec![];
+                    let word = b"/no_such_dir_xyzzy/";
+                    state.line = word.to_vec();
+                    state.cursor = state.line.len().saturating_sub(1);
+                    state.insert_mode = false;
+                    state.process_byte(b'*', &history);
+                    assert_eq!(state.line, word);
+                },
+            );
         }
 
         #[test]
@@ -3880,16 +3892,21 @@ mod tests {
 
         #[test]
         fn vi_backslash_glob_nomatch_no_change() {
-            assert_no_syscalls(|| {
-                let mut state = ViState::new(0x7f, 0);
-                let history: Vec<Box<[u8]>> = vec![];
-                let word = b"/no_such_dir_xyzzy/nomatch";
-                state.line = word.to_vec();
-                state.cursor = state.line.len().saturating_sub(1);
-                state.insert_mode = false;
-                state.process_byte(b'\\', &history);
-                assert_eq!(state.line, word);
-            });
+            run_trace(
+                trace_entries![
+                    access(str(b"/no_such_dir_xyzzy"), int(libc::F_OK)) -> err(libc::ENOENT),
+                ],
+                || {
+                    let mut state = ViState::new(0x7f, 0);
+                    let history: Vec<Box<[u8]>> = vec![];
+                    let word = b"/no_such_dir_xyzzy/nomatch";
+                    state.line = word.to_vec();
+                    state.cursor = state.line.len().saturating_sub(1);
+                    state.insert_mode = false;
+                    state.process_byte(b'\\', &history);
+                    assert_eq!(state.line, word);
+                },
+            );
         }
 
         // --- Multi-byte character unit tests ---

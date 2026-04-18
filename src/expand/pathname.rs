@@ -3,7 +3,7 @@ use crate::sys;
 use super::glob::pattern_matches;
 use crate::syntax::byte_class::is_glob_char;
 
-pub(super) fn expand_pathname(pattern: &[u8]) -> Vec<Vec<u8>> {
+pub(crate) fn expand_pathname(pattern: &[u8]) -> Vec<Vec<u8>> {
     if !pattern.iter().any(|&b| is_glob_char(b)) {
         return vec![pattern.to_vec()];
     }
