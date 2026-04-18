@@ -10,6 +10,9 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage)'] }
 [dependencies]
 libc = "0.2.183"
 
+[profile.release]
+debug = "line-tables-only"
+
 [[test]]
 name = "integration_basic"
 path = "tests/integration/basic.rs"

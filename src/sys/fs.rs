@@ -83,6 +83,14 @@ pub(crate) fn file_exists(path: &[u8]) -> bool {
     access_path(path, F_OK).is_ok()
 }
 
+/// Allocation-free variant of `file_exists` for hot loops that already have
+/// a `&CStr` (e.g. built via `crate::bstr::write_cstring_into` into a
+/// reusable scratch buffer). Equivalent to `file_exists` but skips the
+/// per-call `CString` materialisation that showed up in the glob profile.
+pub(crate) fn file_exists_cstr(cstr: &CStr) -> bool {
+    (sys_interface().access)(cstr.as_ptr(), F_OK) == 0
+}
+
 pub(crate) fn is_directory(path: &[u8]) -> bool {
     stat_path(path).map(|s| s.is_dir()).unwrap_or(false)
 }
@@ -114,9 +122,16 @@ pub(crate) fn get_cwd() -> SysResult<Vec<u8>> {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn read_dir_entries(path: &[u8]) -> SysResult<Vec<Vec<u8>>> {
     let c_path = to_cstring(path)?;
-    let dirp = (sys_interface().opendir)(c_path.as_ptr());
+    read_dir_entries_cstr(c_path.as_c_str())
+}
+
+/// Allocation-free variant of `read_dir_entries` for hot loops that already
+/// have a `&CStr`. See `file_exists_cstr` for rationale.
+pub(crate) fn read_dir_entries_cstr(cstr: &CStr) -> SysResult<Vec<Vec<u8>>> {
+    let dirp = (sys_interface().opendir)(cstr.as_ptr());
     if dirp.is_null() {
         return Err(last_error());
     }

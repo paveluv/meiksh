@@ -4,6 +4,20 @@
 
 set -e
 
+# Run the benchmark in C.UTF-8 so numbers are comparable across hosts
+# and reflect the locale meiksh is optimized for. Fall back to C if
+# the platform has no C.UTF-8 (older glibc, stripped containers).
+for __bench_loc in C.UTF-8 C.utf8 POSIX C; do
+    if ( LC_ALL=$__bench_loc /bin/sh -c ':' ) 2>/dev/null; then
+        LC_ALL=$__bench_loc
+        export LC_ALL
+        break
+    fi
+done
+unset __bench_loc
+LANG=$LC_ALL
+export LANG
+
 BENCH_DIR=$(mktemp -d)
 trap 'rm -rf "$BENCH_DIR"' EXIT
 
@@ -15,7 +29,7 @@ section_time() {
     printf "  %-40s %ss\n" "$_label" "$(( _end - _start ))"
 }
 
-printf "=== meiksh benchmark ===\n"
+printf "=== meiksh benchmark (LC_ALL=%s) ===\n" "$LC_ALL"
 BENCH_START=$(date +%s)
 
 bench_arithmetic() {
@@ -50,26 +64,42 @@ bench_arithmetic() {
 }
 
 bench_expansion() {
-  base='the-quick-brown-fox-jumps-over-the-lazy-dog/path/to/some/file.tar.gz'
+  ascii='the-quick-brown-fox-jumps-over-the-lazy-dog/path/to/some/file.tar.gz'
+  utf8='café-ünîcôdé-δοκιμή-テスト-тест/chemin/vers/fichier.tar.gz'
   i=0
-  while [ $i -lt 308200 ]; do
-    a=${base:-fallback_value}
-    b=${base%.*}
-    c=${base%%.*}
-    d=${base#*/}
-    e=${base##*/}
-    f=${#base}
-    g=${base%.tar.gz}
-    h=${base##*-}
-    j=${base%/*}
-    k=${base:-""}
-    m=${base#the-}
-    n=${base%%/*}
-    p=${base%%-*}
-    q=${base##*over-}
-    r=${base#*fox}
-    s=${base%dog*}
-    : "$a" "$b" "$c" "$d" "$e" "$f" "$g" "$h" "$j" "$k" "$m" "$n" "$p" "$q" "$r" "$s"
+  while [ $i -lt 154100 ]; do
+    a=${ascii:-fallback_value}
+    b=${ascii%.*}
+    c=${ascii%%.*}
+    d=${ascii#*/}
+    e=${ascii##*/}
+    f=${#ascii}
+    g=${ascii%.tar.gz}
+    h=${ascii##*-}
+    j=${ascii%/*}
+    k=${ascii:-""}
+    m=${ascii#*-}
+    n=${ascii%%/*}
+    p=${ascii%%-*}
+    r=${ascii#*-}
+    s=${ascii%-*}
+    : "$a" "$b" "$c" "$d" "$e" "$f" "$g" "$h" "$j" "$k" "$m" "$n" "$p" "$r" "$s"
+    a=${utf8:-fallback_value}
+    b=${utf8%.*}
+    c=${utf8%%.*}
+    d=${utf8#*/}
+    e=${utf8##*/}
+    f=${#utf8}
+    g=${utf8%.tar.gz}
+    h=${utf8##*-}
+    j=${utf8%/*}
+    k=${utf8:-""}
+    m=${utf8#*-}
+    n=${utf8%%/*}
+    p=${utf8%%-*}
+    r=${utf8#*-}
+    s=${utf8%-*}
+    : "$a" "$b" "$c" "$d" "$e" "$f" "$g" "$h" "$j" "$k" "$m" "$n" "$p" "$r" "$s"
     i=$(( i + 1 ))
   done
 }

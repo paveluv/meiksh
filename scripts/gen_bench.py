@@ -42,6 +42,20 @@ def emit_header():
 
         set -e
 
+        # Run the benchmark in C.UTF-8 so numbers are comparable across hosts
+        # and reflect the locale meiksh is optimized for. Fall back to C if
+        # the platform has no C.UTF-8 (older glibc, stripped containers).
+        for __bench_loc in C.UTF-8 C.utf8 POSIX C; do
+            if ( LC_ALL=$__bench_loc /bin/sh -c ':' ) 2>/dev/null; then
+                LC_ALL=$__bench_loc
+                export LC_ALL
+                break
+            fi
+        done
+        unset __bench_loc
+        LANG=$LC_ALL
+        export LANG
+
         BENCH_DIR=$(mktemp -d)
         trap 'rm -rf "$BENCH_DIR"' EXIT
 
@@ -53,7 +67,7 @@ def emit_header():
             printf "  %-40s %ss\\n" "$_label" "$(( _end - _start ))"
         }
 
-        printf "=== meiksh benchmark ===\\n"
+        printf "=== meiksh benchmark (LC_ALL=%s) ===\\n" "$LC_ALL"
         BENCH_START=$(date +%s)
     """)
 
@@ -99,31 +113,45 @@ def emit_arithmetic():
 
 
 def emit_expansion():
+    # Two gauntlets run back-to-back: one over an ASCII string, one over a
+    # UTF-8 multibyte string. The multibyte string mixes 2- and 3-byte UTF-8
+    # sequences with ASCII separators so pattern-removal, ${#var}, and
+    # prefix/suffix strips exercise the full character-boundary logic in
+    # C.UTF-8.  Iteration count is halved because each pass does the work
+    # of the original single gauntlet.
+    iters = EXPAND_ITERS // 2
     lines = [
         f"bench_expansion() {{",
-        f"  base='the-quick-brown-fox-jumps-over-the-lazy-dog/path/to/some/file.tar.gz'",
+        f"  ascii='the-quick-brown-fox-jumps-over-the-lazy-dog/path/to/some/file.tar.gz'",
+        # café-ünîcôdé-δοκιμή-テスト-тест/chemin/vers/fichier.tar.gz
+        # Mix of Latin-1 (2-byte), Greek (2-byte), CJK (3-byte), Cyrillic
+        # (2-byte), all separated by ASCII '-' and '/' so the same pattern
+        # operators remain meaningful.
+        f"  utf8='café-ünîcôdé-δοκιμή-テスト-тест/chemin/vers/fichier.tar.gz'",
         f"  i=0",
-        f"  while [ $i -lt {EXPAND_ITERS} ]; do",
+        f"  while [ $i -lt {iters} ]; do",
     ]
-    # Parameter expansion gauntlet
+    # Parameter expansion gauntlet, applied to both strings in order.
+    for var in ("ascii", "utf8"):
+        lines += [
+            '    a=${' + var + ':-fallback_value}',
+            '    b=${' + var + '%.*}',
+            '    c=${' + var + '%%.*}',
+            '    d=${' + var + '#*/}',
+            '    e=${' + var + '##*/}',
+            '    f=${#' + var + '}',
+            '    g=${' + var + '%.tar.gz}',
+            '    h=${' + var + '##*-}',
+            '    j=${' + var + '%/*}',
+            '    k=${' + var + ':-""}',
+            '    m=${' + var + '#*-}',
+            '    n=${' + var + '%%/*}',
+            '    p=${' + var + '%%-*}',
+            '    r=${' + var + '#*-}',
+            '    s=${' + var + '%-*}',
+            '    : "$a" "$b" "$c" "$d" "$e" "$f" "$g" "$h" "$j" "$k" "$m" "$n" "$p" "$r" "$s"',
+        ]
     lines += [
-        '    a=${base:-fallback_value}',
-        '    b=${base%.*}',
-        '    c=${base%%.*}',
-        '    d=${base#*/}',
-        '    e=${base##*/}',
-        '    f=${#base}',
-        '    g=${base%.tar.gz}',
-        '    h=${base##*-}',
-        '    j=${base%/*}',
-        '    k=${base:-""}',
-        '    m=${base#the-}',
-        '    n=${base%%/*}',
-        '    p=${base%%-*}',
-        '    q=${base##*over-}',
-        '    r=${base#*fox}',
-        '    s=${base%dog*}',
-        '    : "$a" "$b" "$c" "$d" "$e" "$f" "$g" "$h" "$j" "$k" "$m" "$n" "$p" "$q" "$r" "$s"',
         "    i=$(( i + 1 ))",
         "  done",
         "}",

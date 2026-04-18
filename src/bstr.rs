@@ -65,6 +65,36 @@ pub(crate) fn to_cstring(bytes: &[u8]) -> Result<std::ffi::CString, std::ffi::Nu
     std::ffi::CString::new(bytes.to_vec())
 }
 
+/// Allocation-reusing variant of `to_cstring`.
+///
+/// Overwrites the contents of `buf` with `bytes` plus a trailing NUL and
+/// returns a `&CStr` borrowing into `buf`. Intended for hot paths (e.g.
+/// the pathname-expansion walker) that would otherwise allocate a fresh
+/// `CString` per candidate. The caller keeps a single scratch `Vec<u8>`
+/// alive across the loop; on each iteration this function reuses that
+/// allocation, growing only when the new string is longer than previous
+/// contents.
+///
+/// Returns `Err(NulError)` if `bytes` contains an interior NUL, matching
+/// the semantics of `to_cstring`. In that (cold) case we do allocate to
+/// materialise the `NulError`; the happy path is allocation-free.
+pub(crate) fn write_cstring_into<'a>(
+    bytes: &[u8],
+    buf: &'a mut Vec<u8>,
+) -> Result<&'a std::ffi::CStr, std::ffi::NulError> {
+    if !bytes.contains(&0) {
+        buf.clear();
+        buf.reserve(bytes.len() + 1);
+        buf.extend_from_slice(bytes);
+        buf.push(0);
+        // SAFETY: `bytes` has no interior NUL (checked above) and we just
+        // appended a single trailing NUL, so `buf` is a well-formed
+        // NUL-terminated C string.
+        return Ok(unsafe { std::ffi::CStr::from_bytes_with_nul_unchecked(buf) });
+    }
+    Err(std::ffi::CString::new(bytes.to_vec()).unwrap_err())
+}
+
 /// Convert raw bytes from the OS (CStr, readdir d_name, getcwd result, etc.)
 /// into our internal `Vec<u8>` representation. Identity on Unix.
 #[inline]
