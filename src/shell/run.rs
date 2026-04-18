@@ -4,6 +4,7 @@ use std::rc::Rc;
 use crate::bstr::{self, ByteWriter};
 use crate::builtin::{self, BuiltinOutcome};
 use crate::exec::program;
+use crate::hash::ShellMap;
 use crate::interactive;
 use crate::syntax;
 use crate::syntax::ast::Program;
@@ -84,7 +85,7 @@ impl Shell {
             .take()
             .unwrap_or_else(|| shell_name_from_args(&args).into());
         let raw_env = sys::env::env_vars();
-        let mut env = HashMap::new();
+        let mut env: ShellMap<Vec<u8>, Vec<u8>> = ShellMap::default();
         let mut exported = BTreeSet::new();
         for (key, value) in raw_env {
             if crate::syntax::is_name(&key) {
@@ -120,11 +121,11 @@ impl Shell {
                 env,
                 exported,
                 readonly: BTreeSet::new(),
-                aliases: HashMap::new(),
-                functions: HashMap::new(),
-                path_cache: HashMap::new(),
+                aliases: ShellMap::default(),
+                functions: ShellMap::default(),
+                path_cache: ShellMap::default(),
                 history: Vec::new(),
-                mail_sizes: HashMap::new(),
+                mail_sizes: ShellMap::default(),
             }),
             last_status: 0,
             last_background: None,
@@ -150,7 +151,7 @@ impl Shell {
         })
     }
 
-    fn init_pwd(env: &mut HashMap<Vec<u8>, Vec<u8>>) {
+    fn init_pwd(env: &mut ShellMap<Vec<u8>, Vec<u8>>) {
         let Ok(cwd) = sys::fs::get_cwd() else { return };
         let valid = env.get(b"PWD".as_slice()).is_some_and(|p| {
             p.starts_with(b"/")
@@ -188,14 +189,14 @@ impl Shell {
             options,
             shell_name,
             shared: Rc::new(SharedEnv {
-                env: HashMap::new(),
+                env: ShellMap::default(),
                 exported: BTreeSet::new(),
                 readonly: BTreeSet::new(),
-                aliases: HashMap::new(),
-                functions: HashMap::new(),
-                path_cache: HashMap::new(),
+                aliases: ShellMap::default(),
+                functions: ShellMap::default(),
+                path_cache: ShellMap::default(),
                 history: Vec::new(),
-                mail_sizes: HashMap::new(),
+                mail_sizes: ShellMap::default(),
             }),
             last_status: 0,
             last_background: None,

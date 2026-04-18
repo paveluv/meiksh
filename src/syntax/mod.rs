@@ -3,10 +3,10 @@ pub(crate) mod byte_class;
 mod token;
 pub(crate) mod word_parts;
 
-use std::collections::HashMap;
-
 use ast::Program;
 use token::{Parser, SavedAliasState};
+
+use crate::hash::ShellMap;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ParseError {
@@ -15,12 +15,12 @@ pub(crate) struct ParseError {
 }
 
 pub(crate) fn parse(source: &[u8]) -> Result<Program, ParseError> {
-    parse_with_aliases(source, &HashMap::new())
+    parse_with_aliases(source, &ShellMap::default())
 }
 
 pub(crate) fn parse_with_aliases(
     source: &[u8],
-    aliases: &HashMap<Box<[u8]>, Box<[u8]>>,
+    aliases: &ShellMap<Box<[u8]>, Box<[u8]>>,
 ) -> Result<Program, ParseError> {
     let mut parser = Parser::new(source, aliases);
     parser.parse_program_until(|_| false, false, false)
@@ -45,7 +45,7 @@ impl<'src> ParseSession<'src> {
 
     pub(crate) fn next_command(
         &mut self,
-        aliases: &HashMap<Box<[u8]>, Box<[u8]>>,
+        aliases: &ShellMap<Box<[u8]>, Box<[u8]>>,
     ) -> Result<Option<Program>, ParseError> {
         let mut parser = Parser::new_at(self.source, self.pos, self.line, aliases);
 
@@ -88,7 +88,7 @@ mod tests {
         s.to_vec().into_boxed_slice()
     }
 
-    fn alias_map(pairs: &[(&[u8], &[u8])]) -> HashMap<Box<[u8]>, Box<[u8]>> {
+    fn alias_map(pairs: &[(&[u8], &[u8])]) -> ShellMap<Box<[u8]>, Box<[u8]>> {
         pairs.iter().map(|(k, v)| (bx(k), bx(v))).collect()
     }
 
@@ -103,7 +103,7 @@ mod tests {
 
     #[test]
     fn aliases_basic() {
-        let mut aliases: HashMap<Box<[u8]>, Box<[u8]>> = HashMap::new();
+        let mut aliases: ShellMap<Box<[u8]>, Box<[u8]>> = ShellMap::default();
         aliases.insert(bx(b"ls"), bx(b"ls --color"));
         aliases.insert(bx(b"ll"), bx(b"ls -la"));
 
@@ -119,7 +119,7 @@ mod tests {
     fn parse_session_uses_updated_aliases_between_commands() {
         let mut session = ParseSession::new(b"alias setok='printf ok'\nsetok\n").expect("session");
         let first = session
-            .next_command(&HashMap::new())
+            .next_command(&ShellMap::default())
             .expect("first cmd")
             .expect("some cmd");
         assert_eq!(first.items.len(), 1);
@@ -129,7 +129,7 @@ mod tests {
         ));
 
         let second = session
-            .next_command(&HashMap::from([(bx(b"setok"), bx(b"printf ok"))]))
+            .next_command(&ShellMap::from_iter([(bx(b"setok"), bx(b"printf ok"))]))
             .expect("second cmd")
             .expect("some cmd");
         assert_eq!(second.items.len(), 1);
@@ -141,7 +141,7 @@ mod tests {
 
         assert!(
             session
-                .next_command(&HashMap::new())
+                .next_command(&ShellMap::default())
                 .expect("eof")
                 .is_none()
         );
@@ -149,7 +149,7 @@ mod tests {
 
     #[test]
     fn multi_line_alias_produces_separate_commands() {
-        let aliases: HashMap<Box<[u8]>, Box<[u8]>> = alias_map(&[(b"both", b"echo a\necho b")]);
+        let aliases: ShellMap<Box<[u8]>, Box<[u8]>> = alias_map(&[(b"both", b"echo a\necho b")]);
         let mut session = ParseSession::new(b"both\necho c").unwrap();
 
         let first = session
@@ -203,7 +203,7 @@ mod tests {
 
     #[test]
     fn next_complete_command_eof() {
-        let aliases = HashMap::new();
+        let aliases = ShellMap::default();
         let mut session = ParseSession::new(b"echo hi").expect("session");
         let cmd = session.next_command(&aliases).expect("first cmd");
         assert!(cmd.is_some());
@@ -213,7 +213,7 @@ mod tests {
 
     #[test]
     fn next_complete_command_empty_line_returns_none() {
-        let aliases = HashMap::new();
+        let aliases = ShellMap::default();
         let mut session = ParseSession::new(b"\n").expect("session");
         let cmd = session.next_command(&aliases).expect("newline only");
         assert!(cmd.is_none());
@@ -222,7 +222,7 @@ mod tests {
     #[test]
     fn trailing_semicolon_is_valid() {
         let mut session = ParseSession::new(b"true;\n").unwrap();
-        let aliases = HashMap::new();
+        let aliases = ShellMap::default();
         let p = session.next_command(&aliases).unwrap().expect("first cmd");
         assert_eq!(p.items.len(), 1);
         assert!(session.next_command(&aliases).unwrap().is_none());
@@ -231,7 +231,7 @@ mod tests {
     #[test]
     fn semicolon_then_newline_then_command() {
         let mut session = ParseSession::new(b"echo a;\necho b\n").unwrap();
-        let aliases = HashMap::new();
+        let aliases = ShellMap::default();
         let p1 = session.next_command(&aliases).unwrap().expect("first cmd");
         assert_eq!(p1.items.len(), 1);
         let p2 = session.next_command(&aliases).unwrap().expect("second cmd");
@@ -241,7 +241,7 @@ mod tests {
     #[test]
     fn comment_after_semicolon_is_ignored() {
         let mut session = ParseSession::new(b"echo a;#comment\necho b\n").unwrap();
-        let aliases = HashMap::new();
+        let aliases = ShellMap::default();
         let p1 = session.next_command(&aliases).unwrap().expect("first cmd");
         assert_eq!(p1.items.len(), 1);
         let p2 = session.next_command(&aliases).unwrap().expect("second cmd");

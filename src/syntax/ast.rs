@@ -992,9 +992,9 @@ impl<'a> Parser<'a> {
 mod tests {
     use super::*;
 
-    use std::collections::HashMap;
     use std::rc::Rc;
 
+    use crate::hash::ShellMap;
     use crate::syntax::byte_class::alias_has_trailing_blank;
     use crate::syntax::{parse, parse_with_aliases};
 
@@ -1002,7 +1002,7 @@ mod tests {
         s.to_vec().into_boxed_slice()
     }
 
-    fn alias_map(pairs: &[(&[u8], &[u8])]) -> HashMap<Box<[u8]>, Box<[u8]>> {
+    fn alias_map(pairs: &[(&[u8], &[u8])]) -> ShellMap<Box<[u8]>, Box<[u8]>> {
         pairs.iter().map(|(k, v)| (bx(k), bx(v))).collect()
     }
 
@@ -1012,7 +1012,7 @@ mod tests {
 
     fn parse_with_aliases_test(
         source: &str,
-        aliases: &HashMap<Box<[u8]>, Box<[u8]>>,
+        aliases: &ShellMap<Box<[u8]>, Box<[u8]>>,
     ) -> Result<Program, super::super::ParseError> {
         parse_with_aliases(source.as_bytes(), aliases)
     }
@@ -1997,7 +1997,7 @@ mod tests {
 
     #[test]
     fn io_number_recognised_inside_alias() {
-        let aliases: HashMap<Box<[u8]>, Box<[u8]>> =
+        let aliases: ShellMap<Box<[u8]>, Box<[u8]>> =
             alias_map(&[(b"redir", b"echo hello 2>/dev/null")]);
         let program = parse_with_aliases_test("redir", &aliases).expect("alias with IO number");
         assert!(matches!(
@@ -2027,7 +2027,7 @@ mod tests {
 
     #[test]
     fn backslash_newline_continuation_in_alias() {
-        let aliases: HashMap<Box<[u8]>, Box<[u8]>> = alias_map(&[(b"foo", b"echo hell\\\no")]);
+        let aliases: ShellMap<Box<[u8]>, Box<[u8]>> = alias_map(&[(b"foo", b"echo hell\\\no")]);
         let program = parse_with_aliases_test("foo", &aliases).expect("alias with continuation");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
@@ -2060,7 +2060,8 @@ mod tests {
 
     #[test]
     fn heredoc_body_inside_alias_expansion() {
-        let aliases: HashMap<Box<[u8]>, Box<[u8]>> = alias_map(&[(b"x", b"cat <<EOF\nhello\nEOF")]);
+        let aliases: ShellMap<Box<[u8]>, Box<[u8]>> =
+            alias_map(&[(b"x", b"cat <<EOF\nhello\nEOF")]);
         let program = parse_with_aliases_test("x\n", &aliases).expect("heredoc inside alias");
         let cmd = match &program.items[0].and_or.first.commands[0] {
             Command::Simple(cmd) => cmd,
@@ -2152,7 +2153,7 @@ mod tests {
 
     #[test]
     fn continuation_splits_alias_name() {
-        let aliases: HashMap<Box<[u8]>, Box<[u8]>> = alias_map(&[(b"foo", b"echo aliased")]);
+        let aliases: ShellMap<Box<[u8]>, Box<[u8]>> = alias_map(&[(b"foo", b"echo aliased")]);
         let program =
             parse_with_aliases_test("fo\\\no\n", &aliases).expect("alias split by continuation");
         let cmd = match &program.items[0].and_or.first.commands[0] {

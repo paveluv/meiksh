@@ -1,6 +1,5 @@
 use libc::{c_char, c_int, c_long, mode_t};
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::sync::Mutex;
 
@@ -169,7 +168,7 @@ pub(crate) enum TraceResult {
     DirEntryBytes(Vec<u8>),
     StrVal(Vec<u8>),
     NullStr,
-    EnvMap(HashMap<Vec<u8>, Vec<u8>>),
+    EnvMap(crate::hash::ShellMap<Vec<u8>, Vec<u8>>),
 }
 
 #[derive(Clone, Debug)]
@@ -995,7 +994,7 @@ fn trace_getenv(key: &[u8]) -> Option<Vec<u8>> {
     }
 }
 
-fn trace_get_environ() -> HashMap<Vec<u8>, Vec<u8>> {
+fn trace_get_environ() -> crate::hash::ShellMap<Vec<u8>, Vec<u8>> {
     let entry = trace_dispatch("get_environ", &[]);
     match entry.result {
         TraceResult::EnvMap(map) => map,
@@ -1206,7 +1205,7 @@ pub(super) fn no_interface_table() -> SystemInterface {
     fn panic_getenv(_: &[u8]) -> Option<Vec<u8>> {
         panic!("unexpected call 'getenv' in pure-logic test")
     }
-    fn panic_get_environ() -> HashMap<Vec<u8>, Vec<u8>> {
+    fn panic_get_environ() -> crate::hash::ShellMap<Vec<u8>, Vec<u8>> {
         panic!("unexpected call 'get_environ' in pure-logic test")
     }
     fn panic_tcgetattr(_: c_int, _: *mut libc::termios) -> c_int {

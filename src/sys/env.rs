@@ -1,7 +1,6 @@
-use std::collections::HashMap;
-
 use super::error::SysResult;
 use super::interface::sys_interface;
+use crate::hash::ShellMap;
 
 pub(crate) fn env_set_var(key: &[u8], value: &[u8]) -> SysResult<()> {
     (sys_interface().setenv)(key, value)
@@ -15,7 +14,7 @@ pub(crate) fn env_var(key: &[u8]) -> Option<Vec<u8>> {
     (sys_interface().getenv)(key)
 }
 
-pub(crate) fn env_vars() -> HashMap<Vec<u8>, Vec<u8>> {
+pub(crate) fn env_vars() -> ShellMap<Vec<u8>, Vec<u8>> {
     (sys_interface().get_environ)()
 }
 
@@ -32,7 +31,6 @@ pub(crate) fn env_args_os() -> Vec<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
 
     use super::super::interface::sys_interface;
     use crate::sys::test_support::{ArgMatcher, TraceResult, run_trace, t};
@@ -76,7 +74,7 @@ mod tests {
 
     #[test]
     fn get_environ_returns_map() {
-        let mut expected = HashMap::new();
+        let mut expected = ShellMap::default();
         expected.insert(b"HOME".to_vec(), b"/home/user".to_vec());
         expected.insert(b"PATH".to_vec(), b"/usr/bin".to_vec());
 

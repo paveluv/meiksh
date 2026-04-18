@@ -24,7 +24,7 @@ pub(crate) enum TrapAction {
 #[cfg(test)]
 impl TrapAction {
     pub(crate) fn command(text: &[u8]) -> Self {
-        let program = crate::syntax::parse_with_aliases(text, &std::collections::HashMap::new())
+        let program = crate::syntax::parse_with_aliases(text, &crate::hash::ShellMap::default())
             .unwrap_or_else(|_| Program {
                 items: Box::new([]),
             });
@@ -260,7 +260,7 @@ mod tests {
             || {
                 let mut shell = test_shell();
                 let exit9 =
-                    crate::syntax::parse_with_aliases(b"exit 9", &std::collections::HashMap::new())
+                    crate::syntax::parse_with_aliases(b"exit 9", &crate::hash::ShellMap::default())
                         .unwrap();
                 assert_eq!(
                     shell

@@ -30,6 +30,12 @@ The following `std` types, macros, and methods are banned from production code (
 - **Methods**: `std::env::{var, vars, set_var, remove_var, args_os, args, set_current_dir, current_dir, current_exe}`, `std::fs::{read_to_string, write, metadata, read_dir, create_dir, remove_file}`, `std::path::Path::{exists, is_file, is_dir, metadata, canonicalize}`, `std::io::{Error::last_os_error, stdin, stdout, stderr}`, `std::process::exit`
 - **Errno constants**: production code must use `crate::sys::constants::ENOENT`, `crate::sys::constants::ENOEXEC`, etc. instead of `libc::ENOENT`, `libc::ENOEXEC`, etc.
 
+### Hash tables for byte-string keys
+
+- `HashMap<Vec<u8>, _>`, `HashMap<Box<[u8]>, _>`, and `HashSet<Vec<u8>>` etc. must use `crate::hash::{ShellMap, ShellSet}`, which are `HashMap` / `HashSet` aliases backed by `ShellHasher` (a fast, fixed-seed non-cryptographic hasher tuned for short byte keys). The default `std::collections::HashMap` uses `SipHash-1-3`, which is DoS-resistant but ~4x slower on our workloads and unnecessary for shell-internal state.
+- Integer-keyed maps (`HashMap<Pid, _>`, `HashMap<usize, _>`, etc.) and other non-byte keys keep the `std` default hasher; `ShellHasher` is specifically optimized for byte slices and provides no benefit for primitive keys.
+- `ShellHasher` is not adversary-safe; do not use it for keys derived from untrusted network input. The shell does not currently hash such input, so this is theoretical.
+
 ### Custom error types
 
 - `sys::error::SysError` replaces `std::io::Error` everywhere. Variants: `SysError::Errno(c_int)` for raw errno values, `SysError::NulInPath` for paths containing NUL bytes.

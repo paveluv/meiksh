@@ -5,7 +5,7 @@ use crate::syntax::word_parts::{BracedName, BracedOp, ExpansionKind, WordPart};
 
 use super::arithmetic::eval_arithmetic;
 use super::core::{Context, ExpandError};
-use super::glob::pattern_matches;
+use super::glob::pattern_matches_with_offsets;
 use super::model::{QuoteState, Segment, render_pattern_from_segments};
 use super::parameter::{lookup_param, require_set_parameter};
 use super::word::trim_trailing_newlines;
@@ -672,15 +672,17 @@ pub(super) fn char_boundary_offsets(value: &[u8]) -> Vec<usize> {
 
 fn trim_suffix<'a>(value: &'a [u8], pattern: &[u8], longest: bool) -> &'a [u8] {
     let offsets = char_boundary_offsets(value);
+    let try_match =
+        |k: usize, i: usize| pattern_matches_with_offsets(&value[i..], &offsets[k..], i, pattern);
     if longest {
-        for &i in offsets.iter() {
-            if pattern_matches(&value[i..], pattern) {
+        for (k, &i) in offsets.iter().enumerate() {
+            if try_match(k, i) {
                 return &value[..i];
             }
         }
     } else {
-        for &i in offsets.iter().rev() {
-            if pattern_matches(&value[i..], pattern) {
+        for (k, &i) in offsets.iter().enumerate().rev() {
+            if try_match(k, i) {
                 return &value[..i];
             }
         }
@@ -690,16 +692,20 @@ fn trim_suffix<'a>(value: &'a [u8], pattern: &[u8], longest: bool) -> &'a [u8] {
 
 fn trim_prefix<'a>(value: &'a [u8], pattern: &[u8], longest: bool) -> &'a [u8] {
     let offsets = char_boundary_offsets(value);
+    let try_match = |k: usize| {
+        let end = offsets[k];
+        pattern_matches_with_offsets(&value[..end], &offsets[..=k], 0, pattern)
+    };
     if longest {
-        for &i in offsets.iter().rev() {
-            if pattern_matches(&value[..i], pattern) {
-                return &value[i..];
+        for k in (0..offsets.len()).rev() {
+            if try_match(k) {
+                return &value[offsets[k]..];
             }
         }
     } else {
-        for &i in offsets.iter() {
-            if pattern_matches(&value[..i], pattern) {
-                return &value[i..];
+        for k in 0..offsets.len() {
+            if try_match(k) {
+                return &value[offsets[k]..];
             }
         }
     }

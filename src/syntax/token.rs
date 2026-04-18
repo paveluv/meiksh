@@ -1,5 +1,5 @@
 use std::borrow::Cow;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashSet, VecDeque};
 use std::rc::Rc;
 
 use super::ParseError;
@@ -8,6 +8,7 @@ use super::byte_class::{
     is_quote, is_special_param, is_tilde_user_break, is_word_break,
 };
 use super::word_parts::{BracedName, BracedOp, ExpansionKind, WordPart};
+use crate::hash::ShellMap;
 
 struct AliasLayer<'a> {
     text: Cow<'a, [u8]>,
@@ -165,7 +166,7 @@ fn word_to_keyword_token(w: &[u8]) -> Option<Token> {
 pub(super) struct Parser<'a> {
     pub(super) line: usize,
     cached_byte: Option<u8>,
-    pub(super) aliases: &'a HashMap<Box<[u8]>, Box<[u8]>>,
+    pub(super) aliases: &'a ShellMap<Box<[u8]>, Box<[u8]>>,
     alias_stack: Vec<AliasLayer<'a>>,
     alias_depth: usize,
     expanding_aliases: HashSet<Cow<'a, [u8]>>,
@@ -181,7 +182,7 @@ pub(super) struct Parser<'a> {
 }
 
 impl<'a> Parser<'a> {
-    pub(super) fn new(source: &'a [u8], aliases: &'a HashMap<Box<[u8]>, Box<[u8]>>) -> Self {
+    pub(super) fn new(source: &'a [u8], aliases: &'a ShellMap<Box<[u8]>, Box<[u8]>>) -> Self {
         Self::new_at(source, 0, 1, aliases)
     }
 
@@ -189,7 +190,7 @@ impl<'a> Parser<'a> {
         source: &'a [u8],
         pos: usize,
         line: usize,
-        aliases: &'a HashMap<Box<[u8]>, Box<[u8]>>,
+        aliases: &'a ShellMap<Box<[u8]>, Box<[u8]>>,
     ) -> Self {
         let cached_byte = source.get(pos).copied();
         Self {

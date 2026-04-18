@@ -1,5 +1,4 @@
 use libc::{self, c_char, c_int, c_long, mode_t};
-use std::collections::HashMap;
 use std::ffi::CStr;
 #[cfg(not(test))]
 use std::sync::OnceLock;
@@ -11,6 +10,7 @@ use super::constants::{
 };
 use super::error::{SysError, SysResult};
 use super::types::{ClockTicks, FileModeMask, Pid};
+use crate::hash::ShellMap;
 
 #[derive(Clone, Copy)]
 pub(super) struct SystemInterface {
@@ -55,7 +55,7 @@ pub(super) struct SystemInterface {
     #[cfg_attr(not(test), allow(dead_code))]
     pub(super) unsetenv: fn(&[u8]) -> SysResult<()>,
     pub(super) getenv: fn(&[u8]) -> Option<Vec<u8>>,
-    pub(super) get_environ: fn() -> HashMap<Vec<u8>, Vec<u8>>,
+    pub(super) get_environ: fn() -> ShellMap<Vec<u8>, Vec<u8>>,
     // Terminal attributes
     pub(super) tcgetattr: fn(c_int, *mut libc::termios) -> c_int,
     pub(super) tcsetattr: fn(c_int, c_int, *const libc::termios) -> c_int,
@@ -240,7 +240,7 @@ pub(super) fn default_interface() -> SystemInterface {
             unsafe extern "C" {
                 static environ: *const *const c_char;
             }
-            let mut map = HashMap::new();
+            let mut map = ShellMap::default();
             unsafe {
                 let mut ptr = environ;
                 while !(*ptr).is_null() {

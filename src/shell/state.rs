@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::rc::Rc;
 
+use crate::hash::ShellMap;
 use crate::sys;
 
 use super::jobs::Job;
@@ -22,14 +23,14 @@ pub(crate) enum PendingControl {
 
 #[derive(Clone)]
 pub(crate) struct SharedEnv {
-    pub(crate) env: HashMap<Vec<u8>, Vec<u8>>,
+    pub(crate) env: ShellMap<Vec<u8>, Vec<u8>>,
     pub(crate) exported: BTreeSet<Vec<u8>>,
     pub(crate) readonly: BTreeSet<Vec<u8>>,
-    pub(crate) aliases: HashMap<Box<[u8]>, Box<[u8]>>,
-    pub(crate) functions: HashMap<Vec<u8>, Rc<crate::syntax::ast::Command>>,
-    pub(crate) path_cache: HashMap<Box<[u8]>, Vec<u8>>,
+    pub(crate) aliases: ShellMap<Box<[u8]>, Box<[u8]>>,
+    pub(crate) functions: ShellMap<Vec<u8>, Rc<crate::syntax::ast::Command>>,
+    pub(crate) path_cache: ShellMap<Box<[u8]>, Vec<u8>>,
     pub(crate) history: Vec<Box<[u8]>>,
-    pub(crate) mail_sizes: HashMap<Box<[u8]>, u64>,
+    pub(crate) mail_sizes: ShellMap<Box<[u8]>, u64>,
 }
 
 #[derive(Clone)]
@@ -63,10 +64,10 @@ pub(crate) struct Shell {
 }
 
 impl Shell {
-    pub(crate) fn env(&self) -> &HashMap<Vec<u8>, Vec<u8>> {
+    pub(crate) fn env(&self) -> &ShellMap<Vec<u8>, Vec<u8>> {
         &self.shared.env
     }
-    pub(crate) fn env_mut(&mut self) -> &mut HashMap<Vec<u8>, Vec<u8>> {
+    pub(crate) fn env_mut(&mut self) -> &mut ShellMap<Vec<u8>, Vec<u8>> {
         &mut Rc::make_mut(&mut self.shared).env
     }
     pub(crate) fn exported(&self) -> &BTreeSet<Vec<u8>> {
@@ -81,24 +82,24 @@ impl Shell {
     pub(crate) fn readonly_mut(&mut self) -> &mut BTreeSet<Vec<u8>> {
         &mut Rc::make_mut(&mut self.shared).readonly
     }
-    pub(crate) fn aliases(&self) -> &HashMap<Box<[u8]>, Box<[u8]>> {
+    pub(crate) fn aliases(&self) -> &ShellMap<Box<[u8]>, Box<[u8]>> {
         &self.shared.aliases
     }
-    pub(crate) fn aliases_mut(&mut self) -> &mut HashMap<Box<[u8]>, Box<[u8]>> {
+    pub(crate) fn aliases_mut(&mut self) -> &mut ShellMap<Box<[u8]>, Box<[u8]>> {
         &mut Rc::make_mut(&mut self.shared).aliases
     }
-    pub(crate) fn functions(&self) -> &HashMap<Vec<u8>, Rc<crate::syntax::ast::Command>> {
+    pub(crate) fn functions(&self) -> &ShellMap<Vec<u8>, Rc<crate::syntax::ast::Command>> {
         &self.shared.functions
     }
     pub(crate) fn functions_mut(
         &mut self,
-    ) -> &mut HashMap<Vec<u8>, Rc<crate::syntax::ast::Command>> {
+    ) -> &mut ShellMap<Vec<u8>, Rc<crate::syntax::ast::Command>> {
         &mut Rc::make_mut(&mut self.shared).functions
     }
-    pub(crate) fn path_cache(&self) -> &HashMap<Box<[u8]>, Vec<u8>> {
+    pub(crate) fn path_cache(&self) -> &ShellMap<Box<[u8]>, Vec<u8>> {
         &self.shared.path_cache
     }
-    pub(crate) fn path_cache_mut(&mut self) -> &mut HashMap<Box<[u8]>, Vec<u8>> {
+    pub(crate) fn path_cache_mut(&mut self) -> &mut ShellMap<Box<[u8]>, Vec<u8>> {
         &mut Rc::make_mut(&mut self.shared).path_cache
     }
     pub(crate) fn history(&self) -> &Vec<Box<[u8]>> {
@@ -107,10 +108,10 @@ impl Shell {
     pub(crate) fn history_mut(&mut self) -> &mut Vec<Box<[u8]>> {
         &mut Rc::make_mut(&mut self.shared).history
     }
-    pub(crate) fn mail_sizes(&self) -> &HashMap<Box<[u8]>, u64> {
+    pub(crate) fn mail_sizes(&self) -> &ShellMap<Box<[u8]>, u64> {
         &self.shared.mail_sizes
     }
-    pub(crate) fn mail_sizes_mut(&mut self) -> &mut HashMap<Box<[u8]>, u64> {
+    pub(crate) fn mail_sizes_mut(&mut self) -> &mut ShellMap<Box<[u8]>, u64> {
         &mut Rc::make_mut(&mut self.shared).mail_sizes
     }
 }
