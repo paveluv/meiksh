@@ -14,7 +14,7 @@ pub(crate) fn reinit_locale() {
     (sys_interface().reinit_locale)()
 }
 
-#[allow(dead_code)]
+#[cfg(test)]
 pub(crate) fn classify_byte(class: &[u8], byte: u8) -> bool {
     (sys_interface().classify_byte)(class, byte)
 }
