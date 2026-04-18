@@ -87,7 +87,10 @@ fn times_builtin_exercises_times_and_sysconf() {
         .expect("run");
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("m"), "times output should contain minutes: {stdout}");
+    assert!(
+        stdout.contains("m"),
+        "times output should contain minutes: {stdout}"
+    );
 }
 
 #[test]
@@ -114,10 +117,7 @@ fn mb_cur_max_allows_multibyte_in_utf8() {
 #[test]
 fn signal_trap_and_pending_bits() {
     let out = Command::new(meiksh())
-        .args([
-            "-c",
-            "trap 'echo caught' USR1; kill -USR1 $$; wait",
-        ])
+        .args(["-c", "trap 'echo caught' USR1; kill -USR1 $$; wait"])
         .output()
         .expect("run");
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "caught");
