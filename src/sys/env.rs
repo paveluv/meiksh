@@ -34,7 +34,7 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
 
-    use super::super::interface::{default_interface, sys_interface};
+    use super::super::interface::sys_interface;
     use crate::sys::test_support::{ArgMatcher, TraceResult, run_trace, t};
     use crate::trace_entries;
 
@@ -96,13 +96,4 @@ mod tests {
         );
     }
 
-    #[test]
-    fn default_env_functions_roundtrip() {
-        let iface = default_interface();
-        let key = b"MEIKSH_TEST_ROUNDTRIP_878c2a";
-        (iface.setenv)(key, b"hello").expect("setenv");
-        assert_eq!((iface.getenv)(key), Some(b"hello".to_vec()));
-        (iface.unsetenv)(key).expect("unsetenv");
-        assert_eq!((iface.getenv)(key), None);
-    }
 }

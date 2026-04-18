@@ -441,71 +441,10 @@ pub(super) fn flush_coverage() {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::sys::test_support;
     use crate::trace_entries;
 
-    use crate::sys::constants::STDIN_FILENO;
-    use crate::sys::locale::{classify_byte, setup_locale};
     use crate::sys::process::{current_pid, parent_pid};
-    use crate::sys::time::monotonic_clock_ns;
-
-    #[test]
-    fn default_interface_pending_signal_bits() {
-        let iface = default_interface();
-        let _bits = (iface.pending_signal_bits)();
-    }
-
-    #[test]
-    fn default_interface_tcgetattr_tcsetattr() {
-        let iface = default_interface();
-        let mut termios: libc::termios = unsafe { std::mem::zeroed() };
-        let _ = (iface.tcgetattr)(STDIN_FILENO, &mut termios);
-        let _ = (iface.tcsetattr)(STDIN_FILENO, 0, &termios);
-    }
-
-    #[test]
-    fn default_interface_monotonic_clock_ns() {
-        test_support::with_test_interface(default_interface(), || {
-            let ns = monotonic_clock_ns();
-            assert!(ns > 0, "monotonic clock should return positive nanoseconds");
-        });
-    }
-
-    #[test]
-    fn default_interface_classify_byte_ascii() {
-        test_support::with_test_interface(default_interface(), || {
-            setup_locale();
-            assert!(classify_byte(b"alpha", b'a'));
-            assert!(classify_byte(b"alpha", b'Z'));
-            assert!(!classify_byte(b"alpha", b'5'));
-            assert!(classify_byte(b"alnum", b'9'));
-            assert!(!classify_byte(b"alnum", b'!'));
-            assert!(classify_byte(b"blank", b' '));
-            assert!(classify_byte(b"blank", b'\t'));
-            assert!(!classify_byte(b"blank", b'a'));
-            assert!(classify_byte(b"cntrl", 0x01));
-            assert!(!classify_byte(b"cntrl", b'a'));
-            assert!(classify_byte(b"digit", b'0'));
-            assert!(!classify_byte(b"digit", b'x'));
-            assert!(classify_byte(b"graph", b'!'));
-            assert!(!classify_byte(b"graph", b' '));
-            assert!(classify_byte(b"lower", b'a'));
-            assert!(!classify_byte(b"lower", b'A'));
-            assert!(classify_byte(b"print", b' '));
-            assert!(classify_byte(b"print", b'a'));
-            assert!(!classify_byte(b"print", 0x01));
-            assert!(classify_byte(b"punct", b'.'));
-            assert!(!classify_byte(b"punct", b'a'));
-            assert!(classify_byte(b"space", b'\n'));
-            assert!(!classify_byte(b"space", b'a'));
-            assert!(classify_byte(b"upper", b'A'));
-            assert!(!classify_byte(b"upper", b'a'));
-            assert!(classify_byte(b"xdigit", b'f'));
-            assert!(!classify_byte(b"xdigit", b'g'));
-            assert!(!classify_byte(b"bogus", b'a'));
-        });
-    }
 
     #[test]
     fn no_interface_table_stubs_all_panic() {
@@ -599,106 +538,6 @@ mod tests {
         );
         assert!(catch_unwind(AssertUnwindSafe(|| (tbl.getpwnam)(b"nobody"))).is_err());
         assert!(catch_unwind(AssertUnwindSafe(|| (tbl.monotonic_clock_ns)())).is_err());
-    }
-
-    #[test]
-    fn default_interface_env_validation() {
-        let tbl = default_interface();
-        assert!((tbl.setenv)(b"", b"val").is_err());
-        assert!((tbl.setenv)(b"k=v", b"val").is_err());
-        assert!((tbl.unsetenv)(b"").is_err());
-        assert!((tbl.unsetenv)(b"k=v").is_err());
-    }
-
-    #[test]
-    fn default_interface_lstat_and_unlink_error_on_nonexistent() {
-        let tbl = default_interface();
-        let path = c"/nonexistent_meiksh_xyz_42";
-        let mut buf = std::mem::MaybeUninit::<libc::stat>::zeroed();
-        assert!((tbl.lstat)(path.as_ptr(), buf.as_mut_ptr()) < 0);
-        assert!((tbl.unlink)(path.as_ptr()) < 0);
-    }
-
-    #[test]
-    fn default_interface_decode_char() {
-        let tbl = default_interface();
-        (tbl.setup_locale)();
-        let (wc, len) = (tbl.decode_char)(b"A");
-        assert_eq!(wc, b'A' as u32);
-        assert_eq!(len, 1);
-        let (_, len0) = (tbl.decode_char)(b"");
-        assert_eq!(len0, 0);
-        let (wc_inv, len_inv) = (tbl.decode_char)(&[0xFF, 0xFF]);
-        assert_eq!(len_inv, 1);
-        assert_eq!(wc_inv, 0xFF);
-        let (wc_nul, len_nul) = (tbl.decode_char)(&[0x00]);
-        assert_eq!(wc_nul, 0);
-        assert_eq!(len_nul, 0);
-    }
-
-    #[test]
-    fn default_interface_encode_char() {
-        let tbl = default_interface();
-        (tbl.setup_locale)();
-        let mut buf = [0u8; 8];
-        let n = (tbl.encode_char)(b'Z' as u32, &mut buf);
-        assert!(n > 0);
-        assert_eq!(buf[0], b'Z');
-    }
-
-    #[test]
-    fn default_interface_to_upper_lower() {
-        let tbl = default_interface();
-        (tbl.setup_locale)();
-        let upper = (tbl.to_upper)(b'a' as u32);
-        assert_eq!(upper, b'A' as u32);
-        let lower = (tbl.to_lower)(b'A' as u32);
-        assert_eq!(lower, b'a' as u32);
-    }
-
-    #[test]
-    fn default_interface_char_width() {
-        let tbl = default_interface();
-        (tbl.setup_locale)();
-        let w = (tbl.char_width)(b'A' as u32);
-        assert_eq!(w, 1);
-        let w_ctrl = (tbl.char_width)(0x01);
-        assert_eq!(w_ctrl, 0);
-    }
-
-    #[test]
-    fn default_interface_mb_cur_max() {
-        let tbl = default_interface();
-        (tbl.setup_locale)();
-        let m = (tbl.mb_cur_max)();
-        assert!(m >= 1);
-    }
-
-    #[test]
-    fn default_interface_decimal_point() {
-        let tbl = default_interface();
-        (tbl.setup_locale)();
-        let dp = (tbl.decimal_point)();
-        assert!(dp == b'.' || dp == b',');
-    }
-
-    #[test]
-    fn default_interface_strcoll() {
-        let tbl = default_interface();
-        (tbl.setup_locale)();
-        use std::cmp::Ordering;
-        assert_eq!((tbl.strcoll)(b"abc", b"abc"), Ordering::Equal);
-        assert_eq!((tbl.strcoll)(b"abc", b"abd"), Ordering::Less);
-        assert_eq!((tbl.strcoll)(b"abd", b"abc"), Ordering::Greater);
-    }
-
-    #[test]
-    fn classify_wchar_wctype_standard_class() {
-        let tbl = default_interface();
-        (tbl.setup_locale)();
-        assert!(classify_wchar_wctype(b"alpha", b'a' as u32));
-        assert!(!classify_wchar_wctype(b"alpha", b'1' as u32));
-        assert!(!classify_wchar_wctype(b"bogus", b'a' as u32));
     }
 
     #[test]

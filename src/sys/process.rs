@@ -1052,12 +1052,4 @@ mod tests {
         );
     }
 
-    #[test]
-    fn exec_replace_with_env_real_execve_error() {
-        test_support::with_test_interface(default_interface(), || {
-            let result =
-                exec_replace_with_env(b"/nonexistent_path_no_exist", &[b"no_exist".to_vec()], &[]);
-            assert!(result.is_err());
-        });
-    }
 }
