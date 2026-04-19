@@ -57,6 +57,7 @@ pub fn test_shell() -> Shell {
         pid: 0,
         lineno: 0,
         mail_last_check: 0,
+        expand_scratch: crate::expand::scratch::ExpandScratch::new(),
     }
 }
 

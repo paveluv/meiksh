@@ -65,6 +65,16 @@ pub(crate) fn to_cstring(bytes: &[u8]) -> Result<std::ffi::CString, std::ffi::Nu
     std::ffi::CString::new(bytes.to_vec())
 }
 
+/// Consume a caller-owned `Vec<u8>` into a `CString`, avoiding the
+/// `bytes.to_vec()` copy that `to_cstring` performs. The `CString::new`
+/// constructor may still reallocate once to shrink capacity to `len + 1`
+/// and append the trailing NUL, but the full payload copy is gone. Used
+/// from the exec path where the expansion pipeline owns each argv /
+/// environment byte buffer.
+pub(crate) fn vec_to_cstring(bytes: Vec<u8>) -> Result<std::ffi::CString, std::ffi::NulError> {
+    std::ffi::CString::new(bytes)
+}
+
 /// Allocation-reusing variant of `to_cstring`.
 ///
 /// Overwrites the contents of `buf` with `bytes` plus a trailing NUL and

@@ -115,10 +115,25 @@ pub(crate) fn default_signal_action(signal: c_int) -> SysResult<()> {
     }
 }
 
+pub(crate) const SUPPORTED_TRAP_SIGNALS: [c_int; 20] = [
+    SIGHUP, SIGINT, SIGQUIT, SIGILL, SIGABRT, SIGFPE, SIGBUS, SIGUSR1, SIGSEGV, SIGUSR2, SIGPIPE,
+    SIGALRM, SIGTERM, SIGCHLD, SIGCONT, SIGTRAP, SIGTSTP, SIGTTIN, SIGTTOU, SIGSYS,
+];
+
+pub(crate) fn supported_trap_signals() -> &'static [c_int] {
+    &SUPPORTED_TRAP_SIGNALS
+}
+
+pub(crate) fn pending_signal_bits() -> usize {
+    super::interface::pending_signal_bits()
+}
+
 pub(crate) fn has_pending_signal() -> Option<c_int> {
     let bits = super::interface::pending_signal_bits();
-
-    supported_trap_signals().into_iter().find(|signal| {
+    if bits == 0 {
+        return None;
+    }
+    SUPPORTED_TRAP_SIGNALS.iter().copied().find(|signal| {
         signal_mask(*signal)
             .map(|mask| bits & mask != 0)
             .unwrap_or(false)
@@ -126,23 +141,23 @@ pub(crate) fn has_pending_signal() -> Option<c_int> {
 }
 
 pub(crate) fn take_pending_signals() -> Vec<c_int> {
+    // Fast path: no pending signals means no allocation or atomic swap.
+    if super::interface::pending_signal_bits() == 0 {
+        return Vec::new();
+    }
     let bits = super::interface::take_pending_signal_bits();
-
-    supported_trap_signals()
-        .into_iter()
+    if bits == 0 {
+        return Vec::new();
+    }
+    SUPPORTED_TRAP_SIGNALS
+        .iter()
+        .copied()
         .filter(|signal| {
             signal_mask(*signal)
                 .map(|mask| bits & mask != 0)
                 .unwrap_or(false)
         })
         .collect()
-}
-
-pub(crate) fn supported_trap_signals() -> Vec<c_int> {
-    vec![
-        SIGHUP, SIGINT, SIGQUIT, SIGILL, SIGABRT, SIGFPE, SIGBUS, SIGUSR1, SIGSEGV, SIGUSR2,
-        SIGPIPE, SIGALRM, SIGTERM, SIGCHLD, SIGCONT, SIGTRAP, SIGTSTP, SIGTTIN, SIGTTOU, SIGSYS,
-    ]
 }
 
 pub(crate) fn query_signal_disposition(signal: c_int) -> SysResult<bool> {
@@ -241,7 +256,7 @@ pub(crate) fn spawn_child(
             let _ = env_set_var(key, value);
         }
         let argv_owned: Vec<Vec<u8>> = argv.iter().map(|s| s.to_vec()).collect();
-        let _ = exec_replace(program, &argv_owned);
+        let _ = exec_replace(program, argv_owned);
         exit_process(127);
     }
 
@@ -282,11 +297,11 @@ pub(crate) fn setrlimit(resource: i32, soft: u64, hard: u64) -> SysResult<()> {
     }
     Ok(())
 }
-pub(crate) fn exec_replace<S: AsRef<[u8]>>(file: &[u8], argv: &[S]) -> SysResult<()> {
+pub(crate) fn exec_replace(file: &[u8], argv: Vec<Vec<u8>>) -> SysResult<()> {
     let c_file = crate::bstr::to_cstring(file).map_err(|_| SysError::NulInPath)?;
     let mut owned = Vec::with_capacity(argv.len());
     for arg in argv {
-        owned.push(crate::bstr::to_cstring(arg.as_ref()).map_err(|_| SysError::NulInPath)?);
+        owned.push(crate::bstr::vec_to_cstring(arg).map_err(|_| SysError::NulInPath)?);
     }
 
     let mut pointers: Vec<*const c_char> = owned.iter().map(|arg| arg.as_ptr()).collect();
@@ -304,23 +319,23 @@ pub(crate) fn exec_replace<S: AsRef<[u8]>>(file: &[u8], argv: &[S]) -> SysResult
 
 pub(crate) fn exec_replace_with_env(
     file: &[u8],
-    argv: &[Vec<u8>],
-    env: &[(Vec<u8>, Vec<u8>)],
+    argv: Vec<Vec<u8>>,
+    env: Vec<(Vec<u8>, Vec<u8>)>,
 ) -> SysResult<()> {
     let c_file = crate::bstr::to_cstring(file).map_err(|_| SysError::NulInPath)?;
     let mut argv_owned = Vec::with_capacity(argv.len());
     for arg in argv {
-        argv_owned.push(crate::bstr::to_cstring(arg).map_err(|_| SysError::NulInPath)?);
+        argv_owned.push(crate::bstr::vec_to_cstring(arg).map_err(|_| SysError::NulInPath)?);
     }
     let mut argp: Vec<*const c_char> = argv_owned.iter().map(|a| a.as_ptr()).collect();
     argp.push(std::ptr::null());
 
     let mut env_owned = Vec::with_capacity(env.len());
-    for (k, v) in env {
-        let mut pair = k.clone();
-        pair.push(b'=');
-        pair.extend_from_slice(v);
-        env_owned.push(crate::bstr::to_cstring(&pair).map_err(|_| SysError::NulInPath)?);
+    for (mut k, v) in env {
+        k.reserve(v.len() + 1);
+        k.push(b'=');
+        k.extend_from_slice(&v);
+        env_owned.push(crate::bstr::vec_to_cstring(k).map_err(|_| SysError::NulInPath)?);
     }
     let mut envp: Vec<*const c_char> = env_owned.iter().map(|e| e.as_ptr()).collect();
     envp.push(std::ptr::null());
@@ -539,7 +554,9 @@ mod tests {
     #[test]
     fn execvp_failure_returns_minus_one() {
         test_support::run_trace(trace_entries![execvp(_, _) -> err(ENOENT)], || {
-            assert!(exec_replace(b"meiksh-command-that-does-not-exist", &[b"x".to_vec()]).is_err());
+            assert!(
+                exec_replace(b"meiksh-command-that-does-not-exist", vec![b"x".to_vec()]).is_err()
+            );
         });
     }
 
@@ -555,13 +572,13 @@ mod tests {
 
     #[test]
     fn exec_replace_rejects_nul_in_program_and_args() {
-        let err = exec_replace::<Vec<u8>>(b"bad\0program", &[]).unwrap_err();
+        let err = exec_replace(b"bad\0program", vec![]).unwrap_err();
         assert_eq!(err, SysError::NulInPath);
         assert!(err.errno().is_none());
         assert!(!err.is_enoent());
         assert!(err.strerror().windows(4).any(|w| w == b"null"));
 
-        let err = exec_replace(b"ok", &[b"bad\0arg".to_vec()]).unwrap_err();
+        let err = exec_replace(b"ok", vec![b"bad\0arg".to_vec()]).unwrap_err();
         assert_eq!(err, SysError::NulInPath);
     }
 
@@ -644,7 +661,7 @@ mod tests {
     #[test]
     fn success_exec() {
         test_support::run_trace(trace_entries![execvp(_, _) -> 0], || {
-            assert!(exec_replace(b"echo", &[b"hello".to_vec(), b"world".to_vec()]).is_ok());
+            assert!(exec_replace(b"echo", vec![b"hello".to_vec(), b"world".to_vec()]).is_ok());
         });
     }
 
@@ -758,7 +775,7 @@ mod tests {
     #[test]
     fn error_exec() {
         test_support::run_trace(trace_entries![execvp(_, _) -> err(ENOENT)], || {
-            assert!(exec_replace(b"echo", &[b"hi".to_vec()]).is_err());
+            assert!(exec_replace(b"echo", vec![b"hi".to_vec()]).is_err());
         });
     }
 
@@ -999,7 +1016,7 @@ mod tests {
                 execve(_, _) -> err(ENOENT),
             ],
             || {
-                let result = exec_replace_with_env(b"/nonexistent", &[b"test".to_vec()], &[]);
+                let result = exec_replace_with_env(b"/nonexistent", vec![b"test".to_vec()], vec![]);
                 assert!(result.is_err());
             },
         );

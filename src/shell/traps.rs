@@ -125,6 +125,12 @@ impl Shell {
     }
 
     pub(crate) fn run_pending_traps(&mut self) -> Result<(), ShellError> {
+        // Fast path: if no traps are installed and no signals are pending,
+        // avoid the atomic swap, Vec allocation, and BTreeMap lookup that
+        // `take_pending_signals` would otherwise perform on every command.
+        if self.trap_actions.is_empty() && sys::process::pending_signal_bits() == 0 {
+            return Ok(());
+        }
         for signal in sys::process::take_pending_signals() {
             let Some(TrapAction::Command { program, .. }) =
                 self.trap_actions.get(&TrapCondition::Signal(signal))

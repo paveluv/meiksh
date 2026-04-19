@@ -5,6 +5,7 @@ pub(crate) mod glob;
 mod model;
 pub(crate) mod parameter;
 pub(crate) mod pathname;
+pub(crate) mod scratch;
 pub(crate) mod word;
 
 #[cfg(test)]

@@ -90,6 +90,10 @@ impl Context for Shell {
     fn lineno(&self) -> usize {
         self.lineno
     }
+
+    fn expand_scratch_mut(&mut self) -> &mut crate::expand::scratch::ExpandScratch {
+        &mut self.expand_scratch
+    }
 }
 
 #[cfg(test)]

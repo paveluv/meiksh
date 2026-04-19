@@ -46,7 +46,10 @@ static PENDING_SIGNALS: AtomicUsize = AtomicUsize::new(0);
 
 pub(super) extern "C" fn record_signal(sig: c_int) {
     if let Some(mask) = signal_mask(sig) {
-        PENDING_SIGNALS.fetch_or(mask, Ordering::SeqCst);
+        // Relaxed is sufficient: the kernel provides the memory barrier
+        // when delivering a signal, and the shell only observes
+        // `PENDING_SIGNALS` between commands on the same thread.
+        PENDING_SIGNALS.fetch_or(mask, Ordering::Relaxed);
     }
 }
 
@@ -57,7 +60,7 @@ pub(super) extern "C" fn record_signal(sig: c_int) {
 
 #[cfg(not(test))]
 pub(super) fn pending_signal_bits() -> usize {
-    PENDING_SIGNALS.load(Ordering::SeqCst)
+    PENDING_SIGNALS.load(Ordering::Relaxed)
 }
 
 #[cfg(test)]
@@ -67,7 +70,7 @@ pub(super) fn pending_signal_bits() -> usize {
 
 #[cfg(not(test))]
 pub(super) fn take_pending_signal_bits() -> usize {
-    PENDING_SIGNALS.swap(0, Ordering::SeqCst)
+    PENDING_SIGNALS.swap(0, Ordering::Relaxed)
 }
 
 #[cfg(test)]

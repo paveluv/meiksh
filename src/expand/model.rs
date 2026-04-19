@@ -25,7 +25,13 @@ pub(super) enum Expansion {
 #[derive(Debug)]
 pub(super) struct ExpandedWord {
     pub(super) segments: Vec<Segment>,
+    // Consumed only by cfg(test) code paths (expand_word_raw_fallback and
+    // its unit tests); populated unconditionally by expand_raw because the
+    // production code path exercises expand_raw via expand_redirect_word
+    // and expand_word_text_assignment where the flags simply go unread.
+    #[allow(dead_code)]
     pub(super) had_quoted_content: bool,
+    #[allow(dead_code)]
     pub(super) had_quoted_null_outside_at: bool,
 }
 
