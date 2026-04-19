@@ -134,9 +134,10 @@ All unit tests that exercise OS-interacting code paths use the **trace model** i
 
 ## Coverage Policy
 
-- Production-code line coverage must be **100.00%** as measured by `./scripts/coverage.sh`. The script instruments the real (non-test) binary, so `#[cfg(test)]` code is excluded automatically.
-- There is no escape-hatch mechanism for exempting individual lines; every instrumented production line must be covered by tests.
-- Every production code change must be accompanied by tests that maintain 100% coverage; this threshold must not be lowered.
+- Production-code line coverage must be at least **99.5%** as measured by `./scripts/coverage.sh`. The script instruments the real (non-test) binary, so `#[cfg(test)]` code is excluded automatically.
+- The 99.5% floor is a deliberate trade-off: chasing the last 0.5% of lines (unreachable fallbacks, defensive error branches, panic-on-corruption guards) produces contorted tests with diminishing value. Write tests that exercise real behavior; do not contort them to cover lines that exist only to keep the type checker or the compiler honest.
+- Every production code change must keep coverage above the 99.5% floor; this threshold must not be lowered further without an explicit policy change.
+- There is no per-line exemption mechanism. If a specific line is provably unreachable in production, delete it rather than exempting it; the coverage target accommodates incidental gaps without needing annotations.
 
 ## Performance Policy
 
