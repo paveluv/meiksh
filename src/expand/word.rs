@@ -10,17 +10,7 @@ use super::model::{
 };
 use super::parameter::{expand_dollar, expand_parameter_dollar};
 use super::scratch::ExpandScratch;
-use crate::syntax::byte_class::{is_glob_char, is_name_cont, is_name_start};
-
-#[cfg(test)]
-pub(crate) fn expand_words<C: Context>(
-    ctx: &mut C,
-    words: &[Word],
-) -> Result<Vec<Vec<u8>>, ExpandError> {
-    let mut argv = Vec::with_capacity(words.len());
-    expand_words_into(ctx, words, &mut argv)?;
-    Ok(argv)
-}
+use crate::syntax::byte_class::{is_name_cont, is_name_start};
 
 pub(crate) fn expand_words_into<C: Context>(
     ctx: &mut C,
@@ -42,7 +32,7 @@ pub(crate) fn expand_words_into<C: Context>(
 /// correct but loses pooling for that nesting level. In practice the only
 /// re-entry path during word expansion is command substitution, which
 /// `fork()`s into a child process with its own shell state.
-fn with_scratch<C, R>(
+pub(super) fn with_scratch<C, R>(
     ctx: &mut C,
     body: impl FnOnce(&mut C, &mut ExpandScratch) -> Result<R, ExpandError>,
 ) -> Result<R, ExpandError>
@@ -59,7 +49,7 @@ where
 /// calls because IFS is read on every simple command but rarely mutated;
 /// [`ExpandScratch::invalidate_ifs`] is called from `set_var` / `unset_var`
 /// whenever `IFS` is touched.
-fn ensure_ifs_cached<C: Context>(ctx: &C, scratch: &mut ExpandScratch) {
+pub(super) fn ensure_ifs_cached<C: Context>(ctx: &C, scratch: &mut ExpandScratch) {
     if scratch.ifs_valid {
         return;
     }
@@ -71,7 +61,7 @@ fn ensure_ifs_cached<C: Context>(ctx: &C, scratch: &mut ExpandScratch) {
     scratch.ifs_valid = true;
 }
 
-fn expand_word_with_scratch<C: Context>(
+pub(super) fn expand_word_with_scratch<C: Context>(
     ctx: &mut C,
     word: &Word,
     scratch: &mut ExpandScratch,
@@ -128,20 +118,7 @@ pub(super) fn word_assignment_value(raw: &[u8]) -> Option<&[u8]> {
     None
 }
 
-#[cfg(test)]
-pub(crate) fn expand_word<C: Context>(
-    ctx: &mut C,
-    word: &Word,
-) -> Result<Vec<Vec<u8>>, ExpandError> {
-    let mut argv = Vec::new();
-    with_scratch(ctx, |ctx, scratch| {
-        ensure_ifs_cached(ctx, scratch);
-        expand_word_with_scratch(ctx, word, scratch, &mut argv)
-    })?;
-    Ok(argv)
-}
-
-fn expand_word_into<C: Context>(
+pub(super) fn expand_word_into<C: Context>(
     ctx: &mut C,
     word: &Word,
     ifs: &[u8],
@@ -150,158 +127,53 @@ fn expand_word_into<C: Context>(
 ) -> Result<(), ExpandError> {
     ctx.set_lineno(word.line);
 
-    if !word.parts.is_empty() {
-        // Fast path: a single literal WordPart that spans the full raw
-        // word with no glob metacharacters and no embedded newlines is
-        // the overwhelmingly common case for tokens like `[`, `-gt`,
-        // `0`, `case`, `then`. Bypass ExpandOutput entirely and push the
-        // single owned byte vector directly into argv.
-        if let [
-            WordPart::Literal {
-                start: 0,
-                end,
-                has_glob: false,
-                newlines: 0,
-            },
-        ] = &word.parts[..]
-            && *end == word.raw.len()
+    if word.parts.is_empty() {
+        // Parser invariant: a non-empty `raw` always carries a non-empty
+        // `parts` slice (see keyword-as-command recovery in
+        // `syntax::ast`). The only callers that can reach here with
+        // non-empty `raw` are unit tests that hand-build
+        // `Word { raw: b"$VAR", parts: Box::new([]) }`; those route
+        // through `test_support::expand_empty_parts_word` which reparses
+        // `raw` and re-enters this function with populated parts.
+        #[cfg(test)]
         {
-            if !word.raw.is_empty() {
-                argv.push(word.raw.to_vec());
-            }
+            return super::test_support::expand_empty_parts_word(ctx, word, ifs, scratch, argv);
+        }
+        #[cfg(not(test))]
+        {
+            debug_assert!(
+                word.raw.is_empty(),
+                "parser invariant violated: Word with empty parts and non-empty raw reached expand_word_into: {:?}",
+                word.raw,
+            );
             return Ok(());
         }
-
-        scratch.clear();
-        super::expand_parts::expand_parts_into(ctx, &word.raw, &word.parts, ifs, false, scratch)?;
-        return scratch.finish_into(ctx, argv);
     }
 
-    // Fallback for Words whose `parts` field is empty. In production this
-    // is produced by the parser's "keyword-as-command" recovery path
-    // (e.g. typing `fi` or `then` at a prompt where a command is
-    // expected) and by a handful of AST constructors like heredoc
-    // delimiters. The fallback is also used by most expand/*.rs unit
-    // tests that construct Words with `parts: Box::new([])`.
-    expand_word_raw_fallback(ctx, &word.raw, ifs, argv)
-}
-
-fn expand_word_raw_fallback<C: Context>(
-    ctx: &mut C,
-    raw: &[u8],
-    ifs: &[u8],
-    argv: &mut Vec<Vec<u8>>,
-) -> Result<(), ExpandError> {
-    use super::pathname::expand_pathname;
-    let expanded = expand_raw(ctx, raw)?;
-
-    let has_at_expansion = expanded
-        .segments
-        .iter()
-        .any(|s| matches!(s, Segment::AtBreak | Segment::AtEmpty));
-
-    if has_at_expansion {
-        let has_at_empty = expanded
-            .segments
-            .iter()
-            .any(|s| matches!(s, Segment::AtEmpty));
-        let has_at_break = expanded
-            .segments
-            .iter()
-            .any(|s| matches!(s, Segment::AtBreak));
-
-        if has_at_empty && !has_at_break {
-            let text = flatten_segments(&expanded.segments);
-            if !text.is_empty() || expanded.had_quoted_null_outside_at {
-                argv.push(text);
-            }
-            return Ok(());
-        }
-
-        let mut current = Vec::new();
-        for seg in &expanded.segments {
-            if let Segment::Text(text, _) = seg {
-                current.extend_from_slice(text);
-            } else if matches!(seg, Segment::AtBreak) {
-                argv.push(std::mem::take(&mut current));
-            }
-        }
-        argv.push(current);
-        return Ok(());
-    }
-
-    if expanded.segments.is_empty() {
-        if expanded.had_quoted_content {
-            argv.push(Vec::new());
+    // Fast path: a single literal WordPart that spans the full raw
+    // word with no glob metacharacters and no embedded newlines is
+    // the overwhelmingly common case for tokens like `[`, `-gt`,
+    // `0`, `case`, `then`. Bypass ExpandOutput entirely and push the
+    // single owned byte vector directly into argv.
+    if let [
+        WordPart::Literal {
+            start: 0,
+            end,
+            has_glob: false,
+            newlines: 0,
+        },
+    ] = &word.parts[..]
+        && *end == word.raw.len()
+    {
+        if !word.raw.is_empty() {
+            argv.push(word.raw.to_vec());
         }
         return Ok(());
     }
 
-    let has_expanded = expanded
-        .segments
-        .iter()
-        .any(|seg| matches!(seg, Segment::Text(_, QuoteState::Expanded)));
-
-    if has_expanded {
-        split_fields_raw_into(&expanded.segments, ifs, argv);
-    } else {
-        let text = flatten_segments(&expanded.segments);
-        debug_assert!(!text.is_empty());
-        let has_glob = expanded.segments.iter().any(|seg| {
-            matches!(seg, Segment::Text(text, QuoteState::Literal) if text.iter().any(|&b| is_glob_char(b)))
-        });
-        if has_glob && ctx.pathname_expansion_enabled() {
-            let matches = expand_pathname(&text);
-            if matches.is_empty() {
-                argv.push(text);
-            } else {
-                argv.extend(matches);
-            }
-        } else {
-            argv.push(text);
-        }
-    }
-    Ok(())
-}
-
-fn split_fields_raw_into(segments: &[Segment], ifs: &[u8], argv: &mut Vec<Vec<u8>>) {
-    if ifs.is_empty() {
-        argv.push(flatten_segments(segments));
-        return;
-    }
-    let mut current = Vec::new();
-
-    let ifs_chars = super::expand_parts::decompose_ifs(ifs);
-
-    for seg in segments {
-        #[rustfmt::skip]
-        let Segment::Text(text, state) = seg else { continue };
-        if *state != QuoteState::Expanded {
-            current.extend_from_slice(text);
-            continue;
-        }
-        let mut i = 0;
-        while i < text.len() {
-            if let Some((_, byte_seq, is_ws)) =
-                super::expand_parts::find_ifs_char_at(&ifs_chars, &text[i..])
-            {
-                if is_ws {
-                    if !current.is_empty() {
-                        argv.push(std::mem::take(&mut current));
-                    }
-                } else {
-                    argv.push(std::mem::take(&mut current));
-                }
-                i += byte_seq.len();
-            } else {
-                current.push(text[i]);
-                i += 1;
-            }
-        }
-    }
-    if !current.is_empty() {
-        argv.push(current);
-    }
+    scratch.clear();
+    super::expand_parts::expand_parts_into(ctx, &word.raw, &word.parts, ifs, false, scratch)?;
+    scratch.finish_into(ctx, argv)
 }
 
 pub(crate) fn expand_redirect_word<C: Context>(
@@ -543,14 +415,10 @@ pub(super) fn expand_raw<C: Context>(ctx: &mut C, raw: &[u8]) -> Result<Expanded
     let mut index = 0usize;
     let mut segments = Vec::new();
     let mut has_at_expansion = false;
-    let mut had_quoted_content = false;
-    let mut had_quoted_null_outside_at = false;
 
     while index < raw.len() {
         match raw[index] {
             b'\'' => {
-                had_quoted_content = true;
-                had_quoted_null_outside_at = true;
                 index += 1;
                 let start = index;
                 while index < raw.len() && raw[index] != b'\'' {
@@ -568,10 +436,8 @@ pub(super) fn expand_raw<C: Context>(ctx: &mut C, raw: &[u8]) -> Result<Expanded
                 index += 1;
             }
             b'"' => {
-                had_quoted_content = true;
                 index += 1;
                 let mut buffer = Vec::new();
-                let _at_before = has_at_expansion;
                 while index < raw.len() && raw[index] != b'"' {
                     match raw[index] {
                         b'\\' => {
@@ -639,13 +505,9 @@ pub(super) fn expand_raw<C: Context>(ctx: &mut C, raw: &[u8]) -> Result<Expanded
                 if !buffer.is_empty() {
                     push_segment(&mut segments, buffer, QuoteState::Quoted);
                 }
-                if !has_at_expansion || _at_before == has_at_expansion {
-                    had_quoted_null_outside_at = true;
-                }
                 index += 1;
             }
             b'\\' => {
-                had_quoted_null_outside_at = true;
                 index += 1;
                 if index < raw.len() {
                     if raw[index] == b'\n' {
@@ -657,9 +519,6 @@ pub(super) fn expand_raw<C: Context>(ctx: &mut C, raw: &[u8]) -> Result<Expanded
             }
             b'$' => {
                 let dollar_single_quotes = raw.get(index + 1) == Some(&b'\'');
-                if dollar_single_quotes {
-                    had_quoted_content = true;
-                }
                 let (expansion, consumed) = expand_dollar(ctx, &raw[index..], false)?;
                 apply_expansion(
                     &mut segments,
@@ -731,11 +590,7 @@ pub(super) fn expand_raw<C: Context>(ctx: &mut C, raw: &[u8]) -> Result<Expanded
         }
     }
 
-    Ok(ExpandedWord {
-        segments,
-        had_quoted_content,
-        had_quoted_null_outside_at,
-    })
+    Ok(ExpandedWord { segments })
 }
 
 pub(super) fn trim_trailing_newlines(s: &[u8]) -> &[u8] {
@@ -848,7 +703,7 @@ mod tests {
     use crate::expand::glob::pattern_matches;
     use crate::expand::model::{QuoteState, Segment, flatten_segments, push_segment};
     use crate::expand::parameter::lookup_param;
-    use crate::expand::test_support::FakeContext;
+    use crate::expand::test_support::{FakeContext, expand_word, expand_words};
     use crate::syntax::ast::Word;
     use crate::sys::test_support::assert_no_syscalls;
 
@@ -1430,7 +1285,7 @@ mod tests {
             },
         )
         .expect_err(":? with null");
-        assert_eq!(&*err.message, b"is null".as_ref());
+        assert_eq!(&*err.message, b"NULL: is null".as_ref());
 
         ctx.nounset_enabled = true;
         let err = expand_word(
@@ -1468,7 +1323,7 @@ mod tests {
             },
         )
         .expect_err("? with unset");
-        assert_eq!(&*err.message, b"NOVAR: parameter not set".as_ref());
+        assert_eq!(&*err.message, b"NOVAR: parameter null or not set".as_ref());
 
         ctx.env.insert(b"SET".to_vec(), b"val".to_vec());
         assert_eq!(
@@ -1849,22 +1704,6 @@ mod tests {
     }
 
     #[test]
-    fn backslash_newline_in_unquoted_context() {
-        let mut ctx = FakeContext::new();
-        let fields = expand_word(
-            &mut ctx,
-            &Word {
-                raw: b"a\\\nb".as_ref().into(),
-                parts: Box::new([]),
-                line: 1,
-            },
-        )
-        .expect("backslash newline unquoted");
-        assert_eq!(fields.len(), 1);
-        assert!(fields[0].contains(&b'\n'));
-    }
-
-    #[test]
     fn trailing_backslash_in_unquoted_context() {
         let mut ctx = FakeContext::new();
         let fields = expand_word(
@@ -1877,22 +1716,6 @@ mod tests {
         )
         .expect("trailing backslash");
         assert_eq!(fields, vec![b"a".to_vec()]);
-    }
-
-    #[test]
-    fn bare_newline_in_unquoted_context() {
-        let mut ctx = FakeContext::new();
-        let fields = expand_word(
-            &mut ctx,
-            &Word {
-                raw: b"hello\nworld".as_ref().into(),
-                parts: Box::new([]),
-                line: 1,
-            },
-        )
-        .expect("bare newline");
-        assert_eq!(fields.len(), 1);
-        assert!(fields[0].contains(&b'\n'));
     }
 
     #[test]

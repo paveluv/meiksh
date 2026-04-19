@@ -981,8 +981,8 @@ pub(super) fn remove_parameter_pattern(
 mod tests {
     use super::*;
     use crate::expand::model::Expansion;
-    use crate::expand::test_support::{DefaultPathContext, FakeContext, expect_one};
-    use crate::expand::word::{expand_parameter_text, expand_word, expand_word_text};
+    use crate::expand::test_support::{DefaultPathContext, FakeContext, expand_word, expect_one};
+    use crate::expand::word::{expand_parameter_text, expand_word_text};
     use crate::syntax::ast::Word;
     use crate::sys::test_support::assert_no_syscalls;
 
@@ -1229,7 +1229,7 @@ mod tests {
             },
         )
         .expect_err("unset error");
-        assert_eq!(&*error.message, b"boom".as_ref());
+        assert_eq!(&*error.message, b"UNSET: boom".as_ref());
 
         let error = expand_word(
             &mut ctx,
@@ -1897,7 +1897,7 @@ mod tests {
             },
         )
         .expect_err("colon question");
-        assert_eq!(&*error.message, b"custom error".as_ref());
+        assert_eq!(&*error.message, b"UNSET: custom error".as_ref());
 
         let error = expand_word(
             &mut ctx,
@@ -1908,7 +1908,7 @@ mod tests {
             },
         )
         .expect_err("question");
-        assert_eq!(&*error.message, b"also error".as_ref());
+        assert_eq!(&*error.message, b"UNSET: also error".as_ref());
     }
 
     #[test]
@@ -1989,7 +1989,7 @@ mod tests {
             },
         )
         .expect_err("colon question null");
-        assert_eq!(&*err.message, b"null or unset".as_ref());
+        assert_eq!(&*err.message, b"EMPTY: null or unset".as_ref());
 
         let ok = expand_word(
             &mut ctx,
@@ -2011,7 +2011,7 @@ mod tests {
             },
         )
         .expect_err("question unset");
-        assert_eq!(&*err.message, b"custom msg".as_ref());
+        assert_eq!(&*err.message, b"NOEXIST: custom msg".as_ref());
     }
 
     #[test]

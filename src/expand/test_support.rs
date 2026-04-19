@@ -3,9 +3,13 @@ use std::rc::Rc;
 
 use crate::bstr;
 use crate::expand::core::{Context, ExpandError};
+use crate::expand::expand_parts::ExpandOutput;
 use crate::expand::model::Expansion;
+use crate::expand::word::{
+    ensure_ifs_cached, expand_word_into, expand_word_with_scratch, expand_words_into, with_scratch,
+};
 use crate::hash::ShellMap;
-use crate::syntax::ast::Program;
+use crate::syntax::ast::{Command, Program, Word};
 
 pub(super) struct FakeContext {
     pub(super) env: ShellMap<Vec<u8>, Vec<u8>>,
@@ -84,8 +88,14 @@ impl Context for FakeContext {
         b"meiksh"
     }
 
-    fn command_substitute(&mut self, _program: &Rc<Program>) -> Result<Vec<u8>, ExpandError> {
-        Ok(b"fake_command_output\n".to_vec())
+    fn command_substitute(&mut self, program: &Rc<Program>) -> Result<Vec<u8>, ExpandError> {
+        // Echo the command back, matching `command_substitute_raw`'s shape so
+        // tests driven through either the production (parser -> Program) or
+        // the pattern/redirect paths (raw bytes) observe the same byte stream.
+        let mut out = Vec::new();
+        crate::exec::render::render_program_into(program, &mut out);
+        out.push(b'\n');
+        Ok(out)
     }
 
     fn command_substitute_raw(&mut self, command: &[u8]) -> Result<Vec<u8>, ExpandError> {
@@ -167,8 +177,11 @@ impl Context for DefaultPathContext {
         b"meiksh"
     }
 
-    fn command_substitute(&mut self, _program: &Rc<Program>) -> Result<Vec<u8>, ExpandError> {
-        Ok(b"fake_command_output\n".to_vec())
+    fn command_substitute(&mut self, program: &Rc<Program>) -> Result<Vec<u8>, ExpandError> {
+        let mut out = Vec::new();
+        crate::exec::render::render_program_into(program, &mut out);
+        out.push(b'\n');
+        Ok(out)
     }
 
     fn command_substitute_raw(&mut self, command: &[u8]) -> Result<Vec<u8>, ExpandError> {
@@ -193,4 +206,137 @@ pub(super) fn expect_one(result: Result<(Expansion, usize), ExpandError>) -> (Ve
         Expansion::Static(s) => (s.to_vec(), consumed),
         Expansion::AtFields(_) => panic!("expected One/Static, got AtFields"),
     }
+}
+
+/// Test-only entry point that expands a single `Word` end-to-end through
+/// the production pipeline. Unit tests throughout `src/expand/*` build
+/// `Word`s by hand, frequently with `parts: Box::new([])`, and expect the
+/// expander to tokenise the raw source. We reparse those inputs via
+/// [`reparse_test_word`] so the hot path in `expand_word_into` stays free
+/// of a dedicated "empty parts" branch.
+pub(crate) fn expand_word<C: Context>(
+    ctx: &mut C,
+    word: &Word,
+) -> Result<Vec<Vec<u8>>, ExpandError> {
+    let reparsed = reparse_test_word(word)?;
+    let mut argv = Vec::new();
+    with_scratch(ctx, |ctx, scratch| {
+        ensure_ifs_cached(ctx, scratch);
+        expand_word_with_scratch(ctx, &reparsed, scratch, &mut argv)
+    })?;
+    Ok(argv)
+}
+
+/// Test-only batched entry point mirroring [`expand_word`]. Each input
+/// word is reparsed if it was hand-built with empty `parts`.
+pub(crate) fn expand_words<C: Context>(
+    ctx: &mut C,
+    words: &[Word],
+) -> Result<Vec<Vec<u8>>, ExpandError> {
+    let mut argv = Vec::with_capacity(words.len());
+    let mut reparsed: Vec<Word> = Vec::with_capacity(words.len());
+    for w in words {
+        reparsed.push(reparse_test_word(w)?);
+    }
+    expand_words_into(ctx, &reparsed, &mut argv)?;
+    Ok(argv)
+}
+
+/// Bridge that `expand_word_into` calls (in test builds only) when it
+/// encounters the test-only "empty parts" shape. Reparses the word's raw
+/// bytes through the real `syntax::parse` pipeline and re-enters
+/// `expand_word_into` once per produced sub-word. Production code never
+/// reaches this function: the parser guarantees non-empty `parts` for any
+/// non-empty `raw`.
+pub(super) fn expand_empty_parts_word<C: Context>(
+    ctx: &mut C,
+    word: &Word,
+    ifs: &[u8],
+    scratch: &mut ExpandOutput,
+    argv: &mut Vec<Vec<u8>>,
+) -> Result<(), ExpandError> {
+    if word.raw.is_empty() {
+        return Ok(());
+    }
+    let prog = crate::syntax::parse(&word.raw).map_err(|e| ExpandError { message: e.message })?;
+    for item in prog.items.iter() {
+        if let Some(first_cmd) = item.and_or.first.commands.first() {
+            if let Command::Simple(simple) = first_cmd {
+                for reparsed in simple.words.iter() {
+                    // Preserve the caller-supplied line number so
+                    // diagnostics don't leak the synthetic line-1 from
+                    // our on-the-fly reparse.
+                    let with_line = Word {
+                        raw: reparsed.raw.clone(),
+                        parts: reparsed.parts.clone(),
+                        line: word.line,
+                    };
+                    expand_word_into(ctx, &with_line, ifs, scratch, argv)?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Rewrite a hand-crafted `Word { raw, parts: [] }` into a real
+/// parser-produced `Word` with populated `parts`, so unit tests drive the
+/// same pipeline as production code. If `word.parts` is already populated,
+/// returns a clone unchanged.
+///
+/// Parse errors surface as `ExpandError` (with the parser's message) so
+/// existing tests that expect an expand error for malformed input such as
+/// `'oops` or `$(echo` continue to work.
+fn reparse_test_word(word: &Word) -> Result<Word, ExpandError> {
+    if !word.parts.is_empty() || word.raw.is_empty() {
+        return Ok(Word {
+            raw: word.raw.clone(),
+            parts: word.parts.clone(),
+            line: word.line,
+        });
+    }
+
+    let program =
+        crate::syntax::parse(&word.raw).map_err(|e| ExpandError { message: e.message })?;
+    let first_item = program
+        .items
+        .into_vec()
+        .into_iter()
+        .next()
+        .ok_or_else(|| ExpandError {
+            message: b"test helper: parse produced no items".as_ref().into(),
+        })?;
+    let first_command = first_item
+        .and_or
+        .first
+        .commands
+        .into_vec()
+        .into_iter()
+        .next()
+        .ok_or_else(|| ExpandError {
+            message: b"test helper: empty pipeline".as_ref().into(),
+        })?;
+    let simple = match first_command {
+        Command::Simple(s) => s,
+        _ => {
+            return Err(ExpandError {
+                message: b"test helper: raw did not parse as a simple command"
+                    .as_ref()
+                    .into(),
+            });
+        }
+    };
+    let first_word = simple
+        .words
+        .into_vec()
+        .into_iter()
+        .next()
+        .ok_or_else(|| ExpandError {
+            message: b"test helper: simple command had no words".as_ref().into(),
+        })?;
+    Ok(Word {
+        raw: first_word.raw,
+        parts: first_word.parts,
+        line: word.line,
+    })
 }

@@ -166,8 +166,8 @@ pub(super) fn path_join(base: &[u8], name: &[u8]) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use crate::expand::core::Context;
-    use crate::expand::test_support::{DefaultPathContext, FakeContext};
-    use crate::expand::word::{expand_redirect_word, expand_word, expand_word_text};
+    use crate::expand::test_support::{DefaultPathContext, FakeContext, expand_word};
+    use crate::expand::word::{expand_redirect_word, expand_word_text};
     use crate::syntax::ast::Word;
     use crate::sys::test_support::{assert_no_syscalls, run_trace};
     use crate::trace_entries;

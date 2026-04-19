@@ -4,7 +4,7 @@ mod pipeline;
 mod process;
 pub(crate) mod program;
 mod redirection;
-mod render;
+pub(crate) mod render;
 mod simple;
 
 #[cfg(test)]

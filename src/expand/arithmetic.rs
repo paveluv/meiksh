@@ -573,8 +573,7 @@ pub(super) fn apply_compound_assign(op: &[u8], lhs: i64, rhs: i64) -> Result<i64
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::expand::test_support::FakeContext;
-    use crate::expand::word::expand_word;
+    use crate::expand::test_support::{FakeContext, expand_word};
     use crate::syntax::ast::Word;
     use crate::sys::test_support::assert_no_syscalls;
 

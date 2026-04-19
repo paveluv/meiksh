@@ -15,7 +15,7 @@ pub(super) fn render_program(program: &Program) -> Vec<u8> {
     buf
 }
 
-pub(super) fn render_program_into(program: &Program, buf: &mut Vec<u8>) {
+pub(crate) fn render_program_into(program: &Program, buf: &mut Vec<u8>) {
     for (index, item) in program.items.iter().enumerate() {
         if index > 0 {
             buf.push(b'\n');
