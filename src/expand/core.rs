@@ -3,6 +3,8 @@ use std::rc::Rc;
 
 use crate::syntax::ast::Program;
 
+use super::scratch::ExpandScratch;
+
 #[derive(Debug)]
 pub(crate) struct ExpandError {
     pub(crate) message: Box<[u8]>,
@@ -30,4 +32,9 @@ pub(crate) trait Context {
     fn lineno(&self) -> usize {
         0
     }
+    /// Borrow the shared `ExpandScratch` for this context. All
+    /// participating contexts must own a long-lived scratch; callers take
+    /// it out via `std::mem::take` so that borrow checking does not
+    /// conflict with further `&mut self` calls into the context.
+    fn expand_scratch_mut(&mut self) -> &mut ExpandScratch;
 }

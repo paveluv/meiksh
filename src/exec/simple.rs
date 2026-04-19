@@ -339,7 +339,7 @@ pub(super) fn expand_simple(
     shell: &mut Shell,
     simple: &SimpleCommand,
 ) -> Result<ExpandedSimpleCommand, ShellError> {
-    let mut assignments = Vec::new();
+    let mut assignments = Vec::with_capacity(simple.assignments.len());
     for assignment in &simple.assignments {
         let value = word::expand_assignment_value(shell, &assignment.value)
             .map_err(|e| shell.expand_to_err(e))?;
@@ -350,9 +350,12 @@ pub(super) fn expand_simple(
     let argv = if declaration_ctx {
         expand_words_declaration(shell, &simple.words)?
     } else {
-        word::expand_words(shell, &simple.words).map_err(|e| shell.expand_to_err(e))?
+        let mut argv = Vec::with_capacity(simple.words.len());
+        word::expand_words_into(shell, &simple.words, &mut argv)
+            .map_err(|e| shell.expand_to_err(e))?;
+        argv
     };
-    let mut redirections = Vec::new();
+    let mut redirections = Vec::with_capacity(simple.redirections.len());
     for redirection in &simple.redirections {
         let fd = redirection
             .fd
@@ -409,11 +412,12 @@ pub(super) fn expand_words_declaration(
     shell: &mut Shell,
     words: &[crate::syntax::ast::Word],
 ) -> Result<Vec<Vec<u8>>, ShellError> {
-    let mut result = Vec::new();
+    let mut result = Vec::with_capacity(words.len());
     let mut found_cmd = false;
     for word in words {
         if !found_cmd {
-            result.extend(word::expand_word(shell, word).map_err(|e| shell.expand_to_err(e))?);
+            word::expand_words_into(shell, std::slice::from_ref(word), &mut result)
+                .map_err(|e| shell.expand_to_err(e))?;
             if result
                 .last()
                 .is_some_and(|s: &Vec<u8>| !s.is_empty() && s != b"command")
@@ -426,7 +430,8 @@ pub(super) fn expand_words_declaration(
                     .map_err(|e| shell.expand_to_err(e))?,
             );
         } else {
-            result.extend(word::expand_word(shell, word).map_err(|e| shell.expand_to_err(e))?);
+            word::expand_words_into(shell, std::slice::from_ref(word), &mut result)
+                .map_err(|e| shell.expand_to_err(e))?;
         }
     }
     Ok(result)

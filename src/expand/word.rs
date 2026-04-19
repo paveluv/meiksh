@@ -1,36 +1,86 @@
-use std::borrow::Cow;
-
 use crate::bstr;
 use crate::syntax::ast::Word;
+use crate::syntax::word_parts::WordPart;
 
 use super::core::{Context, ExpandError};
-use super::expand_parts::{ExpandOutput, ExpandResult, expand_parts_into_new};
+use super::expand_parts::{ExpandOutput, expand_parts_into};
 use super::model::{
     ExpandedWord, Expansion, QuoteState, Segment, flatten_segments, push_segment,
     push_segment_slice, render_pattern_from_segments,
 };
 use super::parameter::{expand_dollar, expand_parameter_dollar};
-use super::pathname::expand_pathname;
+use super::scratch::ExpandScratch;
 use crate::syntax::byte_class::{is_glob_char, is_name_cont, is_name_start};
 
+#[cfg(test)]
 pub(crate) fn expand_words<C: Context>(
     ctx: &mut C,
     words: &[Word],
 ) -> Result<Vec<Vec<u8>>, ExpandError> {
-    let ifs = resolve_ifs(ctx);
-    let mut result = Vec::new();
-    let mut scratch = ExpandOutput::new();
-    for word in words {
-        result.extend(expand_word_reuse(ctx, word, &ifs, &mut scratch)?);
-    }
-    Ok(result)
+    let mut argv = Vec::with_capacity(words.len());
+    expand_words_into(ctx, words, &mut argv)?;
+    Ok(argv)
 }
 
-fn resolve_ifs<C: Context>(ctx: &C) -> Cow<'static, [u8]> {
-    match ctx.env_var(b"IFS") {
-        Some(c) => Cow::Owned(c.into_owned()),
-        None => Cow::Borrowed(b" \t\n"),
+pub(crate) fn expand_words_into<C: Context>(
+    ctx: &mut C,
+    words: &[Word],
+    argv: &mut Vec<Vec<u8>>,
+) -> Result<(), ExpandError> {
+    with_scratch(ctx, |ctx, scratch| {
+        ensure_ifs_cached(ctx, scratch);
+        for word in words {
+            expand_word_with_scratch(ctx, word, scratch, argv)?;
+        }
+        Ok(())
+    })
+}
+
+/// Take the context's `ExpandScratch` out of `ctx`, run `body` with it, and
+/// always put it back (even on error). Nested expansion calls on the same
+/// `ctx` during `body` will observe a default/empty scratch; this is
+/// correct but loses pooling for that nesting level. In practice the only
+/// re-entry path during word expansion is command substitution, which
+/// `fork()`s into a child process with its own shell state.
+fn with_scratch<C, R>(
+    ctx: &mut C,
+    body: impl FnOnce(&mut C, &mut ExpandScratch) -> Result<R, ExpandError>,
+) -> Result<R, ExpandError>
+where
+    C: Context,
+{
+    let mut scratch = std::mem::take(ctx.expand_scratch_mut());
+    let result = body(ctx, &mut scratch);
+    *ctx.expand_scratch_mut() = scratch;
+    result
+}
+
+/// Ensure `scratch.ifs_bytes` holds the current `$IFS`. Cached across
+/// calls because IFS is read on every simple command but rarely mutated;
+/// [`ExpandScratch::invalidate_ifs`] is called from `set_var` / `unset_var`
+/// whenever `IFS` is touched.
+fn ensure_ifs_cached<C: Context>(ctx: &C, scratch: &mut ExpandScratch) {
+    if scratch.ifs_valid {
+        return;
     }
+    scratch.ifs_bytes.clear();
+    match ctx.env_var(b"IFS") {
+        Some(c) => scratch.ifs_bytes.extend_from_slice(&c),
+        None => scratch.ifs_bytes.extend_from_slice(b" \t\n"),
+    }
+    scratch.ifs_valid = true;
+}
+
+fn expand_word_with_scratch<C: Context>(
+    ctx: &mut C,
+    word: &Word,
+    scratch: &mut ExpandScratch,
+    argv: &mut Vec<Vec<u8>>,
+) -> Result<(), ExpandError> {
+    let ExpandScratch {
+        ifs_bytes, output, ..
+    } = scratch;
+    expand_word_into(ctx, word, ifs_bytes, output, argv)
 }
 
 pub(crate) fn expand_word_as_declaration_assignment<C: Context>(
@@ -78,59 +128,71 @@ pub(super) fn word_assignment_value(raw: &[u8]) -> Option<&[u8]> {
     None
 }
 
+#[cfg(test)]
 pub(crate) fn expand_word<C: Context>(
     ctx: &mut C,
     word: &Word,
 ) -> Result<Vec<Vec<u8>>, ExpandError> {
-    let ifs = resolve_ifs(ctx);
-    let mut scratch = ExpandOutput::new();
-    expand_word_reuse(ctx, word, &ifs, &mut scratch)
+    let mut argv = Vec::new();
+    with_scratch(ctx, |ctx, scratch| {
+        ensure_ifs_cached(ctx, scratch);
+        expand_word_with_scratch(ctx, word, scratch, &mut argv)
+    })?;
+    Ok(argv)
 }
 
-fn expand_word_reuse<C: Context>(
+fn expand_word_into<C: Context>(
     ctx: &mut C,
     word: &Word,
     ifs: &[u8],
     scratch: &mut ExpandOutput,
-) -> Result<Vec<Vec<u8>>, ExpandError> {
+    argv: &mut Vec<Vec<u8>>,
+) -> Result<(), ExpandError> {
     ctx.set_lineno(word.line);
 
     if !word.parts.is_empty() {
+        // Fast path: a single literal WordPart that spans the full raw
+        // word with no glob metacharacters and no embedded newlines is
+        // the overwhelmingly common case for tokens like `[`, `-gt`,
+        // `0`, `case`, `then`. Bypass ExpandOutput entirely and push the
+        // single owned byte vector directly into argv.
+        if let [
+            WordPart::Literal {
+                start: 0,
+                end,
+                has_glob: false,
+                newlines: 0,
+            },
+        ] = &word.parts[..]
+            && *end == word.raw.len()
+        {
+            if !word.raw.is_empty() {
+                argv.push(word.raw.to_vec());
+            }
+            return Ok(());
+        }
+
         scratch.clear();
         super::expand_parts::expand_parts_into(ctx, &word.raw, &word.parts, ifs, false, scratch)?;
-        let result = scratch.finish();
-        return match result {
-            ExpandResult::Fields(fields) => Ok(fields),
-            ExpandResult::FieldsWithGlob(entries) => {
-                let mut result = Vec::new();
-                for entry in entries {
-                    if entry.has_glob && ctx.pathname_expansion_enabled() {
-                        let matches = expand_pathname(&entry.text);
-                        if matches.is_empty() {
-                            result.push(entry.text);
-                        } else {
-                            result.extend(matches);
-                        }
-                    } else {
-                        result.push(entry.text);
-                    }
-                }
-                Ok(result)
-            }
-        };
+        return scratch.finish_into(ctx, argv);
     }
 
-    // Fallback for Words constructed without pre-parsed parts (e.g. in tests).
-    // The parser always populates word.parts, so this path is never reached
-    // during normal execution.
-    expand_word_raw_fallback(ctx, &word.raw, ifs)
+    // Fallback for Words whose `parts` field is empty. In production this
+    // is produced by the parser's "keyword-as-command" recovery path
+    // (e.g. typing `fi` or `then` at a prompt where a command is
+    // expected) and by a handful of AST constructors like heredoc
+    // delimiters. The fallback is also used by most expand/*.rs unit
+    // tests that construct Words with `parts: Box::new([])`.
+    expand_word_raw_fallback(ctx, &word.raw, ifs, argv)
 }
 
 fn expand_word_raw_fallback<C: Context>(
     ctx: &mut C,
     raw: &[u8],
     ifs: &[u8],
-) -> Result<Vec<Vec<u8>>, ExpandError> {
+    argv: &mut Vec<Vec<u8>>,
+) -> Result<(), ExpandError> {
+    use super::pathname::expand_pathname;
     let expanded = expand_raw(ctx, raw)?;
 
     let has_at_expansion = expanded
@@ -151,29 +213,28 @@ fn expand_word_raw_fallback<C: Context>(
         if has_at_empty && !has_at_break {
             let text = flatten_segments(&expanded.segments);
             if !text.is_empty() || expanded.had_quoted_null_outside_at {
-                return Ok(vec![text]);
+                argv.push(text);
             }
-            return Ok(Vec::new());
+            return Ok(());
         }
 
-        let mut fields = Vec::new();
         let mut current = Vec::new();
         for seg in &expanded.segments {
             if let Segment::Text(text, _) = seg {
                 current.extend_from_slice(text);
             } else if matches!(seg, Segment::AtBreak) {
-                fields.push(std::mem::take(&mut current));
+                argv.push(std::mem::take(&mut current));
             }
         }
-        fields.push(current);
-        return Ok(fields);
+        argv.push(current);
+        return Ok(());
     }
 
     if expanded.segments.is_empty() {
         if expanded.had_quoted_content {
-            return Ok(vec![Vec::new()]);
+            argv.push(Vec::new());
         }
-        return Ok(Vec::new());
+        return Ok(());
     }
 
     let has_expanded = expanded
@@ -181,8 +242,8 @@ fn expand_word_raw_fallback<C: Context>(
         .iter()
         .any(|seg| matches!(seg, Segment::Text(_, QuoteState::Expanded)));
 
-    let fields = if has_expanded {
-        split_fields_raw(&expanded.segments, ifs)
+    if has_expanded {
+        split_fields_raw_into(&expanded.segments, ifs, argv);
     } else {
         let text = flatten_segments(&expanded.segments);
         debug_assert!(!text.is_empty());
@@ -192,22 +253,22 @@ fn expand_word_raw_fallback<C: Context>(
         if has_glob && ctx.pathname_expansion_enabled() {
             let matches = expand_pathname(&text);
             if matches.is_empty() {
-                vec![text]
+                argv.push(text);
             } else {
-                matches
+                argv.extend(matches);
             }
         } else {
-            vec![text]
+            argv.push(text);
         }
-    };
-    Ok(fields)
+    }
+    Ok(())
 }
 
-fn split_fields_raw(segments: &[Segment], ifs: &[u8]) -> Vec<Vec<u8>> {
+fn split_fields_raw_into(segments: &[Segment], ifs: &[u8], argv: &mut Vec<Vec<u8>>) {
     if ifs.is_empty() {
-        return vec![flatten_segments(segments)];
+        argv.push(flatten_segments(segments));
+        return;
     }
-    let mut fields = Vec::new();
     let mut current = Vec::new();
 
     let ifs_chars = super::expand_parts::decompose_ifs(ifs);
@@ -226,10 +287,10 @@ fn split_fields_raw(segments: &[Segment], ifs: &[u8]) -> Vec<Vec<u8>> {
             {
                 if is_ws {
                     if !current.is_empty() {
-                        fields.push(std::mem::take(&mut current));
+                        argv.push(std::mem::take(&mut current));
                     }
                 } else {
-                    fields.push(std::mem::take(&mut current));
+                    argv.push(std::mem::take(&mut current));
                 }
                 i += byte_seq.len();
             } else {
@@ -239,9 +300,8 @@ fn split_fields_raw(segments: &[Segment], ifs: &[u8]) -> Vec<Vec<u8>> {
         }
     }
     if !current.is_empty() {
-        fields.push(current);
+        argv.push(current);
     }
-    fields
 }
 
 pub(crate) fn expand_redirect_word<C: Context>(
@@ -249,17 +309,18 @@ pub(crate) fn expand_redirect_word<C: Context>(
     word: &Word,
 ) -> Result<Vec<u8>, ExpandError> {
     ctx.set_lineno(word.line);
-    let ifs = resolve_ifs(ctx);
 
     if !word.parts.is_empty() {
-        let mut output = expand_parts_into_new(ctx, &word.raw, &word.parts, &ifs, false)?;
-        let result = output.finish();
-        return Ok(match result {
-            ExpandResult::Fields(fields) => bstr::join_bstrings(&fields, b" "),
-            ExpandResult::FieldsWithGlob(entries) => bstr::join_bstrings(
-                &entries.into_iter().map(|e| e.text).collect::<Vec<_>>(),
-                b" ",
-            ),
+        return with_scratch(ctx, |ctx, scratch| {
+            ensure_ifs_cached(ctx, scratch);
+            let ExpandScratch {
+                ifs_bytes, output, ..
+            } = scratch;
+            output.clear();
+            expand_parts_into(ctx, &word.raw, &word.parts, ifs_bytes, false, output)?;
+            let mut argv: Vec<Vec<u8>> = Vec::new();
+            output.finish_into_no_glob(&mut argv)?;
+            Ok(bstr::join_bstrings(&argv, b" "))
         });
     }
 
@@ -274,16 +335,12 @@ pub(crate) fn expand_word_text<C: Context>(
     ctx.set_lineno(word.line);
 
     if !word.parts.is_empty() {
-        let mut output = ExpandOutput::new();
-        super::expand_parts::expand_parts_into(
-            ctx,
-            &word.raw,
-            &word.parts,
-            b"",
-            true,
-            &mut output,
-        )?;
-        return Ok(output.drain_single_vec());
+        return with_scratch(ctx, |ctx, scratch| {
+            let output = &mut scratch.output;
+            output.clear();
+            expand_parts_into(ctx, &word.raw, &word.parts, b"", true, output)?;
+            Ok(output.drain_single_vec())
+        });
     }
 
     expand_word_text_assignment(ctx, word, false)
@@ -305,10 +362,12 @@ pub(crate) fn expand_assignment_value<C: Context>(
     ctx.set_lineno(word.line);
 
     if !word.parts.is_empty() {
-        let mut output = ExpandOutput::new();
-        #[rustfmt::skip]
-        super::expand_parts::expand_parts_into(ctx, &word.raw, &word.parts, b"", true, &mut output)?;
-        return Ok(output.drain_single_vec());
+        return with_scratch(ctx, |ctx, scratch| {
+            let output = &mut scratch.output;
+            output.clear();
+            expand_parts_into(ctx, &word.raw, &word.parts, b"", true, output)?;
+            Ok(output.drain_single_vec())
+        });
     }
     expand_word_text_assignment(ctx, word, true)
 }

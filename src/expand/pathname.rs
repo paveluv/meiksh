@@ -49,6 +49,22 @@ pub(crate) fn expand_pathname(pattern: &[u8]) -> Vec<Vec<u8>> {
     if !has_active_glob_meta(pattern) {
         return vec![pattern.to_vec()];
     }
+    let mut out = Vec::new();
+    expand_pathname_into(pattern, &mut out);
+    out
+}
+
+/// Append filesystem matches for `pattern` to `out`.
+///
+/// Only pushes matches when `pattern` contains an active glob meta
+/// character AND at least one filesystem candidate matches. On no
+/// matches (including the no-active-glob case), `out` is left
+/// untouched - the caller is responsible for pushing the literal
+/// pattern if POSIX pathname-expansion falls back to unmodified bytes.
+pub(crate) fn expand_pathname_into(pattern: &[u8], out: &mut Vec<Vec<u8>>) {
+    if !has_active_glob_meta(pattern) {
+        return;
+    }
     let absolute = pattern.first() == Some(&b'/');
     let segments: Vec<&[u8]> = pattern
         .split(|&b| b == b'/')
@@ -71,7 +87,10 @@ pub(crate) fn expand_pathname(pattern: &[u8]) -> Vec<Vec<u8>> {
     let mut scratch: Vec<u8> = Vec::with_capacity(256);
     expand_path_segments(&base, &segments, 0, absolute, &mut matches, &mut scratch);
     sort_cstrings(&mut matches);
-    matches.into_iter().map(|c| c.into_bytes()).collect()
+    out.reserve(matches.len());
+    for c in matches {
+        out.push(c.into_bytes());
+    }
 }
 
 pub(super) fn expand_path_segments(

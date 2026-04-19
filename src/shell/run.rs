@@ -148,6 +148,7 @@ impl Shell {
             pid: sys::process::current_pid(),
             lineno: 0,
             mail_last_check: 0,
+            expand_scratch: crate::expand::scratch::ExpandScratch::new(),
         })
     }
 
@@ -165,7 +166,7 @@ impl Shell {
 
     fn probe_ignored_signals() -> BTreeSet<TrapCondition> {
         let mut set = BTreeSet::new();
-        for signal in sys::process::supported_trap_signals() {
+        for &signal in sys::process::supported_trap_signals() {
             if sys::process::query_signal_disposition(signal).unwrap_or(false) {
                 set.insert(TrapCondition::Signal(signal));
             }
@@ -218,6 +219,7 @@ impl Shell {
             pid: sys::process::current_pid(),
             lineno: 0,
             mail_last_check: 0,
+            expand_scratch: crate::expand::scratch::ExpandScratch::new(),
         })
     }
 

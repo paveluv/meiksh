@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::rc::Rc;
 
+use crate::expand::scratch::ExpandScratch;
 use crate::hash::ShellMap;
 use crate::sys;
 
@@ -61,6 +62,11 @@ pub(crate) struct Shell {
     pub(crate) pid: sys::types::Pid,
     pub(crate) lineno: usize,
     pub(crate) mail_last_check: u64,
+    /// Reusable scratch buffers for word expansion. Derived state - reset
+    /// via `invalidate_ifs` on `IFS` mutation and (optionally) at subshell
+    /// fork boundaries. Clone produces a semantically-equivalent but
+    /// capacity-wise empty scratch; buffers will regrow on first use.
+    pub(crate) expand_scratch: ExpandScratch,
 }
 
 impl Shell {

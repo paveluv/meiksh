@@ -191,10 +191,8 @@ pub(super) fn execute_loop(
 
 pub(super) fn execute_for(shell: &mut Shell, for_command: &ForCommand) -> Result<i32, ShellError> {
     let values: Vec<Vec<u8>> = if let Some(items) = &for_command.items {
-        let mut values = Vec::new();
-        for item in items {
-            values.extend(word::expand_word(shell, item).map_err(|e| shell.expand_to_err(e))?);
-        }
+        let mut values = Vec::with_capacity(items.len());
+        word::expand_words_into(shell, items, &mut values).map_err(|e| shell.expand_to_err(e))?;
         values
     } else {
         shell.positional.clone()

@@ -30,7 +30,7 @@ pub(super) fn exec_builtin(
         return Err(shell.diagnostic(127, &msg));
     };
     let env = shell.env_for_exec_utility(cmd_assignments);
-    sys::process::exec_replace_with_env(&program_path, &args.to_vec(), &env)
+    sys::process::exec_replace_with_env(&program_path, args.to_vec(), env)
         .map_err(|e| shell.diagnostic(1, &e.strerror()))?;
     Ok(BuiltinOutcome::Status(0))
 }

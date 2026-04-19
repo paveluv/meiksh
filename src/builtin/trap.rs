@@ -121,7 +121,8 @@ pub(super) fn supported_trap_conditions() -> Vec<TrapCondition> {
     let mut conditions = vec![TrapCondition::Exit];
     conditions.extend(
         sys::process::supported_trap_signals()
-            .into_iter()
+            .iter()
+            .copied()
             .map(TrapCondition::Signal),
     );
     conditions

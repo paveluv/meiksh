@@ -11,11 +11,18 @@ use super::parameter::{lookup_param, require_set_parameter};
 use super::word::trim_trailing_newlines;
 use crate::syntax::byte_class::{is_glob_char, is_name};
 
-#[derive(Debug)]
-pub(super) struct ExpandOutput {
-    pub(super) fields: Vec<(Vec<u8>, bool)>,
+#[derive(Clone, Debug)]
+pub(crate) struct FieldEntry {
+    pub(crate) text: Vec<u8>,
+    pub(crate) has_glob: bool,
+}
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct ExpandOutput {
+    pub(super) fields: Vec<FieldEntry>,
     pub(super) current: Vec<u8>,
     current_has_glob: bool,
+    has_any_glob: bool,
     had_quoted_content: bool,
     has_at_expansion: bool,
     had_quoted_null_outside_at: bool,
@@ -25,16 +32,7 @@ pub(super) struct ExpandOutput {
 
 impl ExpandOutput {
     pub(super) fn new() -> Self {
-        ExpandOutput {
-            fields: Vec::new(),
-            current: Vec::new(),
-            current_has_glob: false,
-            had_quoted_content: false,
-            has_at_expansion: false,
-            had_quoted_null_outside_at: false,
-            at_field_breaks: Vec::new(),
-            at_empty: false,
-        }
+        Self::default()
     }
 
     pub(super) fn push_literal_with_glob(&mut self, bytes: &[u8], has_glob: bool) {
@@ -59,6 +57,16 @@ impl ExpandOutput {
         self.current.extend_from_slice(bytes);
     }
 
+    fn push_current_field(&mut self) {
+        let glob = self.current_has_glob;
+        self.has_any_glob |= glob;
+        self.fields.push(FieldEntry {
+            text: std::mem::take(&mut self.current),
+            has_glob: glob,
+        });
+        self.current_has_glob = false;
+    }
+
     pub(super) fn push_expanded(&mut self, bytes: &[u8], ifs: &[u8]) {
         if ifs.is_empty() {
             self.current.extend_from_slice(bytes);
@@ -71,14 +79,10 @@ impl ExpandOutput {
             if let Some((_, byte_seq, is_ws)) = find_ifs_char_at(&ifs_chars, &bytes[i..]) {
                 if is_ws {
                     if !self.current.is_empty() {
-                        let glob = self.current_has_glob;
-                        self.fields.push((std::mem::take(&mut self.current), glob));
-                        self.current_has_glob = false;
+                        self.push_current_field();
                     }
                 } else {
-                    let glob = self.current_has_glob;
-                    self.fields.push((std::mem::take(&mut self.current), glob));
-                    self.current_has_glob = false;
+                    self.push_current_field();
                 }
                 i += byte_seq.len();
             } else {
@@ -109,9 +113,7 @@ impl ExpandOutput {
             for (i, field) in fields.iter().enumerate() {
                 if i > 0 {
                     self.at_field_breaks.push(self.fields.len() + 1);
-                    let glob = self.current_has_glob;
-                    self.fields.push((std::mem::take(&mut self.current), glob));
-                    self.current_has_glob = false;
+                    self.push_current_field();
                 }
                 self.current.extend_from_slice(field);
             }
@@ -123,10 +125,10 @@ impl ExpandOutput {
             return std::mem::take(&mut self.current);
         }
         let total: usize =
-            self.fields.iter().map(|(f, _)| f.len()).sum::<usize>() + self.current.len();
+            self.fields.iter().map(|f| f.text.len()).sum::<usize>() + self.current.len();
         let mut result = Vec::with_capacity(total);
-        for (f, _) in &self.fields {
-            result.extend_from_slice(f);
+        for f in &self.fields {
+            result.extend_from_slice(&f.text);
         }
         result.extend_from_slice(&self.current);
         self.fields.clear();
@@ -138,6 +140,7 @@ impl ExpandOutput {
         self.fields.clear();
         self.current.clear();
         self.current_has_glob = false;
+        self.has_any_glob = false;
         self.had_quoted_content = false;
         self.has_at_expansion = false;
         self.had_quoted_null_outside_at = false;
@@ -145,73 +148,96 @@ impl ExpandOutput {
         self.at_empty = false;
     }
 
-    pub(super) fn finish(&mut self) -> ExpandResult {
+    /// Drain expansion results directly into the caller-owned `argv`,
+    /// inlining the pathname-expansion decision per field. Preserves
+    /// `self.fields` / `self.current` capacity so the `ExpandOutput` can
+    /// be reused for the next word without reallocating the wrapper Vecs.
+    pub(super) fn finish_into<C: Context>(
+        &mut self,
+        ctx: &C,
+        argv: &mut Vec<Vec<u8>>,
+    ) -> Result<(), ExpandError> {
+        self.finish_into_impl(argv, ctx.pathname_expansion_enabled())
+    }
+
+    /// Same as [`finish_into`] but with pathname expansion unconditionally
+    /// disabled. Used for contexts where POSIX prohibits pathname
+    /// expansion on the expanded bytes (e.g. redirection target words in
+    /// a non-interactive shell).
+    pub(super) fn finish_into_no_glob(
+        &mut self,
+        argv: &mut Vec<Vec<u8>>,
+    ) -> Result<(), ExpandError> {
+        self.finish_into_impl(argv, false)
+    }
+
+    fn finish_into_impl(
+        &mut self,
+        argv: &mut Vec<Vec<u8>>,
+        pathname_expansion: bool,
+    ) -> Result<(), ExpandError> {
         if self.has_at_expansion {
-            return self.finish_at_expansion();
+            return self.finish_at_expansion_into(argv);
         }
 
         if self.current.is_empty() && self.fields.is_empty() {
             if self.had_quoted_content {
-                return ExpandResult::Fields(vec![Vec::new()]);
+                argv.push(Vec::new());
             }
-            return ExpandResult::Fields(Vec::new());
+            return Ok(());
         }
 
         if !self.current.is_empty() || self.fields.is_empty() {
-            let glob = self.current_has_glob;
-            self.fields.push((std::mem::take(&mut self.current), glob));
+            self.push_current_field();
         }
 
-        ExpandResult::FieldsWithGlob(
-            self.fields
-                .drain(..)
-                .map(|(text, has_glob)| FieldEntry { text, has_glob })
-                .collect(),
-        )
+        argv.reserve(self.fields.len());
+        if !self.has_any_glob || !pathname_expansion {
+            for entry in self.fields.drain(..) {
+                argv.push(entry.text);
+            }
+        } else {
+            for entry in self.fields.drain(..) {
+                if entry.has_glob {
+                    let before = argv.len();
+                    super::pathname::expand_pathname_into(&entry.text, argv);
+                    if argv.len() == before {
+                        argv.push(entry.text);
+                    }
+                } else {
+                    argv.push(entry.text);
+                }
+            }
+        }
+        Ok(())
     }
 
-    fn finish_at_expansion(&mut self) -> ExpandResult {
+    fn finish_at_expansion_into(&mut self, argv: &mut Vec<Vec<u8>>) -> Result<(), ExpandError> {
         if self.at_empty && self.at_field_breaks.is_empty() {
             if !self.current.is_empty() || self.had_quoted_null_outside_at {
-                return ExpandResult::Fields(vec![self.drain_single_vec()]);
+                argv.push(self.drain_single_vec());
             }
-            return ExpandResult::Fields(Vec::new());
+            return Ok(());
         }
 
         if self.at_field_breaks.is_empty() {
-            return ExpandResult::Fields(vec![self.drain_single_vec()]);
+            argv.push(self.drain_single_vec());
+            return Ok(());
         }
 
         if !self.current.is_empty() {
-            self.fields.push((std::mem::take(&mut self.current), false));
+            self.fields.push(FieldEntry {
+                text: std::mem::take(&mut self.current),
+                has_glob: false,
+            });
+            self.current_has_glob = false;
         }
-
-        ExpandResult::Fields(self.fields.drain(..).map(|(f, _)| f).collect())
+        argv.reserve(self.fields.len());
+        for entry in self.fields.drain(..) {
+            argv.push(entry.text);
+        }
+        Ok(())
     }
-}
-
-#[derive(Debug)]
-pub(super) enum ExpandResult {
-    Fields(Vec<Vec<u8>>),
-    FieldsWithGlob(Vec<FieldEntry>),
-}
-
-#[derive(Debug)]
-pub(super) struct FieldEntry {
-    pub(super) text: Vec<u8>,
-    pub(super) has_glob: bool,
-}
-
-pub(super) fn expand_parts_into_new<C: Context>(
-    ctx: &mut C,
-    raw: &[u8],
-    parts: &[WordPart],
-    ifs: &[u8],
-    quoted: bool,
-) -> Result<ExpandOutput, ExpandError> {
-    let mut output = ExpandOutput::new();
-    expand_parts_into(ctx, raw, parts, ifs, quoted, &mut output)?;
-    Ok(output)
 }
 
 pub(super) fn expand_parts_into<C: Context>(

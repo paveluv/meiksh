@@ -90,6 +90,9 @@ impl Shell {
         if name == b"PATH" {
             self.path_cache_mut().clear();
         }
+        if name == b"IFS" {
+            self.expand_scratch.invalidate_ifs();
+        }
         if let Some(existing) = self.env_mut().get_mut(name) {
             existing.clear();
             existing.extend_from_slice(value);
@@ -138,6 +141,9 @@ impl Shell {
         self.exported_mut().remove(name);
         if name == b"PATH" {
             self.path_cache_mut().clear();
+        }
+        if name == b"IFS" {
+            self.expand_scratch.invalidate_ifs();
         }
         if is_locale_var(name) {
             #[cfg(not(test))]

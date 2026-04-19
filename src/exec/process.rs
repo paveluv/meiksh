@@ -140,7 +140,8 @@ pub(super) fn run_prepared_process(
     }
 
     shell.restore_signals_for_child();
-    match sys::process::exec_replace(&prepared.exec_path, &prepared.argv) {
+    let argv_owned: Vec<Vec<u8>> = prepared.argv.iter().map(|arg| arg.to_vec()).collect();
+    match sys::process::exec_replace(&prepared.exec_path, argv_owned) {
         Err(err) if err.is_enoexec() => {
             let mut child_shell = shell.clone();
             child_shell.owns_terminal = false;
