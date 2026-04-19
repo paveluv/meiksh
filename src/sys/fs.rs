@@ -6,7 +6,7 @@ use super::constants::{F_OK, O_CLOEXEC, O_RDONLY};
 use super::constants::{O_CREAT, O_EXCL, O_TRUNC};
 use super::error::{SysError, SysResult};
 use super::fd_io::{close_fd, read_fd};
-use super::interface::{last_error, set_errno, sys_interface};
+use super::interface::{self, last_error, set_errno};
 use super::types::FileStat;
 
 fn to_cstring(path: &[u8]) -> SysResult<CString> {
@@ -16,7 +16,7 @@ fn to_cstring(path: &[u8]) -> SysResult<CString> {
 fn stat_raw(path: &[u8]) -> SysResult<libc::stat> {
     let c_path = to_cstring(path)?;
     let mut buf = std::mem::MaybeUninit::<libc::stat>::zeroed();
-    let result = (sys_interface().stat)(c_path.as_ptr(), buf.as_mut_ptr());
+    let result = interface::stat(c_path.as_ptr(), buf.as_mut_ptr());
     if result == 0 {
         Ok(unsafe { buf.assume_init() })
     } else {
@@ -26,7 +26,7 @@ fn stat_raw(path: &[u8]) -> SysResult<libc::stat> {
 
 pub(crate) fn open_file(path: &[u8], flags: c_int, mode: mode_t) -> SysResult<c_int> {
     let c_path = to_cstring(path)?;
-    let result = (sys_interface().open)(c_path.as_ptr(), flags, mode);
+    let result = interface::open(c_path.as_ptr(), flags, mode);
     if result >= 0 {
         Ok(result)
     } else {
@@ -49,7 +49,7 @@ pub(crate) fn stat_path(path: &[u8]) -> SysResult<FileStat> {
 fn lstat_raw(path: &[u8]) -> SysResult<libc::stat> {
     let c_path = to_cstring(path)?;
     let mut buf = std::mem::MaybeUninit::<libc::stat>::zeroed();
-    let result = (sys_interface().lstat)(c_path.as_ptr(), buf.as_mut_ptr());
+    let result = interface::lstat(c_path.as_ptr(), buf.as_mut_ptr());
     if result == 0 {
         Ok(unsafe { buf.assume_init() })
     } else {
@@ -71,7 +71,7 @@ pub(crate) fn lstat_path(path: &[u8]) -> SysResult<FileStat> {
 
 pub(crate) fn access_path(path: &[u8], mode: c_int) -> SysResult<()> {
     let c_path = to_cstring(path)?;
-    let result = (sys_interface().access)(c_path.as_ptr(), mode);
+    let result = interface::access(c_path.as_ptr(), mode);
     if result == 0 {
         Ok(())
     } else {
@@ -88,7 +88,7 @@ pub(crate) fn file_exists(path: &[u8]) -> bool {
 /// reusable scratch buffer). Equivalent to `file_exists` but skips the
 /// per-call `CString` materialisation that showed up in the glob profile.
 pub(crate) fn file_exists_cstr(cstr: &CStr) -> bool {
-    (sys_interface().access)(cstr.as_ptr(), F_OK) == 0
+    interface::access(cstr.as_ptr(), F_OK) == 0
 }
 
 pub(crate) fn is_directory(path: &[u8]) -> bool {
@@ -103,7 +103,7 @@ pub(crate) fn is_regular_file(path: &[u8]) -> bool {
 
 pub(crate) fn change_dir(path: &[u8]) -> SysResult<()> {
     let c_path = to_cstring(path)?;
-    let result = (sys_interface().chdir)(c_path.as_ptr());
+    let result = interface::chdir(c_path.as_ptr());
     if result == 0 {
         Ok(())
     } else {
@@ -113,7 +113,7 @@ pub(crate) fn change_dir(path: &[u8]) -> SysResult<()> {
 
 pub(crate) fn get_cwd() -> SysResult<Vec<u8>> {
     let mut buf = vec![0u8; 4096];
-    let result = (sys_interface().getcwd)(buf.as_mut_ptr().cast(), buf.len());
+    let result = interface::getcwd(buf.as_mut_ptr().cast(), buf.len());
     if result.is_null() {
         Err(last_error())
     } else {
@@ -137,7 +137,7 @@ pub(crate) fn read_dir_entries(path: &[u8]) -> SysResult<Vec<CString>> {
 /// owned C strings — matching what dash/glibc's `glob(3)` do — instead of
 /// rebuilding a fresh `CString` on every comparison.
 pub(crate) fn read_dir_entries_cstr(cstr: &CStr) -> SysResult<Vec<CString>> {
-    let dirp = (sys_interface().opendir)(cstr.as_ptr());
+    let dirp = interface::opendir(cstr.as_ptr());
     if dirp.is_null() {
         return Err(last_error());
     }
@@ -145,10 +145,10 @@ pub(crate) fn read_dir_entries_cstr(cstr: &CStr) -> SysResult<Vec<CString>> {
     let mut entries = Vec::new();
     loop {
         set_errno(0);
-        let ent = (sys_interface().readdir)(dirp);
+        let ent = interface::readdir(dirp);
         if ent.is_null() {
             let errno = last_error();
-            (sys_interface().closedir)(dirp);
+            interface::closedir(dirp);
             if errno.errno() == Some(0) {
                 break;
             }
@@ -165,7 +165,7 @@ pub(crate) fn read_dir_entries_cstr(cstr: &CStr) -> SysResult<Vec<CString>> {
 
 pub(crate) fn canonicalize(path: &[u8]) -> SysResult<Vec<u8>> {
     let c_path = to_cstring(path)?;
-    let result = (sys_interface().realpath)(c_path.as_ptr(), std::ptr::null_mut());
+    let result = interface::realpath(c_path.as_ptr(), std::ptr::null_mut());
     if result.is_null() {
         Err(last_error())
     } else {
@@ -196,7 +196,7 @@ pub(crate) fn read_file(path: &[u8]) -> SysResult<Vec<u8>> {
 
 pub(crate) fn unlink(path: &[u8]) -> SysResult<()> {
     let c_path = to_cstring(path)?;
-    let result = (sys_interface().unlink)(c_path.as_ptr());
+    let result = interface::unlink(c_path.as_ptr());
     if result == 0 {
         Ok(())
     } else {
@@ -260,14 +260,12 @@ pub(crate) fn open_for_redirect(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use libc::{c_char, c_int, mode_t};
 
     use crate::sys::test_support;
     use crate::trace_entries;
 
     use super::super::constants::{O_CREAT, O_EXCL, O_TRUNC, O_WRONLY};
     use super::super::error::SysError;
-    use super::super::interface::{SystemInterface, default_interface};
 
     #[test]
     fn read_dir_entries_readdir_error() {
@@ -285,60 +283,63 @@ mod tests {
 
     #[test]
     fn change_dir_error() {
-        fn fake_chdir(_: *const c_char) -> c_int {
-            -1
-        }
-        let fake = SystemInterface {
-            chdir: fake_chdir,
-            ..default_interface()
-        };
-        test_support::with_test_interface(fake, || {
-            assert!(change_dir(b"/nonexistent").is_err());
-        });
+        test_support::run_trace(
+            trace_entries![
+                chdir(_) -> err(libc::ENOENT),
+            ],
+            || {
+                assert!(change_dir(b"/nonexistent").is_err());
+            },
+        );
     }
 
     #[test]
     fn canonicalize_error() {
-        fn fake_realpath(_: *const c_char, _: *mut c_char) -> *mut c_char {
-            std::ptr::null_mut()
-        }
-        let fake = SystemInterface {
-            realpath: fake_realpath,
-            ..default_interface()
-        };
-        test_support::with_test_interface(fake, || {
-            assert!(canonicalize(b"/nonexistent").is_err());
-        });
+        test_support::run_trace(
+            trace_entries![
+                realpath(_, _) -> err(libc::ENOENT),
+            ],
+            || {
+                assert!(canonicalize(b"/nonexistent").is_err());
+            },
+        );
     }
 
     #[test]
     fn open_for_redirect_noclobber_rewrites_flags() {
-        use std::sync::atomic::{AtomicI32, Ordering};
-        static CAPTURED_FLAGS: AtomicI32 = AtomicI32::new(0);
+        let noclobber_flags = (O_WRONLY | O_CREAT | O_EXCL) as i64;
+        let clobber_flags = (O_WRONLY | O_TRUNC | O_CREAT) as i64;
+        test_support::run_trace(
+            vec![
+                test_support::t(
+                    "open",
+                    vec![
+                        test_support::ArgMatcher::Any,
+                        test_support::ArgMatcher::Int(noclobber_flags),
+                        test_support::ArgMatcher::Any,
+                    ],
+                    test_support::TraceResult::Int(5),
+                ),
+                test_support::t(
+                    "open",
+                    vec![
+                        test_support::ArgMatcher::Any,
+                        test_support::ArgMatcher::Int(clobber_flags),
+                        test_support::ArgMatcher::Any,
+                    ],
+                    test_support::TraceResult::Int(5),
+                ),
+            ],
+            || {
+                let fd = open_for_redirect(b"/tmp/out", O_WRONLY | O_TRUNC | O_CREAT, 0o666, true)
+                    .expect("open");
+                assert_eq!(fd, 5);
 
-        fn fake_open(_: *const c_char, flags: c_int, _: mode_t) -> c_int {
-            CAPTURED_FLAGS.store(flags, Ordering::SeqCst);
-            5
-        }
-        let fake = SystemInterface {
-            open: fake_open,
-            ..default_interface()
-        };
-        test_support::with_test_interface(fake, || {
-            let fd = open_for_redirect(b"/tmp/out", O_WRONLY | O_TRUNC | O_CREAT, 0o666, true)
-                .expect("open");
-            assert_eq!(fd, 5);
-            let flags = CAPTURED_FLAGS.load(Ordering::SeqCst);
-            assert!(flags & O_TRUNC == 0);
-            assert!(flags & O_EXCL != 0);
-            assert!(flags & O_CREAT != 0);
-
-            let fd = open_for_redirect(b"/tmp/out", O_WRONLY | O_TRUNC | O_CREAT, 0o666, false)
-                .expect("open");
-            assert_eq!(fd, 5);
-            let flags = CAPTURED_FLAGS.load(Ordering::SeqCst);
-            assert!(flags & O_TRUNC != 0);
-        });
+                let fd = open_for_redirect(b"/tmp/out", O_WRONLY | O_TRUNC | O_CREAT, 0o666, false)
+                    .expect("open");
+                assert_eq!(fd, 5);
+            },
+        );
     }
 
     #[test]

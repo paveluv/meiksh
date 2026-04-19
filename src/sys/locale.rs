@@ -4,18 +4,14 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 #[cfg(not(test))]
 use libc::c_int;
 
-#[cfg(test)]
-use super::interface::sys_interface;
-
 /// Cached `MB_CUR_MAX` for the currently installed locale. A value of `0`
 /// is a sentinel meaning "not yet initialized"; valid values are `>= 1`.
 ///
 /// The cache is refreshed on every `setup_locale` / `reinit_locale` so that
 /// the ASCII-fast-path decision in `decode_char` / `count_chars` /
-/// `first_char_len` remains correct across locale changes. In tests that do
-/// not install a `SystemInterface`, the cache is bypassed entirely and the
-/// functions fall back to single-byte behaviour (matching the pre-existing
-/// no-interface fallback path).
+/// `first_char_len` remains correct across locale changes. In `#[cfg(test)]`
+/// the cache is bypassed entirely so `set_test_locale_*` flips take effect
+/// immediately.
 static MB_CUR_MAX_CACHE: AtomicUsize = AtomicUsize::new(0);
 
 #[inline]
@@ -26,10 +22,9 @@ fn cache_mb_cur_max(value: usize) {
 
 /// Returns the cached `MB_CUR_MAX`, populating it on first use.
 ///
-/// In `#[cfg(test)]`, if no `SystemInterface` is installed we return `1`
-/// without touching the cache, so that functions like `count_chars` remain
-/// usable in pure-logic tests (`assert_no_syscalls`) and honour
-/// `set_test_locale_*` changes.
+/// In `#[cfg(test)]` we bypass the cache entirely so that `set_test_locale_*`
+/// flips take effect immediately and pure-logic tests (`assert_no_syscalls`)
+/// remain usable.
 #[cfg(not(test))]
 #[inline]
 fn mb_cur_max_cached() -> usize {
@@ -46,9 +41,6 @@ fn mb_cur_max_cached() -> usize {
 #[cfg(test)]
 #[inline]
 fn mb_cur_max_cached() -> usize {
-    if super::test_support::current_interface().is_none() {
-        return 1;
-    }
     // In tests the implementation is cheap and reflects live
     // `set_test_locale_*` changes. Skipping the cache here avoids stale
     // reads when tests flip locale mid-run.
@@ -140,8 +132,8 @@ fn classify_wchar(class: &[u8], wc: u32) -> bool {
 // Public locale API. Each function is cfg-split: `#[cfg(not(test))]`
 // goes straight to libc, `#[cfg(test)]` is a pure-logic fake driven
 // by the `TEST_LOCALE` thread-local maintained in `test_support`.
-// These functions are NOT routed through `SystemInterface` — only
-// truly traced syscalls live on that vtable.
+// These functions are not traced — only true syscalls live in the
+// `trace_*` tables maintained by `test_support`.
 // ------------------------------------------------------------------
 
 #[cfg(not(test))]
@@ -168,12 +160,9 @@ pub(crate) fn reinit_locale() {
 
 #[cfg(test)]
 pub(crate) fn reinit_locale() {
-    if super::test_support::current_interface().is_none() {
-        return;
-    }
     // The test fake consults the traced `getenv` so the test author
     // can script the exact lookup sequence via `trace_entries!`.
-    let val = (sys_interface().getenv)(b"LC_ALL").or_else(|| (sys_interface().getenv)(b"LANG"));
+    let val = super::interface::getenv(b"LC_ALL").or_else(|| super::interface::getenv(b"LANG"));
     let is_utf8 = match val {
         Some(v) => {
             let upper: Vec<u8> = v.iter().map(|b| b.to_ascii_uppercase()).collect();
@@ -247,9 +236,8 @@ pub(crate) fn classify_char(class: &[u8], wc: u32) -> bool {
 /// locale), so any `bytes[0] < 0x80` is unambiguously a single-byte
 /// character. Likewise, a locale with `MB_CUR_MAX == 1` is single-byte by
 /// definition, so the whole decode reduces to `(bytes[0] as u32, 1)`.
-/// Both shortcuts avoid the `mbrtowc` FFI and — in production — the
-/// `sys_interface()` indirect call that would otherwise dominate the
-/// profile for ASCII-heavy inputs under `LC_ALL=C.UTF-8`.
+/// Both shortcuts avoid the `mbrtowc` FFI that would otherwise dominate
+/// the profile for ASCII-heavy inputs under `LC_ALL=C.UTF-8`.
 pub(crate) fn decode_char(bytes: &[u8]) -> (u32, usize) {
     if bytes.is_empty() {
         return (0, 0);
@@ -260,12 +248,6 @@ pub(crate) fn decode_char(bytes: &[u8]) -> (u32, usize) {
     }
     if mb_cur_max_cached() == 1 {
         return (b0 as u32, 1);
-    }
-    #[cfg(test)]
-    {
-        if super::test_support::current_interface().is_none() {
-            return (b0 as u32, 1);
-        }
     }
     decode_char_impl(bytes)
 }
@@ -359,9 +341,9 @@ pub(crate) fn encode_char(wc: u32) -> Vec<u8> {
 /// Count multibyte characters in `bytes`, stopping at the first NUL byte.
 ///
 /// Fast path: scan ASCII bytes (`<0x80`) in a tight loop without touching
-/// `decode_char` / `sys_interface`. Only the first non-ASCII byte requires
-/// a real decode — and even there, `decode_char` itself uses the cached
-/// `MB_CUR_MAX` to short-circuit single-byte locales.
+/// `decode_char`. Only the first non-ASCII byte requires a real decode —
+/// and even there, `decode_char` itself uses the cached `MB_CUR_MAX` to
+/// short-circuit single-byte locales.
 pub(crate) fn count_chars(bytes: &[u8]) -> u64 {
     let mut count = 0u64;
     let mut i = 0;
@@ -602,8 +584,8 @@ mod tests {
         });
     }
 
-    /// Exercises the pure-ASCII hot path: no test interface is installed,
-    /// so any call that reached `sys_interface()` would panic. Success
+    /// Exercises the pure-ASCII hot path under `assert_no_syscalls`: any
+    /// syscall that escaped to a trace dispatcher would panic. Success
     /// means `count_chars` and `first_char_len` answered the ASCII bytes
     /// without dispatching at all.
     #[test]

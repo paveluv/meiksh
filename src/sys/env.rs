@@ -1,25 +1,25 @@
 use super::error::SysResult;
-use super::interface::sys_interface;
+use super::interface;
 use crate::hash::ShellMap;
 
 pub(crate) fn env_set_var(key: &[u8], value: &[u8]) -> SysResult<()> {
-    (sys_interface().setenv)(key, value)
+    interface::setenv(key, value)
 }
 
 pub(crate) fn env_unset_var(key: &[u8]) -> SysResult<()> {
-    (sys_interface().unsetenv)(key)
+    interface::unsetenv(key)
 }
 
 pub(crate) fn env_var(key: &[u8]) -> Option<Vec<u8>> {
-    (sys_interface().getenv)(key)
+    interface::getenv(key)
 }
 
 pub(crate) fn env_vars() -> ShellMap<Vec<u8>, Vec<u8>> {
-    (sys_interface().get_environ)()
+    interface::get_environ()
 }
 
 pub(crate) fn home_dir_for_user(name: &[u8]) -> Option<Vec<u8>> {
-    (sys_interface().getpwnam)(name)
+    interface::getpwnam(name)
 }
 
 #[allow(clippy::disallowed_methods)]
@@ -32,7 +32,6 @@ pub(crate) fn env_args_os() -> Vec<Vec<u8>> {
 mod tests {
     use super::*;
 
-    use super::super::interface::sys_interface;
     use crate::sys::test_support::{ArgMatcher, TraceResult, run_trace, t};
     use crate::trace_entries;
 
@@ -66,7 +65,7 @@ mod tests {
                 )]
             ],
             || {
-                let val = (sys_interface().getenv)(b"HOME");
+                let val = env_var(b"HOME");
                 assert_eq!(val, Some(b"/home/user".to_vec()));
             },
         );
@@ -87,7 +86,7 @@ mod tests {
                 )]
             ],
             || {
-                let map = (sys_interface().get_environ)();
+                let map = env_vars();
                 assert_eq!(map.get(b"HOME".as_ref()), Some(&b"/home/user".to_vec()));
                 assert_eq!(map.get(b"PATH".as_ref()), Some(&b"/usr/bin".to_vec()));
             },

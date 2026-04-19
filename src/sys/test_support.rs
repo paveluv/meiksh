@@ -1,23 +1,13 @@
 use libc::{c_char, c_int, c_long, mode_t};
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::ffi::{CStr, CString};
-use std::sync::Mutex;
 
 use super::constants::{EINTR, SIG_ERR_HANDLER};
 use super::error::{SysError, SysResult};
-use super::interface::{SystemInterface, set_errno, signal_mask};
+use super::interface::{set_errno, signal_mask};
 use super::types::{ClockTicks, FileModeMask, Pid};
 
 thread_local! {
-    // Pointer to the active test `SystemInterface`. The pointer is valid for
-    // the lifetime of the enclosing `with_test_interface` scope, which owns
-    // the `SystemInterface` on its stack and restores the previous pointer
-    // on exit. `current_interface` returns `Option<&'static SystemInterface>`
-    // — the `'static` is a convenience lie justified by the single-threaded
-    // guard and the "never stash the reference" calling convention in
-    // `sys_interface()`; references are used for immediate dispatch only.
-    static TEST_INTERFACE: Cell<*const SystemInterface> =
-        const { Cell::new(std::ptr::null()) };
     static TEST_ERRNO: RefCell<c_int> = const { RefCell::new(0) };
     static TEST_PENDING_SIGNALS: RefCell<usize> = const { RefCell::new(0) };
     static TEST_PROCESS_IDS: RefCell<Option<(libc::uid_t, libc::uid_t, libc::gid_t, libc::gid_t)>> =
@@ -46,29 +36,6 @@ pub(crate) fn test_locale_is_utf8() -> bool {
     TEST_LOCALE.with(|cell| *cell.borrow() == TestLocale::Utf8)
 }
 
-fn syscall_lock() -> &'static Mutex<()> {
-    static LOCK: Mutex<()> = Mutex::new(());
-    &LOCK
-}
-
-pub(super) fn current_interface() -> Option<&'static SystemInterface> {
-    TEST_INTERFACE.with(|cell| {
-        let ptr = cell.get();
-        if ptr.is_null() {
-            None
-        } else {
-            // SAFETY: `ptr` is set by `with_test_interface`, whose caller
-            // owns the `SystemInterface` on its stack for the duration of
-            // the call. `current_interface` is only used from within that
-            // scope (indirectly, via `sys_interface()` -> one syscall
-            // dispatch), so the reference is valid for the immediate
-            // dispatch. Returning `'static` is a convenience; callers in
-            // `src/sys/*` never store the reference.
-            Some(unsafe { &*ptr })
-        }
-    })
-}
-
 pub(crate) fn current_process_ids() -> Option<(libc::uid_t, libc::uid_t, libc::gid_t, libc::gid_t)>
 {
     TEST_PROCESS_IDS.with(|cell| *cell.borrow())
@@ -89,21 +56,6 @@ pub(crate) fn test_pending_signal_bits() -> usize {
 
 pub(crate) fn test_take_pending_signal_bits() -> usize {
     TEST_PENDING_SIGNALS.with(|cell| cell.replace(0))
-}
-
-pub(super) fn with_test_interface<T>(iface: SystemInterface, f: impl FnOnce() -> T) -> T {
-    let _guard = syscall_lock()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    // Own the interface on our stack for the duration of the closure so
-    // that the pointer stashed in `TEST_INTERFACE` stays valid.
-    let iface_slot: SystemInterface = iface;
-    TEST_INTERFACE.with(|cell| {
-        let previous = cell.replace(&iface_slot as *const SystemInterface);
-        let result = f();
-        cell.set(previous);
-        result
-    })
 }
 
 pub(crate) fn set_pending_signals_for_test(signals: &[c_int]) {
@@ -349,15 +301,15 @@ pub(crate) fn encode_continued() -> c_int {
 }
 
 // Trace-dispatching syscall implementations
-fn trace_getpid() -> Pid {
+pub(super) fn trace_getpid() -> Pid {
     let entry = trace_dispatch("getpid", &[]);
     apply_trace_result_pid(&entry)
 }
-fn trace_getppid() -> Pid {
+pub(super) fn trace_getppid() -> Pid {
     let entry = trace_dispatch("getppid", &[]);
     apply_trace_result_pid(&entry)
 }
-fn trace_waitpid(pid: Pid, status: *mut c_int, options: c_int) -> Pid {
+pub(super) fn trace_waitpid(pid: Pid, status: *mut c_int, options: c_int) -> Pid {
     let entry = trace_dispatch(
         "waitpid",
         &[
@@ -397,14 +349,14 @@ fn trace_waitpid(pid: Pid, status: *mut c_int, options: c_int) -> Pid {
     }
     apply_trace_result_pid(&entry)
 }
-fn trace_kill(pid: Pid, sig: c_int) -> c_int {
+pub(super) fn trace_kill(pid: Pid, sig: c_int) -> c_int {
     let entry = trace_dispatch(
         "kill",
         &[ArgMatcher::Int(pid as i64), ArgMatcher::Int(sig as i64)],
     );
     apply_trace_result_int(&entry)
 }
-fn trace_signal(sig: c_int, handler: libc::sighandler_t) -> libc::sighandler_t {
+pub(super) fn trace_signal(sig: c_int, handler: libc::sighandler_t) -> libc::sighandler_t {
     let _ = handler;
     let entry = trace_dispatch("signal", &[ArgMatcher::Int(sig as i64), ArgMatcher::Any]);
     match &entry.result {
@@ -416,29 +368,29 @@ fn trace_signal(sig: c_int, handler: libc::sighandler_t) -> libc::sighandler_t {
         _ => 0 as libc::sighandler_t,
     }
 }
-fn trace_isatty(fd: c_int) -> c_int {
+pub(super) fn trace_isatty(fd: c_int) -> c_int {
     let entry = trace_dispatch("isatty", &[ArgMatcher::Fd(fd)]);
     apply_trace_result_int(&entry)
 }
-fn trace_tcgetpgrp(fd: c_int) -> Pid {
+pub(super) fn trace_tcgetpgrp(fd: c_int) -> Pid {
     let entry = trace_dispatch("tcgetpgrp", &[ArgMatcher::Fd(fd)]);
     apply_trace_result_pid(&entry)
 }
-fn trace_tcsetpgrp(fd: c_int, pgrp: Pid) -> c_int {
+pub(super) fn trace_tcsetpgrp(fd: c_int, pgrp: Pid) -> c_int {
     let entry = trace_dispatch(
         "tcsetpgrp",
         &[ArgMatcher::Fd(fd), ArgMatcher::Int(pgrp as i64)],
     );
     apply_trace_result_int(&entry)
 }
-fn trace_setpgid(pid: Pid, pgid: Pid) -> c_int {
+pub(super) fn trace_setpgid(pid: Pid, pgid: Pid) -> c_int {
     let entry = trace_dispatch(
         "setpgid",
         &[ArgMatcher::Int(pid as i64), ArgMatcher::Int(pgid as i64)],
     );
     apply_trace_result_int(&entry)
 }
-fn trace_pipe(fds: &mut [c_int; 2]) -> c_int {
+pub(super) fn trace_pipe(fds: &mut [c_int; 2]) -> c_int {
     let entry = trace_dispatch("pipe", &[]);
     match &entry.result {
         TraceResult::Fds(r, w) => {
@@ -455,15 +407,15 @@ fn trace_pipe(fds: &mut [c_int; 2]) -> c_int {
         }
     }
 }
-fn trace_dup2(oldfd: c_int, newfd: c_int) -> c_int {
+pub(super) fn trace_dup2(oldfd: c_int, newfd: c_int) -> c_int {
     let entry = trace_dispatch("dup2", &[ArgMatcher::Fd(oldfd), ArgMatcher::Fd(newfd)]);
     apply_trace_result_int(&entry)
 }
-fn trace_close(fd: c_int) -> c_int {
+pub(super) fn trace_close(fd: c_int) -> c_int {
     let entry = trace_dispatch("close", &[ArgMatcher::Fd(fd)]);
     apply_trace_result_int(&entry)
 }
-fn trace_fcntl(fd: c_int, cmd: c_int, arg: c_int) -> c_int {
+pub(super) fn trace_fcntl(fd: c_int, cmd: c_int, arg: c_int) -> c_int {
     let entry = trace_dispatch(
         "fcntl",
         &[
@@ -474,7 +426,7 @@ fn trace_fcntl(fd: c_int, cmd: c_int, arg: c_int) -> c_int {
     );
     apply_trace_result_int(&entry)
 }
-fn trace_read(fd: c_int, buf: &mut [u8]) -> isize {
+pub(super) fn trace_read(fd: c_int, buf: &mut [u8]) -> isize {
     let entry = trace_dispatch("read", &[ArgMatcher::Fd(fd), ArgMatcher::Any]);
     match &entry.result {
         TraceResult::Bytes(data) => {
@@ -496,14 +448,14 @@ fn trace_read(fd: c_int, buf: &mut [u8]) -> isize {
         ),
     }
 }
-fn trace_umask(cmask: FileModeMask) -> FileModeMask {
+pub(super) fn trace_umask(cmask: FileModeMask) -> FileModeMask {
     let entry = trace_dispatch("umask", &[ArgMatcher::Int(cmask as i64)]);
     match &entry.result {
         TraceResult::Int(v) => *v as FileModeMask,
         other => panic!("trace result type mismatch for 'umask': expected Int, got {other:?}"),
     }
 }
-fn trace_times(_buffer: *mut libc::tms) -> ClockTicks {
+pub(super) fn trace_times(_buffer: *mut libc::tms) -> ClockTicks {
     let entry = trace_dispatch("times", &[ArgMatcher::Any]);
     match &entry.result {
         TraceResult::Int(v) => *v as ClockTicks,
@@ -513,7 +465,7 @@ fn trace_times(_buffer: *mut libc::tms) -> ClockTicks {
         }
     }
 }
-fn trace_monotonic_clock_ns() -> u64 {
+pub(super) fn trace_monotonic_clock_ns() -> u64 {
     let entry = trace_dispatch("monotonic_clock_ns", &[]);
     match &entry.result {
         TraceResult::Int(ns) => *ns as u64,
@@ -524,21 +476,25 @@ fn trace_monotonic_clock_ns() -> u64 {
         }
     }
 }
-fn trace_sysconf(name: c_int) -> c_long {
+pub(super) fn trace_sysconf(name: c_int) -> c_long {
     let entry = trace_dispatch("sysconf", &[ArgMatcher::Int(name as i64)]);
     match &entry.result {
         TraceResult::Int(v) => *v as c_long,
+        TraceResult::Err(errno) => {
+            set_errno(*errno);
+            -1
+        }
         other => {
-            panic!("trace result type mismatch for 'sysconf': expected Int, got {other:?}")
+            panic!("trace result type mismatch for 'sysconf': expected Int/Err, got {other:?}")
         }
     }
 }
-fn trace_execvp(file: *const c_char, _argv: *const *const c_char) -> c_int {
+pub(super) fn trace_execvp(file: *const c_char, _argv: *const *const c_char) -> c_int {
     let name = crate::bstr::bytes_from_cstr(unsafe { CStr::from_ptr(file) });
     let entry = trace_dispatch("execvp", &[ArgMatcher::Str(name), ArgMatcher::Any]);
     apply_trace_result_int(&entry)
 }
-fn trace_execve(
+pub(super) fn trace_execve(
     file: *const c_char,
     _argv: *const *const c_char,
     _envp: *const *const c_char,
@@ -547,7 +503,7 @@ fn trace_execve(
     let entry = trace_dispatch("execve", &[ArgMatcher::Str(name), ArgMatcher::Any]);
     apply_trace_result_int(&entry)
 }
-fn trace_open(path: *const c_char, flags: c_int, mode: mode_t) -> c_int {
+pub(super) fn trace_open(path: *const c_char, flags: c_int, mode: mode_t) -> c_int {
     let p = crate::bstr::bytes_from_cstr(unsafe { CStr::from_ptr(path) });
     let entry = trace_dispatch(
         "open",
@@ -559,7 +515,7 @@ fn trace_open(path: *const c_char, flags: c_int, mode: mode_t) -> c_int {
     );
     apply_trace_result_int(&entry)
 }
-fn trace_write(fd: c_int, data: &[u8]) -> isize {
+pub(super) fn trace_write(fd: c_int, data: &[u8]) -> isize {
     let entry = trace_dispatch(
         "write",
         &[ArgMatcher::Fd(fd), ArgMatcher::Bytes(data.to_vec())],
@@ -616,7 +572,7 @@ fn fill_stat_buf(result: &TraceResult, buf: *mut libc::stat) -> Option<c_int> {
     }
 }
 
-fn trace_stat(path: *const c_char, buf: *mut libc::stat) -> c_int {
+pub(super) fn trace_stat(path: *const c_char, buf: *mut libc::stat) -> c_int {
     let p = crate::bstr::bytes_from_cstr(unsafe { CStr::from_ptr(path) });
     let entry = trace_dispatch("stat", &[ArgMatcher::Str(p), ArgMatcher::Any]);
     fill_stat_buf(&entry.result, buf).unwrap_or_else(|| {
@@ -627,7 +583,7 @@ fn trace_stat(path: *const c_char, buf: *mut libc::stat) -> c_int {
     })
 }
 
-fn trace_lstat(path: *const c_char, buf: *mut libc::stat) -> c_int {
+pub(super) fn trace_lstat(path: *const c_char, buf: *mut libc::stat) -> c_int {
     let p = crate::bstr::bytes_from_cstr(unsafe { CStr::from_ptr(path) });
     let entry = trace_dispatch("lstat", &[ArgMatcher::Str(p), ArgMatcher::Any]);
     fill_stat_buf(&entry.result, buf).unwrap_or_else(|| {
@@ -635,7 +591,7 @@ fn trace_lstat(path: *const c_char, buf: *mut libc::stat) -> c_int {
     })
 }
 
-fn trace_fstat(fd: c_int, buf: *mut libc::stat) -> c_int {
+pub(super) fn trace_fstat(fd: c_int, buf: *mut libc::stat) -> c_int {
     let entry = trace_dispatch("fstat", &[ArgMatcher::Fd(fd), ArgMatcher::Any]);
     fill_stat_buf(&entry.result, buf).unwrap_or_else(|| {
         panic!(
@@ -645,7 +601,7 @@ fn trace_fstat(fd: c_int, buf: *mut libc::stat) -> c_int {
     })
 }
 
-fn trace_access(path: *const c_char, mode: c_int) -> c_int {
+pub(super) fn trace_access(path: *const c_char, mode: c_int) -> c_int {
     let p = crate::bstr::bytes_from_cstr(unsafe { CStr::from_ptr(path) });
     let entry = trace_dispatch(
         "access",
@@ -653,12 +609,12 @@ fn trace_access(path: *const c_char, mode: c_int) -> c_int {
     );
     apply_trace_result_int(&entry)
 }
-fn trace_chdir(path: *const c_char) -> c_int {
+pub(super) fn trace_chdir(path: *const c_char) -> c_int {
     let p = crate::bstr::bytes_from_cstr(unsafe { CStr::from_ptr(path) });
     let entry = trace_dispatch("chdir", &[ArgMatcher::Str(p)]);
     apply_trace_result_int(&entry)
 }
-fn trace_getcwd(buf: *mut c_char, size: usize) -> *mut c_char {
+pub(super) fn trace_getcwd(buf: *mut c_char, size: usize) -> *mut c_char {
     let entry = trace_dispatch("getcwd", &[]);
     match &entry.result {
         TraceResult::CwdBytes(s) => {
@@ -681,7 +637,7 @@ fn trace_getcwd(buf: *mut c_char, size: usize) -> *mut c_char {
         }
     }
 }
-fn trace_opendir(path: *const c_char) -> *mut libc::DIR {
+pub(super) fn trace_opendir(path: *const c_char) -> *mut libc::DIR {
     let p = crate::bstr::bytes_from_cstr(unsafe { CStr::from_ptr(path) });
     let entry = trace_dispatch("opendir", &[ArgMatcher::Str(p)]);
     match &entry.result {
@@ -698,7 +654,7 @@ fn trace_opendir(path: *const c_char) -> *mut libc::DIR {
 thread_local! {
     static FAKE_DIRENT: std::cell::RefCell<libc::dirent> = const { std::cell::RefCell::new(unsafe { std::mem::zeroed() }) };
 }
-fn trace_readdir(_dirp: *mut libc::DIR) -> *mut libc::dirent {
+pub(super) fn trace_readdir(_dirp: *mut libc::DIR) -> *mut libc::dirent {
     let entry = trace_dispatch("readdir", &[ArgMatcher::Any]);
     match &entry.result {
         TraceResult::DirEntryBytes(name) => FAKE_DIRENT.with(|cell| {
@@ -724,11 +680,11 @@ fn trace_readdir(_dirp: *mut libc::DIR) -> *mut libc::dirent {
         ),
     }
 }
-fn trace_closedir(_dirp: *mut libc::DIR) -> c_int {
+pub(super) fn trace_closedir(_dirp: *mut libc::DIR) -> c_int {
     let entry = trace_dispatch("closedir", &[ArgMatcher::Any]);
     apply_trace_result_int(&entry)
 }
-fn trace_unlink(path: *const c_char) -> c_int {
+pub(super) fn trace_unlink(path: *const c_char) -> c_int {
     let p = crate::bstr::bytes_from_cstr(unsafe { CStr::from_ptr(path) });
     let entry = trace_dispatch("unlink", &[ArgMatcher::Str(p)]);
     match &entry.result {
@@ -744,7 +700,7 @@ fn trace_unlink(path: *const c_char) -> c_int {
     }
 }
 
-fn trace_realpath(path: *const c_char, resolved: *mut c_char) -> *mut c_char {
+pub(super) fn trace_realpath(path: *const c_char, resolved: *mut c_char) -> *mut c_char {
     let p = crate::bstr::bytes_from_cstr(unsafe { CStr::from_ptr(path) });
     let entry = trace_dispatch("realpath", &[ArgMatcher::Str(p), ArgMatcher::Any]);
     match &entry.result {
@@ -781,17 +737,17 @@ fn trace_realpath(path: *const c_char, resolved: *mut c_char) -> *mut c_char {
         ),
     }
 }
-fn trace_fork() -> Pid {
+pub(super) fn trace_fork() -> Pid {
     let entry = trace_dispatch("fork", &[]);
     apply_trace_result_pid(&entry)
 }
-fn trace_exit_process(status: c_int) {
+pub(super) fn trace_exit_process(status: c_int) {
     let _entry = trace_dispatch("exit_process", &[ArgMatcher::Int(status as i64)]);
     TEST_EXIT_STATUS.with(|cell| cell.replace(Some(status)));
     std::panic::panic_any(ChildExitPanic(status));
 }
 
-fn trace_setenv(key: &[u8], value: &[u8]) -> SysResult<()> {
+pub(super) fn trace_setenv(key: &[u8], value: &[u8]) -> SysResult<()> {
     let entry = trace_dispatch(
         "setenv",
         &[
@@ -806,7 +762,7 @@ fn trace_setenv(key: &[u8], value: &[u8]) -> SysResult<()> {
     }
 }
 
-fn trace_unsetenv(key: &[u8]) -> SysResult<()> {
+pub(super) fn trace_unsetenv(key: &[u8]) -> SysResult<()> {
     let entry = trace_dispatch("unsetenv", &[ArgMatcher::Str(key.to_vec())]);
     match entry.result {
         TraceResult::Int(0) => Ok(()),
@@ -815,7 +771,7 @@ fn trace_unsetenv(key: &[u8]) -> SysResult<()> {
     }
 }
 
-fn trace_getenv(key: &[u8]) -> Option<Vec<u8>> {
+pub(super) fn trace_getenv(key: &[u8]) -> Option<Vec<u8>> {
     let entry = trace_dispatch("getenv", &[ArgMatcher::Str(key.to_vec())]);
     match entry.result {
         TraceResult::StrVal(s) => Some(s),
@@ -824,7 +780,7 @@ fn trace_getenv(key: &[u8]) -> Option<Vec<u8>> {
     }
 }
 
-fn trace_get_environ() -> crate::hash::ShellMap<Vec<u8>, Vec<u8>> {
+pub(super) fn trace_get_environ() -> crate::hash::ShellMap<Vec<u8>, Vec<u8>> {
     let entry = trace_dispatch("get_environ", &[]);
     match entry.result {
         TraceResult::EnvMap(map) => map,
@@ -832,7 +788,7 @@ fn trace_get_environ() -> crate::hash::ShellMap<Vec<u8>, Vec<u8>> {
     }
 }
 
-fn trace_getpwnam(name: &[u8]) -> Option<Vec<u8>> {
+pub(super) fn trace_getpwnam(name: &[u8]) -> Option<Vec<u8>> {
     let entry = trace_dispatch("getpwnam", &[ArgMatcher::Str(name.to_vec())]);
     match entry.result {
         TraceResult::StrVal(s) => Some(s),
@@ -840,11 +796,15 @@ fn trace_getpwnam(name: &[u8]) -> Option<Vec<u8>> {
         other => panic!("getpwnam trace: unexpected result {other:?}"),
     }
 }
-fn trace_tcgetattr(_fd: c_int, _termios_p: *mut libc::termios) -> c_int {
+pub(super) fn trace_tcgetattr(_fd: c_int, _termios_p: *mut libc::termios) -> c_int {
     let entry = trace_dispatch("tcgetattr", &[ArgMatcher::Fd(_fd)]);
     apply_trace_result_int(&entry)
 }
-fn trace_tcsetattr(_fd: c_int, _action: c_int, _termios_p: *const libc::termios) -> c_int {
+pub(super) fn trace_tcsetattr(
+    _fd: c_int,
+    _action: c_int,
+    _termios_p: *const libc::termios,
+) -> c_int {
     let entry = trace_dispatch(
         "tcsetattr",
         &[ArgMatcher::Fd(_fd), ArgMatcher::Int(_action as i64)],
@@ -855,228 +815,19 @@ fn trace_tcsetattr(_fd: c_int, _action: c_int, _termios_p: *const libc::termios)
 #[allow(dead_code)]
 pub(crate) struct ChildExitPanic(pub i32);
 
-pub(super) fn trace_interface() -> SystemInterface {
-    SystemInterface {
-        getpid: trace_getpid,
-        getppid: trace_getppid,
-        waitpid: trace_waitpid,
-        kill: trace_kill,
-        signal: trace_signal,
-        isatty: trace_isatty,
-        tcgetpgrp: trace_tcgetpgrp,
-        tcsetpgrp: trace_tcsetpgrp,
-        setpgid: trace_setpgid,
-        pipe: trace_pipe,
-        dup2: trace_dup2,
-        close: trace_close,
-        fcntl: trace_fcntl,
-        read: trace_read,
-        umask: trace_umask,
-        times: trace_times,
-        sysconf: trace_sysconf,
-        execvp: trace_execvp,
-        execve: trace_execve,
-        open: trace_open,
-        write: trace_write,
-        stat: trace_stat,
-        lstat: trace_lstat,
-        fstat: trace_fstat,
-        access: trace_access,
-        chdir: trace_chdir,
-        getcwd: trace_getcwd,
-        opendir: trace_opendir,
-        readdir: trace_readdir,
-        closedir: trace_closedir,
-        realpath: trace_realpath,
-        unlink: trace_unlink,
-        fork: trace_fork,
-        exit_process: trace_exit_process,
-        setenv: trace_setenv,
-        unsetenv: trace_unsetenv,
-        getenv: trace_getenv,
-        get_environ: trace_get_environ,
-        tcgetattr: trace_tcgetattr,
-        tcsetattr: trace_tcsetattr,
-        getpwnam: trace_getpwnam,
-        monotonic_clock_ns: trace_monotonic_clock_ns,
-    }
-}
-
-pub(super) fn no_interface_table() -> SystemInterface {
-    fn panic_getpid() -> Pid {
-        panic!("unexpected syscall 'getpid' in pure-logic test")
-    }
-    fn panic_getppid() -> Pid {
-        panic!("unexpected syscall 'getppid' in pure-logic test")
-    }
-    fn panic_waitpid(_: Pid, _: *mut c_int, _: c_int) -> Pid {
-        panic!("unexpected syscall 'waitpid' in pure-logic test")
-    }
-    fn panic_kill(_: Pid, _: c_int) -> c_int {
-        panic!("unexpected syscall 'kill' in pure-logic test")
-    }
-    fn panic_signal(_: c_int, _: libc::sighandler_t) -> libc::sighandler_t {
-        panic!("unexpected syscall 'signal' in pure-logic test")
-    }
-    fn panic_isatty(_: c_int) -> c_int {
-        panic!("unexpected syscall 'isatty' in pure-logic test")
-    }
-    fn panic_tcgetpgrp(_: c_int) -> Pid {
-        panic!("unexpected syscall 'tcgetpgrp' in pure-logic test")
-    }
-    fn panic_tcsetpgrp(_: c_int, _: Pid) -> c_int {
-        panic!("unexpected syscall 'tcsetpgrp' in pure-logic test")
-    }
-    fn panic_setpgid(_: Pid, _: Pid) -> c_int {
-        panic!("unexpected syscall 'setpgid' in pure-logic test")
-    }
-    fn panic_pipe(_: &mut [c_int; 2]) -> c_int {
-        panic!("unexpected syscall 'pipe' in pure-logic test")
-    }
-    fn panic_dup2(_: c_int, _: c_int) -> c_int {
-        panic!("unexpected syscall 'dup2' in pure-logic test")
-    }
-    fn panic_close(_: c_int) -> c_int {
-        panic!("unexpected syscall 'close' in pure-logic test")
-    }
-    fn panic_fcntl(_: c_int, _: c_int, _: c_int) -> c_int {
-        panic!("unexpected syscall 'fcntl' in pure-logic test")
-    }
-    fn panic_read(_: c_int, _: &mut [u8]) -> isize {
-        panic!("unexpected syscall 'read' in pure-logic test")
-    }
-    fn panic_umask(_: FileModeMask) -> FileModeMask {
-        panic!("unexpected syscall 'umask' in pure-logic test")
-    }
-    fn panic_times(_: *mut libc::tms) -> ClockTicks {
-        panic!("unexpected syscall 'times' in pure-logic test")
-    }
-    fn panic_sysconf(_: c_int) -> c_long {
-        panic!("unexpected syscall 'sysconf' in pure-logic test")
-    }
-    fn panic_execvp(_: *const c_char, _: *const *const c_char) -> c_int {
-        panic!("unexpected syscall 'execvp' in pure-logic test")
-    }
-    fn panic_execve(_: *const c_char, _: *const *const c_char, _: *const *const c_char) -> c_int {
-        panic!("unexpected syscall 'execve' in pure-logic test")
-    }
-    fn panic_open(_: *const c_char, _: c_int, _: mode_t) -> c_int {
-        panic!("unexpected syscall 'open' in pure-logic test")
-    }
-    fn panic_write(_: c_int, _: &[u8]) -> isize {
-        panic!("unexpected syscall 'write' in pure-logic test")
-    }
-    fn panic_stat(_: *const c_char, _: *mut libc::stat) -> c_int {
-        panic!("unexpected syscall 'stat' in pure-logic test")
-    }
-    fn panic_lstat(_: *const c_char, _: *mut libc::stat) -> c_int {
-        panic!("unexpected syscall 'lstat' in pure-logic test")
-    }
-    fn panic_fstat(_: c_int, _: *mut libc::stat) -> c_int {
-        panic!("unexpected syscall 'fstat' in pure-logic test")
-    }
-    fn panic_access(_: *const c_char, _: c_int) -> c_int {
-        panic!("unexpected syscall 'access' in pure-logic test")
-    }
-    fn panic_chdir(_: *const c_char) -> c_int {
-        panic!("unexpected syscall 'chdir' in pure-logic test")
-    }
-    fn panic_getcwd(_: *mut c_char, _: usize) -> *mut c_char {
-        panic!("unexpected syscall 'getcwd' in pure-logic test")
-    }
-    fn panic_opendir(_: *const c_char) -> *mut libc::DIR {
-        panic!("unexpected syscall 'opendir' in pure-logic test")
-    }
-    fn panic_readdir(_: *mut libc::DIR) -> *mut libc::dirent {
-        panic!("unexpected syscall 'readdir' in pure-logic test")
-    }
-    fn panic_closedir(_: *mut libc::DIR) -> c_int {
-        panic!("unexpected syscall 'closedir' in pure-logic test")
-    }
-    fn panic_unlink(_: *const c_char) -> c_int {
-        panic!("unexpected syscall 'unlink' in pure-logic test")
-    }
-    fn panic_realpath(_: *const c_char, _: *mut c_char) -> *mut c_char {
-        panic!("unexpected syscall 'realpath' in pure-logic test")
-    }
-    fn panic_fork() -> Pid {
-        panic!("unexpected syscall 'fork' in pure-logic test")
-    }
-    fn panic_exit_process(_: c_int) {
-        panic!("unexpected syscall 'exit_process' in pure-logic test")
-    }
-    fn panic_setenv(_: &[u8], _: &[u8]) -> SysResult<()> {
-        panic!("unexpected call 'setenv' in pure-logic test")
-    }
-    fn panic_unsetenv(_: &[u8]) -> SysResult<()> {
-        panic!("unexpected call 'unsetenv' in pure-logic test")
-    }
-    fn panic_getenv(_: &[u8]) -> Option<Vec<u8>> {
-        panic!("unexpected call 'getenv' in pure-logic test")
-    }
-    fn panic_get_environ() -> crate::hash::ShellMap<Vec<u8>, Vec<u8>> {
-        panic!("unexpected call 'get_environ' in pure-logic test")
-    }
-    fn panic_tcgetattr(_: c_int, _: *mut libc::termios) -> c_int {
-        panic!("unexpected syscall 'tcgetattr' in pure-logic test")
-    }
-    fn panic_tcsetattr(_: c_int, _: c_int, _: *const libc::termios) -> c_int {
-        panic!("unexpected syscall 'tcsetattr' in pure-logic test")
-    }
-    fn panic_getpwnam(_: &[u8]) -> Option<Vec<u8>> {
-        panic!("unexpected call 'getpwnam' in pure-logic test")
-    }
-    fn panic_monotonic_clock_ns() -> u64 {
-        panic!("unexpected call 'monotonic_clock_ns' in pure-logic test")
-    }
-    SystemInterface {
-        getpid: panic_getpid,
-        getppid: panic_getppid,
-        waitpid: panic_waitpid,
-        kill: panic_kill,
-        signal: panic_signal,
-        isatty: panic_isatty,
-        tcgetpgrp: panic_tcgetpgrp,
-        tcsetpgrp: panic_tcsetpgrp,
-        setpgid: panic_setpgid,
-        pipe: panic_pipe,
-        dup2: panic_dup2,
-        close: panic_close,
-        fcntl: panic_fcntl,
-        read: panic_read,
-        umask: panic_umask,
-        times: panic_times,
-        sysconf: panic_sysconf,
-        execvp: panic_execvp,
-        execve: panic_execve,
-        open: panic_open,
-        write: panic_write,
-        stat: panic_stat,
-        lstat: panic_lstat,
-        fstat: panic_fstat,
-        access: panic_access,
-        chdir: panic_chdir,
-        getcwd: panic_getcwd,
-        opendir: panic_opendir,
-        readdir: panic_readdir,
-        closedir: panic_closedir,
-        realpath: panic_realpath,
-        unlink: panic_unlink,
-        fork: panic_fork,
-        exit_process: panic_exit_process,
-        setenv: panic_setenv,
-        unsetenv: panic_unsetenv,
-        getenv: panic_getenv,
-        get_environ: panic_get_environ,
-        tcgetattr: panic_tcgetattr,
-        tcsetattr: panic_tcsetattr,
-        getpwnam: panic_getpwnam,
-        monotonic_clock_ns: panic_monotonic_clock_ns,
-    }
-}
-
+/// Run `f` with an empty trace installed: any syscall through
+/// `super::interface::*` will consult the empty `TRACE_LOG` and panic via
+/// `trace_dispatch`, catching pure-logic tests that accidentally escape
+/// into `sys::*`.
 pub(crate) fn assert_no_syscalls<T>(f: impl FnOnce() -> T) -> T {
-    with_test_interface(no_interface_table(), f)
+    TRACE_LOG.with(|cell| {
+        let prev_trace = cell.replace(Some(Vec::new()));
+        let prev_index = TRACE_INDEX.with(|idx| idx.replace(0));
+        let result = f();
+        TRACE_INDEX.with(|idx| idx.replace(prev_index));
+        cell.replace(prev_trace);
+        result
+    })
 }
 
 fn validate_fork_child_traces(trace: &[TraceEntry]) {
@@ -1103,7 +854,6 @@ pub(crate) fn run_trace(trace: Vec<TraceEntry>, f: impl Fn()) {
 
     for (run_index, path) in paths.iter().enumerate() {
         let is_parent = run_index == 0;
-        let iface = trace_interface();
 
         TRACE_LOG.with(|cell| {
             let prev_trace = cell.replace(Some(path.clone()));
@@ -1111,7 +861,7 @@ pub(crate) fn run_trace(trace: Vec<TraceEntry>, f: impl Fn()) {
             let prev_children = CHILD_TRACES.with(|c| std::mem::take(&mut *c.borrow_mut()));
 
             let result = std::panic::catch_unwind(
-                std::panic::AssertUnwindSafe(|| with_test_interface(iface, &f))
+                std::panic::AssertUnwindSafe(&f)
             );
 
             let consumed = TRACE_INDEX.with(|idx| *idx.borrow());

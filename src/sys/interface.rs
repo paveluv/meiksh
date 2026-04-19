@@ -1,7 +1,6 @@
 use libc::{self, c_char, c_int, c_long, mode_t};
-use std::ffi::CStr;
 #[cfg(not(test))]
-use std::sync::OnceLock;
+use std::ffi::CStr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::constants::{
@@ -12,170 +11,9 @@ use super::error::{SysError, SysResult};
 use super::types::{ClockTicks, FileModeMask, Pid};
 use crate::hash::ShellMap;
 
-#[derive(Clone, Copy)]
-pub(super) struct SystemInterface {
-    pub(super) getpid: fn() -> Pid,
-    pub(super) getppid: fn() -> Pid,
-    pub(super) waitpid: fn(Pid, *mut c_int, c_int) -> Pid,
-    pub(super) kill: fn(Pid, c_int) -> c_int,
-    pub(super) signal: fn(c_int, libc::sighandler_t) -> libc::sighandler_t,
-    pub(super) isatty: fn(c_int) -> c_int,
-    pub(super) tcgetpgrp: fn(c_int) -> Pid,
-    pub(super) tcsetpgrp: fn(c_int, Pid) -> c_int,
-    pub(super) setpgid: fn(Pid, Pid) -> c_int,
-    pub(super) pipe: fn(&mut [c_int; 2]) -> c_int,
-    pub(super) dup2: fn(c_int, c_int) -> c_int,
-    pub(super) close: fn(c_int) -> c_int,
-    pub(super) fcntl: fn(c_int, c_int, c_int) -> c_int,
-    pub(super) read: fn(c_int, &mut [u8]) -> isize,
-    pub(super) umask: fn(FileModeMask) -> FileModeMask,
-    pub(super) times: fn(*mut libc::tms) -> ClockTicks,
-    pub(super) sysconf: fn(c_int) -> c_long,
-    pub(super) execvp: fn(*const c_char, *const *const c_char) -> c_int,
-    pub(super) execve: fn(*const c_char, *const *const c_char, *const *const c_char) -> c_int,
-    // Filesystem
-    pub(super) open: fn(*const c_char, c_int, mode_t) -> c_int,
-    pub(super) write: fn(c_int, &[u8]) -> isize,
-    pub(super) stat: fn(*const c_char, *mut libc::stat) -> c_int,
-    pub(super) lstat: fn(*const c_char, *mut libc::stat) -> c_int,
-    pub(super) fstat: fn(c_int, *mut libc::stat) -> c_int,
-    pub(super) access: fn(*const c_char, c_int) -> c_int,
-    pub(super) chdir: fn(*const c_char) -> c_int,
-    pub(super) getcwd: fn(*mut c_char, usize) -> *mut c_char,
-    pub(super) opendir: fn(*const c_char) -> *mut libc::DIR,
-    pub(super) readdir: fn(*mut libc::DIR) -> *mut libc::dirent,
-    pub(super) closedir: fn(*mut libc::DIR) -> c_int,
-    pub(super) realpath: fn(*const c_char, *mut c_char) -> *mut c_char,
-    pub(super) unlink: fn(*const c_char) -> c_int,
-    // Process
-    pub(super) fork: fn() -> Pid,
-    pub(super) exit_process: fn(c_int),
-    // Environment
-    pub(super) setenv: fn(&[u8], &[u8]) -> SysResult<()>,
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(super) unsetenv: fn(&[u8]) -> SysResult<()>,
-    pub(super) getenv: fn(&[u8]) -> Option<Vec<u8>>,
-    pub(super) get_environ: fn() -> ShellMap<Vec<u8>, Vec<u8>>,
-    // Terminal attributes
-    pub(super) tcgetattr: fn(c_int, *mut libc::termios) -> c_int,
-    pub(super) tcsetattr: fn(c_int, c_int, *const libc::termios) -> c_int,
-    // User database
-    pub(super) getpwnam: fn(&[u8]) -> Option<Vec<u8>>,
-    pub(super) monotonic_clock_ns: fn() -> u64,
-}
-
-pub(super) fn default_interface() -> SystemInterface {
-    SystemInterface {
-        getpid: || unsafe { libc::getpid() },
-        getppid: || unsafe { libc::getppid() },
-        waitpid: |pid, status, options| unsafe { libc::waitpid(pid, status, options) },
-        kill: |pid, sig| unsafe { libc::kill(pid, sig) },
-        signal: |sig, handler| unsafe {
-            let mut sa: libc::sigaction = std::mem::zeroed();
-            sa.sa_sigaction = handler;
-            libc::sigemptyset(&mut sa.sa_mask);
-            let mut old_sa: libc::sigaction = std::mem::zeroed();
-            let rc = libc::sigaction(sig, &sa, &mut old_sa);
-            [old_sa.sa_sigaction, libc::SIG_ERR][(rc < 0) as usize]
-        },
-        isatty: |fd| unsafe { libc::isatty(fd) },
-        tcgetpgrp: |fd| unsafe { libc::tcgetpgrp(fd) },
-        tcsetpgrp: |fd, pgrp| unsafe { libc::tcsetpgrp(fd, pgrp) },
-        setpgid: |pid, pgid| unsafe { libc::setpgid(pid, pgid) },
-        pipe: |fds| unsafe { libc::pipe(fds.as_mut_ptr()) },
-        dup2: |oldfd, newfd| unsafe { libc::dup2(oldfd, newfd) },
-        close: |fd| unsafe { libc::close(fd) },
-        fcntl: |fd, cmd, arg| unsafe { libc::fcntl(fd, cmd, arg) },
-        read: |fd, buf| unsafe { libc::read(fd, buf.as_mut_ptr().cast(), buf.len()) },
-        umask: |cmask| unsafe { libc::umask(cmask) },
-        times: |buffer| unsafe { libc::times(buffer) },
-        sysconf: |name| unsafe { libc::sysconf(name) },
-        execvp: |file, argv| unsafe { libc::execvp(file, argv) },
-        execve: |file, argv, envp| unsafe { libc::execve(file, argv, envp) },
-        open: |path, flags, mode| unsafe { libc::open(path, flags, mode as c_int) },
-        write: |fd, data| unsafe { libc::write(fd, data.as_ptr().cast(), data.len()) },
-        stat: |path, buf| unsafe { libc::stat(path, buf) },
-        lstat: |path, buf| unsafe { libc::lstat(path, buf) },
-        fstat: |fd, buf| unsafe { libc::fstat(fd, buf) },
-        access: |path, mode| unsafe { libc::access(path, mode) },
-        chdir: |path| unsafe { libc::chdir(path) },
-        getcwd: |buf, size| unsafe { libc::getcwd(buf, size) },
-        opendir: |path| unsafe { libc::opendir(path) },
-        readdir: |dirp| unsafe { libc::readdir(dirp) },
-        closedir: |dirp| unsafe { libc::closedir(dirp) },
-        realpath: |path, resolved| unsafe { libc::realpath(path, resolved) },
-        unlink: |path| unsafe { libc::unlink(path) },
-        fork: || unsafe { libc::fork() },
-        exit_process: |status| {
-            #[cfg(coverage)]
-            flush_coverage();
-            unsafe { libc::_exit(status) }
-        },
-        setenv: |key, value| {
-            if key.is_empty() || key.contains(&b'=') {
-                return Err(SysError::Errno(libc::EINVAL));
-            }
-            let c_key = crate::bstr::to_cstring(key).map_err(|_| SysError::NulInPath)?;
-            let c_value = crate::bstr::to_cstring(value).map_err(|_| SysError::NulInPath)?;
-            let rc = unsafe { libc::setenv(c_key.as_ptr(), c_value.as_ptr(), 1) };
-            if rc == 0 { Ok(()) } else { Err(last_error()) }
-        },
-        unsetenv: |key| {
-            if key.is_empty() || key.contains(&b'=') {
-                return Err(SysError::Errno(libc::EINVAL));
-            }
-            let c_key = crate::bstr::to_cstring(key).map_err(|_| SysError::NulInPath)?;
-            let rc = unsafe { libc::unsetenv(c_key.as_ptr()) };
-            if rc == 0 { Ok(()) } else { Err(last_error()) }
-        },
-        getenv: |key| {
-            let c_key = crate::bstr::to_cstring(key).ok()?;
-            let ptr = unsafe { libc::getenv(c_key.as_ptr()) };
-            if ptr.is_null() {
-                None
-            } else {
-                Some(crate::bstr::bytes_from_cstr(unsafe { CStr::from_ptr(ptr) }))
-            }
-        },
-        get_environ: || {
-            unsafe extern "C" {
-                static environ: *const *const c_char;
-            }
-            let mut map = ShellMap::default();
-            unsafe {
-                let mut ptr = environ;
-                while !(*ptr).is_null() {
-                    let entry_cstr = CStr::from_ptr(*ptr);
-                    let entry = entry_cstr.to_bytes();
-                    if let Some(eq_pos) = entry.iter().position(|&b| b == b'=') {
-                        let key = entry[..eq_pos].to_vec();
-                        let value = entry[eq_pos + 1..].to_vec();
-                        map.insert(key, value);
-                    }
-                    ptr = ptr.add(1);
-                }
-            }
-            map
-        },
-        tcgetattr: |fd, termios_p| unsafe { libc::tcgetattr(fd, termios_p) },
-        tcsetattr: |fd, action, termios_p| unsafe { libc::tcsetattr(fd, action, termios_p) },
-        getpwnam: |name| {
-            let c_name = crate::bstr::to_cstring(name).ok()?;
-            let pw = unsafe { libc::getpwnam(c_name.as_ptr()) };
-            if pw.is_null() {
-                return None;
-            }
-            let dir = unsafe { CStr::from_ptr((*pw).pw_dir) };
-            Some(crate::bstr::bytes_from_cstr(dir))
-        },
-        monotonic_clock_ns: || {
-            let mut ts = std::mem::MaybeUninit::<libc::timespec>::zeroed();
-            unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, ts.as_mut_ptr()) };
-            let ts = unsafe { ts.assume_init() };
-            ts.tv_sec as u64 * 1_000_000_000 + ts.tv_nsec as u64
-        },
-    }
-}
+// ---------------------------------------------------------------------------
+// Signal mask helpers
+// ---------------------------------------------------------------------------
 
 pub(super) fn signal_mask(signal: c_int) -> Option<usize> {
     let bit = match signal {
@@ -215,9 +53,7 @@ pub(super) extern "C" fn record_signal(sig: c_int) {
 // Signal-state helpers. In production they read/clear the real
 // `PENDING_SIGNALS` atomic that `record_signal` updates from the
 // signal handler; in tests they delegate to the thread-local
-// `TEST_PENDING_SIGNALS` maintained by `test_support`. Neither path
-// needs to be traced via `SystemInterface`, so the functions live
-// here as module-local free functions.
+// `TEST_PENDING_SIGNALS` maintained by `test_support`.
 
 #[cfg(not(test))]
 pub(super) fn pending_signal_bits() -> usize {
@@ -239,34 +75,9 @@ pub(super) fn take_pending_signal_bits() -> usize {
     super::test_support::test_take_pending_signal_bits()
 }
 
-/// Cached production SystemInterface, initialized on first use. All fields are
-/// plain function pointers, so once initialized, subsequent calls return a
-/// stable reference with no per-call struct construction cost.
-#[cfg(not(test))]
-static DEFAULT_INTERFACE: OnceLock<SystemInterface> = OnceLock::new();
-
-/// Returns a reference to the active SystemInterface.
-///
-/// Call sites use the form `(sys_interface().syscall)(args)`, which
-/// auto-derefs the returned reference. Returning by reference (rather than
-/// by value as before) avoids rebuilding the multi-field struct on every
-/// syscall dispatch, which profiling showed to be 5-27% self time across
-/// the hot sections.
-#[cfg(not(test))]
-#[inline]
-pub(super) fn sys_interface() -> &'static SystemInterface {
-    DEFAULT_INTERFACE.get_or_init(default_interface)
-}
-
-/// Test variant: dispatch through the thread-local test override installed
-/// by `run_trace` / `assert_no_syscalls` / `with_test_interface`. Panics if
-/// no override is active, matching the previous contract.
-#[cfg(test)]
-#[inline]
-pub(super) fn sys_interface() -> &'static SystemInterface {
-    super::test_support::current_interface()
-        .expect("sys call without run_trace or assert_no_syscalls")
-}
+// ---------------------------------------------------------------------------
+// errno helpers
+// ---------------------------------------------------------------------------
 
 pub(super) fn set_errno(errno: c_int) {
     #[cfg(test)]
@@ -317,106 +128,466 @@ pub(super) fn flush_coverage() {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Syscall wrappers
+//
+// Each syscall is provided as a pair of `#[cfg]`-gated free functions:
+//
+// * `#[cfg(not(test))]` goes straight to `libc::*`.
+// * `#[cfg(test)]` routes into the matching `trace_*` dispatcher in
+//   `test_support`, which consumes one entry from the thread-local
+//   `TRACE_LOG` (set up by `run_trace` / `assert_no_syscalls`).
+//
+// There is no fn-pointer vtable, no runtime dispatch, and — crucially —
+// no code path from `#[cfg(test)]` down to real libc: tests that forget
+// to script a syscall panic loudly instead of silently escaping to the
+// host kernel.
+// ---------------------------------------------------------------------------
+
+#[cfg(not(test))]
+pub(super) fn getpid() -> Pid {
+    unsafe { libc::getpid() }
+}
+#[cfg(test)]
+pub(super) fn getpid() -> Pid {
+    super::test_support::trace_getpid()
+}
+
+#[cfg(not(test))]
+pub(super) fn getppid() -> Pid {
+    unsafe { libc::getppid() }
+}
+#[cfg(test)]
+pub(super) fn getppid() -> Pid {
+    super::test_support::trace_getppid()
+}
+
+#[cfg(not(test))]
+pub(super) fn waitpid(pid: Pid, status: *mut c_int, options: c_int) -> Pid {
+    unsafe { libc::waitpid(pid, status, options) }
+}
+#[cfg(test)]
+pub(super) fn waitpid(pid: Pid, status: *mut c_int, options: c_int) -> Pid {
+    super::test_support::trace_waitpid(pid, status, options)
+}
+
+#[cfg(not(test))]
+pub(super) fn kill(pid: Pid, sig: c_int) -> c_int {
+    unsafe { libc::kill(pid, sig) }
+}
+#[cfg(test)]
+pub(super) fn kill(pid: Pid, sig: c_int) -> c_int {
+    super::test_support::trace_kill(pid, sig)
+}
+
+#[cfg(not(test))]
+pub(super) fn signal(sig: c_int, handler: libc::sighandler_t) -> libc::sighandler_t {
+    unsafe {
+        let mut sa: libc::sigaction = std::mem::zeroed();
+        sa.sa_sigaction = handler;
+        libc::sigemptyset(&mut sa.sa_mask);
+        let mut old_sa: libc::sigaction = std::mem::zeroed();
+        let rc = libc::sigaction(sig, &sa, &mut old_sa);
+        [old_sa.sa_sigaction, libc::SIG_ERR][(rc < 0) as usize]
+    }
+}
+#[cfg(test)]
+pub(super) fn signal(sig: c_int, handler: libc::sighandler_t) -> libc::sighandler_t {
+    super::test_support::trace_signal(sig, handler)
+}
+
+#[cfg(not(test))]
+pub(super) fn isatty(fd: c_int) -> c_int {
+    unsafe { libc::isatty(fd) }
+}
+#[cfg(test)]
+pub(super) fn isatty(fd: c_int) -> c_int {
+    super::test_support::trace_isatty(fd)
+}
+
+#[cfg(not(test))]
+pub(super) fn tcgetpgrp(fd: c_int) -> Pid {
+    unsafe { libc::tcgetpgrp(fd) }
+}
+#[cfg(test)]
+pub(super) fn tcgetpgrp(fd: c_int) -> Pid {
+    super::test_support::trace_tcgetpgrp(fd)
+}
+
+#[cfg(not(test))]
+pub(super) fn tcsetpgrp(fd: c_int, pgrp: Pid) -> c_int {
+    unsafe { libc::tcsetpgrp(fd, pgrp) }
+}
+#[cfg(test)]
+pub(super) fn tcsetpgrp(fd: c_int, pgrp: Pid) -> c_int {
+    super::test_support::trace_tcsetpgrp(fd, pgrp)
+}
+
+#[cfg(not(test))]
+pub(super) fn setpgid(pid: Pid, pgid: Pid) -> c_int {
+    unsafe { libc::setpgid(pid, pgid) }
+}
+#[cfg(test)]
+pub(super) fn setpgid(pid: Pid, pgid: Pid) -> c_int {
+    super::test_support::trace_setpgid(pid, pgid)
+}
+
+#[cfg(not(test))]
+pub(super) fn pipe(fds: &mut [c_int; 2]) -> c_int {
+    unsafe { libc::pipe(fds.as_mut_ptr()) }
+}
+#[cfg(test)]
+pub(super) fn pipe(fds: &mut [c_int; 2]) -> c_int {
+    super::test_support::trace_pipe(fds)
+}
+
+#[cfg(not(test))]
+pub(super) fn dup2(oldfd: c_int, newfd: c_int) -> c_int {
+    unsafe { libc::dup2(oldfd, newfd) }
+}
+#[cfg(test)]
+pub(super) fn dup2(oldfd: c_int, newfd: c_int) -> c_int {
+    super::test_support::trace_dup2(oldfd, newfd)
+}
+
+#[cfg(not(test))]
+pub(super) fn close(fd: c_int) -> c_int {
+    unsafe { libc::close(fd) }
+}
+#[cfg(test)]
+pub(super) fn close(fd: c_int) -> c_int {
+    super::test_support::trace_close(fd)
+}
+
+#[cfg(not(test))]
+pub(super) fn fcntl(fd: c_int, cmd: c_int, arg: c_int) -> c_int {
+    unsafe { libc::fcntl(fd, cmd, arg) }
+}
+#[cfg(test)]
+pub(super) fn fcntl(fd: c_int, cmd: c_int, arg: c_int) -> c_int {
+    super::test_support::trace_fcntl(fd, cmd, arg)
+}
+
+#[cfg(not(test))]
+pub(super) fn read(fd: c_int, buf: &mut [u8]) -> isize {
+    unsafe { libc::read(fd, buf.as_mut_ptr().cast(), buf.len()) }
+}
+#[cfg(test)]
+pub(super) fn read(fd: c_int, buf: &mut [u8]) -> isize {
+    super::test_support::trace_read(fd, buf)
+}
+
+#[cfg(not(test))]
+pub(super) fn umask(cmask: FileModeMask) -> FileModeMask {
+    unsafe { libc::umask(cmask) }
+}
+#[cfg(test)]
+pub(super) fn umask(cmask: FileModeMask) -> FileModeMask {
+    super::test_support::trace_umask(cmask)
+}
+
+#[cfg(not(test))]
+pub(super) fn times(buffer: *mut libc::tms) -> ClockTicks {
+    unsafe { libc::times(buffer) }
+}
+#[cfg(test)]
+pub(super) fn times(buffer: *mut libc::tms) -> ClockTicks {
+    super::test_support::trace_times(buffer)
+}
+
+#[cfg(not(test))]
+pub(super) fn sysconf(name: c_int) -> c_long {
+    unsafe { libc::sysconf(name) }
+}
+#[cfg(test)]
+pub(super) fn sysconf(name: c_int) -> c_long {
+    super::test_support::trace_sysconf(name)
+}
+
+#[cfg(not(test))]
+pub(super) fn execvp(file: *const c_char, argv: *const *const c_char) -> c_int {
+    unsafe { libc::execvp(file, argv) }
+}
+#[cfg(test)]
+pub(super) fn execvp(file: *const c_char, argv: *const *const c_char) -> c_int {
+    super::test_support::trace_execvp(file, argv)
+}
+
+#[cfg(not(test))]
+pub(super) fn execve(
+    file: *const c_char,
+    argv: *const *const c_char,
+    envp: *const *const c_char,
+) -> c_int {
+    unsafe { libc::execve(file, argv, envp) }
+}
+#[cfg(test)]
+pub(super) fn execve(
+    file: *const c_char,
+    argv: *const *const c_char,
+    envp: *const *const c_char,
+) -> c_int {
+    super::test_support::trace_execve(file, argv, envp)
+}
+
+#[cfg(not(test))]
+pub(super) fn open(path: *const c_char, flags: c_int, mode: mode_t) -> c_int {
+    unsafe { libc::open(path, flags, mode as c_int) }
+}
+#[cfg(test)]
+pub(super) fn open(path: *const c_char, flags: c_int, mode: mode_t) -> c_int {
+    super::test_support::trace_open(path, flags, mode)
+}
+
+#[cfg(not(test))]
+pub(super) fn write(fd: c_int, data: &[u8]) -> isize {
+    unsafe { libc::write(fd, data.as_ptr().cast(), data.len()) }
+}
+#[cfg(test)]
+pub(super) fn write(fd: c_int, data: &[u8]) -> isize {
+    super::test_support::trace_write(fd, data)
+}
+
+#[cfg(not(test))]
+pub(super) fn stat(path: *const c_char, buf: *mut libc::stat) -> c_int {
+    unsafe { libc::stat(path, buf) }
+}
+#[cfg(test)]
+pub(super) fn stat(path: *const c_char, buf: *mut libc::stat) -> c_int {
+    super::test_support::trace_stat(path, buf)
+}
+
+#[cfg(not(test))]
+pub(super) fn lstat(path: *const c_char, buf: *mut libc::stat) -> c_int {
+    unsafe { libc::lstat(path, buf) }
+}
+#[cfg(test)]
+pub(super) fn lstat(path: *const c_char, buf: *mut libc::stat) -> c_int {
+    super::test_support::trace_lstat(path, buf)
+}
+
+#[cfg(not(test))]
+pub(super) fn fstat(fd: c_int, buf: *mut libc::stat) -> c_int {
+    unsafe { libc::fstat(fd, buf) }
+}
+#[cfg(test)]
+pub(super) fn fstat(fd: c_int, buf: *mut libc::stat) -> c_int {
+    super::test_support::trace_fstat(fd, buf)
+}
+
+#[cfg(not(test))]
+pub(super) fn access(path: *const c_char, mode: c_int) -> c_int {
+    unsafe { libc::access(path, mode) }
+}
+#[cfg(test)]
+pub(super) fn access(path: *const c_char, mode: c_int) -> c_int {
+    super::test_support::trace_access(path, mode)
+}
+
+#[cfg(not(test))]
+pub(super) fn chdir(path: *const c_char) -> c_int {
+    unsafe { libc::chdir(path) }
+}
+#[cfg(test)]
+pub(super) fn chdir(path: *const c_char) -> c_int {
+    super::test_support::trace_chdir(path)
+}
+
+#[cfg(not(test))]
+pub(super) fn getcwd(buf: *mut c_char, size: usize) -> *mut c_char {
+    unsafe { libc::getcwd(buf, size) }
+}
+#[cfg(test)]
+pub(super) fn getcwd(buf: *mut c_char, size: usize) -> *mut c_char {
+    super::test_support::trace_getcwd(buf, size)
+}
+
+#[cfg(not(test))]
+pub(super) fn opendir(path: *const c_char) -> *mut libc::DIR {
+    unsafe { libc::opendir(path) }
+}
+#[cfg(test)]
+pub(super) fn opendir(path: *const c_char) -> *mut libc::DIR {
+    super::test_support::trace_opendir(path)
+}
+
+#[cfg(not(test))]
+pub(super) fn readdir(dirp: *mut libc::DIR) -> *mut libc::dirent {
+    unsafe { libc::readdir(dirp) }
+}
+#[cfg(test)]
+pub(super) fn readdir(dirp: *mut libc::DIR) -> *mut libc::dirent {
+    super::test_support::trace_readdir(dirp)
+}
+
+#[cfg(not(test))]
+pub(super) fn closedir(dirp: *mut libc::DIR) -> c_int {
+    unsafe { libc::closedir(dirp) }
+}
+#[cfg(test)]
+pub(super) fn closedir(dirp: *mut libc::DIR) -> c_int {
+    super::test_support::trace_closedir(dirp)
+}
+
+#[cfg(not(test))]
+pub(super) fn realpath(path: *const c_char, resolved: *mut c_char) -> *mut c_char {
+    unsafe { libc::realpath(path, resolved) }
+}
+#[cfg(test)]
+pub(super) fn realpath(path: *const c_char, resolved: *mut c_char) -> *mut c_char {
+    super::test_support::trace_realpath(path, resolved)
+}
+
+#[cfg(not(test))]
+pub(super) fn unlink(path: *const c_char) -> c_int {
+    unsafe { libc::unlink(path) }
+}
+#[cfg(test)]
+pub(super) fn unlink(path: *const c_char) -> c_int {
+    super::test_support::trace_unlink(path)
+}
+
+#[cfg(not(test))]
+pub(super) fn fork() -> Pid {
+    unsafe { libc::fork() }
+}
+#[cfg(test)]
+pub(super) fn fork() -> Pid {
+    super::test_support::trace_fork()
+}
+
+#[cfg(not(test))]
+pub(super) fn exit_process(status: c_int) {
+    #[cfg(coverage)]
+    flush_coverage();
+    unsafe { libc::_exit(status) }
+}
+#[cfg(test)]
+pub(super) fn exit_process(status: c_int) {
+    super::test_support::trace_exit_process(status)
+}
+
+#[cfg(not(test))]
+pub(super) fn setenv(key: &[u8], value: &[u8]) -> SysResult<()> {
+    if key.is_empty() || key.contains(&b'=') {
+        return Err(SysError::Errno(libc::EINVAL));
+    }
+    let c_key = crate::bstr::to_cstring(key).map_err(|_| SysError::NulInPath)?;
+    let c_value = crate::bstr::to_cstring(value).map_err(|_| SysError::NulInPath)?;
+    let rc = unsafe { libc::setenv(c_key.as_ptr(), c_value.as_ptr(), 1) };
+    if rc == 0 { Ok(()) } else { Err(last_error()) }
+}
+#[cfg(test)]
+pub(super) fn setenv(key: &[u8], value: &[u8]) -> SysResult<()> {
+    super::test_support::trace_setenv(key, value)
+}
+
+#[cfg(not(test))]
+#[allow(dead_code)]
+pub(super) fn unsetenv(key: &[u8]) -> SysResult<()> {
+    if key.is_empty() || key.contains(&b'=') {
+        return Err(SysError::Errno(libc::EINVAL));
+    }
+    let c_key = crate::bstr::to_cstring(key).map_err(|_| SysError::NulInPath)?;
+    let rc = unsafe { libc::unsetenv(c_key.as_ptr()) };
+    if rc == 0 { Ok(()) } else { Err(last_error()) }
+}
+#[cfg(test)]
+pub(super) fn unsetenv(key: &[u8]) -> SysResult<()> {
+    super::test_support::trace_unsetenv(key)
+}
+
+#[cfg(not(test))]
+pub(super) fn getenv(key: &[u8]) -> Option<Vec<u8>> {
+    let c_key = crate::bstr::to_cstring(key).ok()?;
+    let ptr = unsafe { libc::getenv(c_key.as_ptr()) };
+    if ptr.is_null() {
+        None
+    } else {
+        Some(crate::bstr::bytes_from_cstr(unsafe { CStr::from_ptr(ptr) }))
+    }
+}
+#[cfg(test)]
+pub(super) fn getenv(key: &[u8]) -> Option<Vec<u8>> {
+    super::test_support::trace_getenv(key)
+}
+
+#[cfg(not(test))]
+pub(super) fn get_environ() -> ShellMap<Vec<u8>, Vec<u8>> {
+    unsafe extern "C" {
+        static environ: *const *const c_char;
+    }
+    let mut map = ShellMap::default();
+    unsafe {
+        let mut ptr = environ;
+        while !(*ptr).is_null() {
+            let entry_cstr = CStr::from_ptr(*ptr);
+            let entry = entry_cstr.to_bytes();
+            if let Some(eq_pos) = entry.iter().position(|&b| b == b'=') {
+                let key = entry[..eq_pos].to_vec();
+                let value = entry[eq_pos + 1..].to_vec();
+                map.insert(key, value);
+            }
+            ptr = ptr.add(1);
+        }
+    }
+    map
+}
+#[cfg(test)]
+pub(super) fn get_environ() -> ShellMap<Vec<u8>, Vec<u8>> {
+    super::test_support::trace_get_environ()
+}
+
+#[cfg(not(test))]
+pub(super) fn tcgetattr(fd: c_int, termios_p: *mut libc::termios) -> c_int {
+    unsafe { libc::tcgetattr(fd, termios_p) }
+}
+#[cfg(test)]
+pub(super) fn tcgetattr(fd: c_int, termios_p: *mut libc::termios) -> c_int {
+    super::test_support::trace_tcgetattr(fd, termios_p)
+}
+
+#[cfg(not(test))]
+pub(super) fn tcsetattr(fd: c_int, action: c_int, termios_p: *const libc::termios) -> c_int {
+    unsafe { libc::tcsetattr(fd, action, termios_p) }
+}
+#[cfg(test)]
+pub(super) fn tcsetattr(fd: c_int, action: c_int, termios_p: *const libc::termios) -> c_int {
+    super::test_support::trace_tcsetattr(fd, action, termios_p)
+}
+
+#[cfg(not(test))]
+pub(super) fn getpwnam(name: &[u8]) -> Option<Vec<u8>> {
+    let c_name = crate::bstr::to_cstring(name).ok()?;
+    let pw = unsafe { libc::getpwnam(c_name.as_ptr()) };
+    if pw.is_null() {
+        return None;
+    }
+    let dir = unsafe { CStr::from_ptr((*pw).pw_dir) };
+    Some(crate::bstr::bytes_from_cstr(dir))
+}
+#[cfg(test)]
+pub(super) fn getpwnam(name: &[u8]) -> Option<Vec<u8>> {
+    super::test_support::trace_getpwnam(name)
+}
+
+#[cfg(not(test))]
+pub(super) fn monotonic_clock_ns() -> u64 {
+    let mut ts = std::mem::MaybeUninit::<libc::timespec>::zeroed();
+    unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, ts.as_mut_ptr()) };
+    let ts = unsafe { ts.assume_init() };
+    ts.tv_sec as u64 * 1_000_000_000 + ts.tv_nsec as u64
+}
+#[cfg(test)]
+pub(super) fn monotonic_clock_ns() -> u64 {
+    super::test_support::trace_monotonic_clock_ns()
+}
+
 #[cfg(test)]
 mod tests {
+    use crate::sys::process::{current_pid, parent_pid};
     use crate::sys::test_support;
     use crate::trace_entries;
-
-    use crate::sys::process::{current_pid, parent_pid};
-
-    #[test]
-    fn no_interface_table_stubs_all_panic() {
-        use std::panic::{AssertUnwindSafe, catch_unwind};
-        let tbl = test_support::no_interface_table();
-        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.getpid)())).is_err());
-        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.getppid)())).is_err());
-        assert!(
-            catch_unwind(AssertUnwindSafe(|| (tbl.waitpid)(
-                0,
-                std::ptr::null_mut(),
-                0
-            )))
-            .is_err()
-        );
-        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.kill)(0, 0))).is_err());
-        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.signal)(0, 0))).is_err());
-        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.isatty)(0))).is_err());
-        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.tcgetpgrp)(0))).is_err());
-        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.tcsetpgrp)(0, 0))).is_err());
-        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.setpgid)(0, 0))).is_err());
-        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.pipe)(&mut [0; 2]))).is_err());
-        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.dup2)(0, 0))).is_err());
-        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.close)(0))).is_err());
-        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.fcntl)(0, 0, 0))).is_err());
-        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.read)(0, &mut [0u8; 1]))).is_err());
-        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.umask)(0))).is_err());
-        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.times)(std::ptr::null_mut()))).is_err());
-        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.sysconf)(0))).is_err());
-        assert!(
-            catch_unwind(AssertUnwindSafe(|| (tbl.execvp)(
-                std::ptr::null(),
-                std::ptr::null()
-            )))
-            .is_err()
-        );
-        assert!(
-            catch_unwind(AssertUnwindSafe(|| (tbl.execve)(
-                std::ptr::null(),
-                std::ptr::null(),
-                std::ptr::null()
-            )))
-            .is_err()
-        );
-        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.open)(std::ptr::null(), 0, 0))).is_err());
-        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.write)(0, &[]))).is_err());
-        assert!(
-            catch_unwind(AssertUnwindSafe(|| (tbl.stat)(
-                std::ptr::null(),
-                std::ptr::null_mut()
-            )))
-            .is_err()
-        );
-        assert!(
-            catch_unwind(AssertUnwindSafe(|| (tbl.lstat)(
-                std::ptr::null(),
-                std::ptr::null_mut()
-            )))
-            .is_err()
-        );
-        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.fstat)(0, std::ptr::null_mut()))).is_err());
-        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.access)(std::ptr::null(), 0))).is_err());
-        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.chdir)(std::ptr::null()))).is_err());
-        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.getcwd)(std::ptr::null_mut(), 0))).is_err());
-        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.opendir)(std::ptr::null()))).is_err());
-        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.readdir)(std::ptr::null_mut()))).is_err());
-        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.closedir)(std::ptr::null_mut()))).is_err());
-        assert!(
-            catch_unwind(AssertUnwindSafe(|| (tbl.realpath)(
-                std::ptr::null(),
-                std::ptr::null_mut()
-            )))
-            .is_err()
-        );
-        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.unlink)(std::ptr::null()))).is_err());
-        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.fork)())).is_err());
-        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.exit_process)(0))).is_err());
-        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.setenv)(b"k", b"v"))).is_err());
-        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.unsetenv)(b"k"))).is_err());
-        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.getenv)(b"k"))).is_err());
-        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.get_environ)())).is_err());
-        assert!(
-            catch_unwind(AssertUnwindSafe(|| (tbl.tcgetattr)(
-                0,
-                std::ptr::null_mut()
-            )))
-            .is_err()
-        );
-        assert!(
-            catch_unwind(AssertUnwindSafe(|| (tbl.tcsetattr)(0, 0, std::ptr::null()))).is_err()
-        );
-        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.getpwnam)(b"nobody"))).is_err());
-        assert!(catch_unwind(AssertUnwindSafe(|| (tbl.monotonic_clock_ns)())).is_err());
-    }
 
     #[test]
     fn trace_getpid_and_getppid_dispatch() {
