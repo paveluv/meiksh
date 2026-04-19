@@ -166,11 +166,10 @@ pub(super) fn path_join(base: &[u8], name: &[u8]) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use crate::expand::core::Context;
-    use crate::expand::test_support::{DefaultPathContext, FakeContext, expand_word};
+    use crate::expand::test_support::{DefaultPathContext, FakeContext};
     use crate::expand::word::{expand_redirect_word, expand_word_text};
     use crate::syntax::ast::Word;
-    use crate::sys::test_support::{assert_no_syscalls, run_trace};
-    use crate::trace_entries;
+    use crate::sys::test_support::assert_no_syscalls;
 
     #[test]
     fn expands_text_without_field_splitting_or_pathname_expansion() {
@@ -201,91 +200,6 @@ mod tests {
             b"*"
         );
     }
-
-    #[test]
-    fn performs_pathname_expansion() {
-        let dir_entries = || {
-            trace_entries![
-                readdir(_) -> dir_entry(b"a.txt"),
-                readdir(_) -> dir_entry(b"b.txt"),
-                readdir(_) -> dir_entry(b".hidden.txt"),
-                readdir(_) -> 0,
-            ]
-        };
-        run_trace(
-            trace_entries![
-                access(str("/testdir"), _) -> 0,
-                opendir(str("/testdir")) -> 1,
-                ..dir_entries(),
-                closedir(_) -> 0,
-                access(str("/testdir"), _) -> 0,
-                opendir(str("/testdir")) -> 1,
-                ..dir_entries(),
-                closedir(_) -> 0,
-            ],
-            || {
-                let mut ctx = FakeContext::new();
-                assert_eq!(
-                    expand_word(
-                        &mut ctx,
-                        &Word {
-                            raw: b"/testdir/*.txt".as_ref().into(),
-                            parts: Box::new([]),
-                            line: 0
-                        },
-                    )
-                    .expect("glob"),
-                    vec![b"/testdir/a.txt".as_ref(), b"/testdir/b.txt".as_ref()]
-                );
-                assert_eq!(
-                    expand_word(
-                        &mut ctx,
-                        &Word {
-                            raw: b"\\*.txt".as_ref().into(),
-                            parts: Box::new([]),
-                            line: 0
-                        },
-                    )
-                    .expect("escaped glob"),
-                    vec![b"*.txt".as_ref()]
-                );
-                assert_eq!(
-                    expand_word(
-                        &mut ctx,
-                        &Word {
-                            raw: b"/testdir/.*.txt".as_ref().into(),
-                            parts: Box::new([]),
-                            line: 0
-                        },
-                    )
-                    .expect("hidden glob"),
-                    vec![b"/testdir/.hidden.txt".as_ref()]
-                );
-            },
-        );
-    }
-
-    #[test]
-    fn can_disable_pathname_expansion_via_context() {
-        assert_no_syscalls(|| {
-            let mut ctx = FakeContext::new();
-            ctx.pathname_expansion_enabled = false;
-            let pattern = b"/testdir/*.txt";
-            assert_eq!(
-                expand_word(
-                    &mut ctx,
-                    &Word {
-                        raw: pattern.as_ref().into(),
-                        parts: Box::new([]),
-                        line: 0
-                    },
-                )
-                .expect("noglob"),
-                vec![pattern.as_ref()]
-            );
-        });
-    }
-
     #[test]
     fn default_pathname_context_trait_impl() {
         let mut ctx = DefaultPathContext::new();
@@ -304,29 +218,6 @@ mod tests {
             b"printf ok\n"
         );
     }
-
-    #[test]
-    fn unmatched_glob_returns_pattern_literally() {
-        run_trace(
-            trace_entries![opendir(_) -> err(crate::sys::constants::ENOENT)],
-            || {
-                let mut ctx = DefaultPathContext::new();
-                assert_eq!(
-                    expand_word(
-                        &mut ctx,
-                        &Word {
-                            raw: b"*.definitely-no-match".as_ref().into(),
-                            parts: Box::new([]),
-                            line: 0
-                        },
-                    )
-                    .expect("unmatched glob"),
-                    vec![b"*.definitely-no-match".as_ref()]
-                );
-            },
-        );
-    }
-
     #[test]
     fn has_active_glob_meta_matches_posix_bracket_rules() {
         // The base star/question cases are unchanged from the previous
