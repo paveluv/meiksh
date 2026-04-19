@@ -626,4 +626,106 @@ mod tests {
         let err = eval_arithmetic(&mut ctx, b"1 2").expect_err("trailing");
         assert!(err.message.windows(8).any(|w| w == b"trailing"));
     }
+
+    #[test]
+    fn eval_arithmetic_simple_assignment_and_compound() {
+        // `x = rhs` is the plain-assignment branch of parse_assignment:
+        // `op == b"="` takes `rhs` verbatim (no compound fold), writes it
+        // to the variable, and returns it.  We then verify the compound
+        // `x += 4` branch actually folds through apply_compound_assign.
+        let mut ctx = FakeContext::new();
+        assert_eq!(
+            eval_arithmetic(&mut ctx, b"x = 7").expect("plain ="),
+            7,
+            "`x = 7` must resolve to 7",
+        );
+        assert_eq!(
+            ctx.env.get(&b"x".to_vec()).map(|v| v.as_slice()),
+            Some(b"7".as_ref()),
+            "plain `=` must persist the rhs bytes into the variable",
+        );
+
+        assert_eq!(
+            eval_arithmetic(&mut ctx, b"x += 4").expect("compound +="),
+            11,
+            "`x += 4` must add to the stored value",
+        );
+        assert_eq!(
+            ctx.env.get(&b"x".to_vec()).map(|v| v.as_slice()),
+            Some(b"11".as_ref()),
+            "compound assign must persist the folded value",
+        );
+    }
+
+    #[test]
+    fn eval_arithmetic_ternary_short_circuits_assignment() {
+        // `cond ? a=1 : b=2` — the ternary parser flips `skip_depth` on the
+        // not-taken side, and any nested `parse_assignment` inside that
+        // side must return the rhs without calling `set_var`.  With `cond=1`
+        // the `b=...` branch is skipped; `b` must remain unset, while `a`
+        // must reflect its assignment.  This exercises the
+        // `skip_depth > 0 => return Ok(rhs)` arm in parse_assignment.
+        let mut ctx = FakeContext::new();
+        let value =
+            eval_arithmetic(&mut ctx, b"1 ? (a = 5) : (b = 9)").expect("ternary with assign");
+        assert_eq!(value, 5);
+        assert_eq!(
+            ctx.env.get(&b"a".to_vec()).map(|v| v.as_slice()),
+            Some(b"5".as_ref()),
+            "taken ternary branch must persist its assignment",
+        );
+        assert!(
+            !ctx.env.contains_key(&b"b".to_vec()),
+            "not-taken ternary branch must NOT persist its assignment",
+        );
+    }
+
+    #[test]
+    fn eval_arithmetic_distinguishes_assign_from_equality() {
+        // `try_consume_assign_op` must return `None` when it sees `==`
+        // (equality operator) so that `parse_assignment` falls through to
+        // `parse_ternary` → `parse_equality`.  Without that guard, `a == 1`
+        // would be read as `a = (=1)` and would silently assign.
+        let mut ctx = FakeContext::new();
+        ctx.env.insert(b"a".to_vec(), b"1".to_vec());
+        assert_eq!(
+            eval_arithmetic(&mut ctx, b"a == 1").expect("equality"),
+            1,
+            "equality must report truthiness",
+        );
+        assert_eq!(eval_arithmetic(&mut ctx, b"a == 2").expect("equality"), 0,);
+        assert_eq!(
+            ctx.env.get(&b"a".to_vec()).map(|v| v.as_slice()),
+            Some(b"1".as_ref()),
+            "equality must not mutate the operand",
+        );
+    }
+
+    #[test]
+    fn eval_arithmetic_unary_plus_is_identity() {
+        // `parse_unary`'s `b'+'` arm recursively parses the operand and
+        // returns it unchanged.  Covers the `return self.parse_unary();`
+        // branch reached when the expression starts with a unary `+`.
+        let mut ctx = FakeContext::new();
+        assert_eq!(eval_arithmetic(&mut ctx, b"+3").expect("unary plus"), 3);
+        assert_eq!(eval_arithmetic(&mut ctx, b"+ -2").expect("plus minus"), -2);
+    }
+
+    #[test]
+    fn eval_arithmetic_empty_variable_is_zero() {
+        // An empty-but-set variable must parse as `0` (POSIX: "if the
+        // variable is set but its value is null, arithmetic expansion shall
+        // treat it as having the value 0").  This covers the early-return
+        // in `resolve_var` for the empty-bytes case.
+        let mut ctx = FakeContext::new();
+        ctx.env.insert(b"empty".to_vec(), Vec::new());
+        assert_eq!(
+            eval_arithmetic(&mut ctx, b"empty + 5").expect("empty var"),
+            5,
+        );
+        assert_eq!(
+            eval_arithmetic(&mut ctx, b"empty").expect("standalone empty"),
+            0,
+        );
+    }
 }

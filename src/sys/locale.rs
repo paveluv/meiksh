@@ -28,14 +28,10 @@ fn cache_mb_cur_max(value: usize) {
 #[cfg(not(test))]
 #[inline]
 fn mb_cur_max_cached() -> usize {
-    let v = MB_CUR_MAX_CACHE.load(Ordering::Relaxed);
-    if v != 0 {
-        return v;
-    }
-    let v = libc_mb_cur_max();
-    let v = if v == 0 { 1 } else { v };
-    MB_CUR_MAX_CACHE.store(v, Ordering::Relaxed);
-    v
+    // `setup_locale` (called once at startup from `Shell::from_env`)
+    // primes the cache with a non-zero value, and every later
+    // `reinit_locale` refreshes it. Callers never observe 0 here.
+    MB_CUR_MAX_CACHE.load(Ordering::Relaxed)
 }
 
 #[cfg(test)]
@@ -254,9 +250,11 @@ pub(crate) fn decode_char(bytes: &[u8]) -> (u32, usize) {
 
 #[cfg(not(test))]
 fn decode_char_impl(bytes: &[u8]) -> (u32, usize) {
-    if bytes.is_empty() || bytes[0] == 0 {
-        return (0, 0);
-    }
+    // `decode_char` already short-circuits on `bytes.is_empty()` and on
+    // any ASCII lead byte, so here `bytes[0] >= 0x80`. `mbrtowc(3)`
+    // returns 0 only when the decoded character is the null wide
+    // character, which is unreachable for a non-zero lead byte, so we
+    // don't bother with a 0-length arm.
     #[repr(C, align(8))]
     struct MbState([u8; 128]);
     unsafe extern "C" {
@@ -266,9 +264,7 @@ fn decode_char_impl(bytes: &[u8]) -> (u32, usize) {
         let mut wc: libc::wchar_t = 0;
         let mut ps: MbState = std::mem::zeroed();
         let n = mbrtowc(&mut wc, bytes.as_ptr(), bytes.len(), &mut ps);
-        if n == 0 {
-            (0, 0)
-        } else if n == usize::MAX || n == usize::MAX - 1 {
+        if n == usize::MAX || n == usize::MAX - 1 {
             (bytes[0] as u32, 1)
         } else {
             (wc as u32, n)
@@ -358,10 +354,10 @@ pub(crate) fn count_chars(bytes: &[u8]) -> u64 {
             i += 1;
             continue;
         }
+        // `bytes[i]` is non-zero (checked above) and non-empty, so
+        // `decode_char` always returns `clen >= 1`; no degenerate
+        // break arm is needed here.
         let (_, clen) = decode_char(&bytes[i..]);
-        if clen == 0 {
-            break;
-        }
         count += 1;
         i += clen;
     }
@@ -377,12 +373,6 @@ pub(crate) fn first_char_len(bytes: &[u8]) -> usize {
     }
     let (_, len) = decode_char(bytes);
     if len == 0 { 1 } else { len }
-}
-
-#[cfg(not(test))]
-#[allow(dead_code)]
-pub(crate) fn mb_cur_max() -> usize {
-    libc_mb_cur_max()
 }
 
 #[cfg(test)]

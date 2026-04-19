@@ -119,6 +119,12 @@ impl Context for FakeContext {
         self.scratch.invalidate_ifs();
         &mut self.scratch
     }
+
+    fn set_lineno(&mut self, _line: usize) {}
+    fn inc_lineno(&mut self) {}
+    fn lineno(&self) -> usize {
+        0
+    }
 }
 
 pub(super) struct DefaultPathContext {
@@ -192,6 +198,16 @@ impl Context for DefaultPathContext {
 
     fn expand_scratch_mut(&mut self) -> &mut crate::expand::scratch::ExpandScratch {
         &mut self.scratch
+    }
+
+    fn pathname_expansion_enabled(&self) -> bool {
+        true
+    }
+
+    fn set_lineno(&mut self, _line: usize) {}
+    fn inc_lineno(&mut self) {}
+    fn lineno(&self) -> usize {
+        0
     }
 }
 

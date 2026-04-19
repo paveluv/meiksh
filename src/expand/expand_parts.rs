@@ -660,7 +660,15 @@ fn expand_arithmetic<C: Context>(
                 let flat = temp.drain_single_vec();
                 expr_text.extend_from_slice(&flat);
             }
-            WordPart::TildeLiteral { .. } => {}
+            WordPart::TildeLiteral { .. } => {
+                // Parser invariant: `build_word_parts_impl` is called with
+                // `allow_tilde=false` for the body of `$((...))`, so the
+                // arithmetic parts slice never contains a `TildeLiteral`.
+                // Keep the arm to satisfy exhaustiveness, but surface an
+                // invariant break loudly rather than silently dropping
+                // bytes from the arithmetic expression.
+                unreachable!("parser invariant: arithmetic body never contains TildeLiteral");
+            }
         }
     }
     let saved_line = ctx.lineno();
@@ -791,6 +799,7 @@ impl AsBytes for Cow<'_, [u8]> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::expand::test_support::FakeContext;
     use crate::sys::test_support::{assert_no_syscalls, set_test_locale_c, set_test_locale_utf8};
 
     #[test]
@@ -807,6 +816,67 @@ mod tests {
             let ifs = decompose_ifs(b"\xc3\xa9");
             assert_eq!(ifs.len(), 1);
             assert_eq!(ifs[0].byte_seq, vec![0xc3, 0xa9]);
+        });
+    }
+
+    #[test]
+    fn expand_tilde_known_user_with_trailing_slash_in_home_is_trimmed() {
+        // `FakeContext::home_dir_for_user(b"slashuser")` intentionally
+        // returns "/home/slashuser/" with a trailing slash.  When the
+        // source word also has a `/` immediately after the user name
+        // (`slash_follows=true`), `expand_tilde` must drop the trailing
+        // slash on the home so that the final joined path isn't
+        // "/home/slashuser//rest".  This test exercises the otherwise-
+        // uncovered slash-trim branch in the WordPart-driven path, which
+        // is distinct from the legacy `expand_raw` tilde code.
+        assert_no_syscalls(|| {
+            let mut ctx = FakeContext::new();
+            let raw = b"~slashuser/rest";
+            // `build_word_parts_impl` emits a single TildeLiteral that
+            // covers the whole word up to the next word break (or end):
+            // `tilde_pos = 0`, `user_end = 10` (end of "slashuser"),
+            // `end = 15` (covers the `/rest` tail, which drives
+            // `slash_follows=true` inside `expand_tilde`).  There is no
+            // trailing `Literal` part for the slashed tail.
+            let parts = [WordPart::TildeLiteral {
+                tilde_pos: 0,
+                user_end: 10,
+                end: 15,
+            }];
+            let mut output = ExpandOutput::new();
+            expand_parts_into(&mut ctx, raw, &parts, b"", false, &mut output).expect("expand");
+            let mut argv: Vec<Vec<u8>> = Vec::new();
+            output.finish_into_no_glob(&mut argv).expect("finish");
+            assert_eq!(argv, vec![b"/home/slashuser/rest".to_vec()]);
+        });
+    }
+
+    #[test]
+    fn expand_tilde_unknown_user_writes_literal_bytes_with_glob_detection() {
+        // When the user lookup fails, `expand_tilde` falls back to writing
+        // the literal `~` followed by the user bytes through the per-byte
+        // `push_literal` path.  If the user portion contains an active
+        // glob metacharacter (`*` is not a tilde-user break character), the
+        // per-byte `is_glob_char` check must flip `has_any_glob` so the
+        // resulting field takes the pathname-expansion branch on finish.
+        assert_no_syscalls(|| {
+            let mut ctx = FakeContext::new();
+            let raw = b"~no*such*user";
+            let parts = [WordPart::TildeLiteral {
+                tilde_pos: 0,
+                user_end: raw.len(),
+                end: raw.len(),
+            }];
+            let mut output = ExpandOutput::new();
+            expand_parts_into(&mut ctx, raw, &parts, b"", false, &mut output).expect("expand");
+            // The field buffer must have absorbed the literal bytes…
+            assert_eq!(output.current.as_slice(), b"~no*such*user");
+            // …and `push_literal`'s per-byte scan must have marked the
+            // field as glob-bearing because of the `*` characters.
+            assert!(
+                output.current_has_glob,
+                "push_literal should observe `*` and flip current_has_glob",
+            );
         });
     }
 }

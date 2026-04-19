@@ -1210,4 +1210,104 @@ mod tests {
         let broken = expand_raw(&mut ctx, b"~'abc'").expect("tilde break on quote");
         assert_eq!(flatten_segments(&broken.segments), b"~abc");
     }
+
+    #[test]
+    fn expand_raw_bare_dollar_yields_static_dollar() {
+        // `$` with no follow byte (or followed by something that is not a
+        // valid parameter start) must survive `expand_raw` as a literal `$`
+        // via `Expansion::Static(b"$")` routed through `apply_expansion`'s
+        // `Static` arm (word.rs apply_expansion).  The segment must be
+        // produced with `QuoteState::Expanded` (unquoted context), which
+        // `push_segment_slice` records without copying.
+        assert_no_syscalls(|| {
+            let mut ctx = FakeContext::new();
+
+            let bare = expand_raw(&mut ctx, b"$").expect("bare dollar");
+            assert_eq!(flatten_segments(&bare.segments), b"$");
+            assert_eq!(
+                bare.segments.as_slice(),
+                &[Segment::Text(b"$".to_vec(), QuoteState::Expanded)]
+            );
+
+            let trailing = expand_raw(&mut ctx, b"$ ").expect("dollar then space");
+            assert_eq!(flatten_segments(&trailing.segments), b"$ ");
+
+            let quoted_bare = expand_raw(&mut ctx, b"\"$\"").expect("bare dollar quoted");
+            assert_eq!(flatten_segments(&quoted_bare.segments), b"$");
+            assert_eq!(
+                quoted_bare.segments.as_slice(),
+                &[Segment::Text(b"$".to_vec(), QuoteState::Quoted)]
+            );
+        });
+    }
+
+    #[test]
+    fn expand_raw_single_quote_preserves_embedded_newlines() {
+        // A literal newline inside `'...'` is part of the quoted text.  The
+        // inner loop of `expand_raw`'s `'` branch is the only code path that
+        // pushes `\n` through the single-quote state, so this exercises it.
+        // The newline-handling branch also calls `ctx.inc_lineno()` — the
+        // lineno stays observable-externally-zero through `FakeContext`
+        // because we deliberately do not expose line tracking there, so we
+        // only assert on the byte result.
+        assert_no_syscalls(|| {
+            let mut ctx = FakeContext::new();
+            let expanded = expand_raw(&mut ctx, b"'line1\nline2\nline3'").expect("multiline sq");
+            assert_eq!(flatten_segments(&expanded.segments), b"line1\nline2\nline3",);
+            assert_eq!(
+                expanded.segments.as_slice(),
+                &[Segment::Text(
+                    b"line1\nline2\nline3".to_vec(),
+                    QuoteState::Quoted,
+                )],
+            );
+        });
+    }
+
+    #[test]
+    fn expand_raw_double_quote_trailing_backslash_at_eof_errors() {
+        // Raw buffer ending in `"...\\` (no closing quote) exercises the
+        // double-quote backslash branch where `index + 1 >= raw.len()`:
+        // the byte is appended to the internal buffer, `index` advances
+        // past the end of the buffer, and the enclosing loop exits into
+        // the unterminated-quote diagnostic.  We assert on the resulting
+        // error message to distinguish this from other failure modes.
+        assert_no_syscalls(|| {
+            let mut ctx = FakeContext::new();
+            let err = expand_raw(&mut ctx, b"\"ab\\").expect_err("no closing quote");
+            assert_eq!(&*err.message, b"unterminated double quote");
+        });
+    }
+
+    #[test]
+    fn expand_words_into_skips_truly_empty_word() {
+        // `expand_word_into`'s `word.parts.is_empty() && word.raw.is_empty()`
+        // early-return must not push anything (the caller relies on this for
+        // the "no command words" case).  Driving it through the public
+        // `expand_words_into` entry keeps the test free of `pub(super)`
+        // plumbing while still exercising the empty-word branch.
+        use crate::syntax::word_parts::WordPart;
+        assert_no_syscalls(|| {
+            let mut ctx = FakeContext::new();
+            let empty = Word {
+                raw: Box::from(&b""[..]),
+                parts: Box::<[WordPart]>::from(Vec::new()),
+                line: 7,
+            };
+            let populated = Word {
+                raw: Box::from(&b"keep"[..]),
+                parts: Box::from([WordPart::Literal {
+                    start: 0,
+                    end: 4,
+                    has_glob: false,
+                    newlines: 0,
+                }]),
+                line: 7,
+            };
+            let mut argv: Vec<Vec<u8>> = Vec::new();
+            expand_words_into(&mut ctx, &[empty, populated], &mut argv)
+                .expect("mixed empty + populated");
+            assert_eq!(argv, vec![b"keep".to_vec()]);
+        });
+    }
 }

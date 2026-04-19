@@ -1818,4 +1818,159 @@ mod tests {
             }
         });
     }
+
+    #[test]
+    fn expand_dollar_positional_digit_routes_through_one_variant() {
+        // `$2` in an unquoted/quoted position lands in the `next if
+        // is_digit(next)` arm of `expand_dollar`, which pulls the positional
+        // parameter into `Expansion::One(..)`.  `FakeContext` seeds
+        // positional params to `["alpha", "beta"]`, so `$2` resolves to
+        // `beta`, `$9` (out of range) resolves to the empty byte string.
+        assert_no_syscalls(|| {
+            let mut ctx = FakeContext::new();
+            let (val, consumed) = expect_one(expand_dollar(&mut ctx, b"$2", false));
+            assert_eq!(val, b"beta");
+            assert_eq!(consumed, 2);
+
+            let (val, consumed) = expect_one(expand_dollar(&mut ctx, b"$9", true));
+            assert_eq!(val, b"");
+            assert_eq!(consumed, 2);
+        });
+    }
+
+    #[test]
+    fn expand_braced_minus_operator_covers_set_and_unset_paths() {
+        // `${X-word}` (no `:`) differs from `${X:-word}` on the null-but-set
+        // case: the minus-only form yields the stored value, while `:-` would
+        // substitute.  Both halves must be exercised so the `op == b"-"`
+        // branches of `expand_braced_operator` are covered.
+        assert_no_syscalls(|| {
+            let mut ctx = FakeContext::new();
+            ctx.env.insert(b"SET".to_vec(), b"val".to_vec());
+            ctx.env.insert(b"NULL".to_vec(), Vec::new());
+            ctx.env.remove(b"UNSET".as_ref());
+
+            let set = expand_braced_parameter(&mut ctx, b"SET-alt", false).unwrap();
+            assert_eq!(set, Expansion::One(b"val".to_vec()));
+
+            let null = expand_braced_parameter(&mut ctx, b"NULL-alt", false).unwrap();
+            assert_eq!(
+                null,
+                Expansion::One(Vec::new()),
+                "`NULL-alt` must keep the empty set value (only `:-` substitutes)",
+            );
+
+            let unset = expand_braced_parameter(&mut ctx, b"UNSET-alt", false).unwrap();
+            assert_eq!(unset, Expansion::One(b"alt".to_vec()));
+        });
+    }
+
+    #[test]
+    fn expand_braced_assign_colonequals_persists_and_returns_word() {
+        // `${VAR:=word}` assigns `word` when VAR is unset-or-null, returns
+        // the word, and persists into the context.  Also covers the reverse
+        // case where VAR is set to a non-null value (no assignment).
+        assert_no_syscalls(|| {
+            let mut ctx = FakeContext::new();
+            ctx.env.remove(b"NEW".as_ref());
+            let created = expand_braced_parameter(&mut ctx, b"NEW:=fresh", false).unwrap();
+            assert_eq!(created, Expansion::One(b"fresh".to_vec()));
+            assert_eq!(
+                ctx.env.get(&b"NEW".to_vec()).map(|v| v.as_slice()),
+                Some(b"fresh".as_ref()),
+                ":= must persist the assignment",
+            );
+
+            // Re-invoking on the same (now set) name must NOT reassign; the
+            // stored value is returned through `into_one(value)`.
+            ctx.env.insert(b"EXISTING".to_vec(), b"keep".to_vec());
+            let existing = expand_braced_parameter(&mut ctx, b"EXISTING:=ignored", false).unwrap();
+            assert_eq!(existing, Expansion::One(b"keep".to_vec()));
+        });
+    }
+
+    #[test]
+    fn expand_braced_plain_equals_assigns_only_when_unset() {
+        // `${VAR=word}` assigns only when VAR is UNSET (null-but-set is
+        // treated as set, unlike `:=`).  Together with the set case this
+        // covers the `op == b"="` branch fork and its `assign_parameter`
+        // call site.
+        assert_no_syscalls(|| {
+            let mut ctx = FakeContext::new();
+            ctx.env.remove(b"NEW2".as_ref());
+            let created = expand_braced_parameter(&mut ctx, b"NEW2=x", false).unwrap();
+            assert_eq!(created, Expansion::One(b"x".to_vec()));
+            assert_eq!(
+                ctx.env.get(&b"NEW2".to_vec()).map(|v| v.as_slice()),
+                Some(b"x".as_ref()),
+            );
+
+            ctx.env.insert(b"NULL2".to_vec(), Vec::new());
+            let null = expand_braced_parameter(&mut ctx, b"NULL2=no", false).unwrap();
+            assert_eq!(
+                null,
+                Expansion::One(Vec::new()),
+                "`NULL2=no` must preserve the (empty) set value, not reassign",
+            );
+        });
+    }
+
+    #[test]
+    fn expand_braced_colon_plus_returns_alternate_only_when_set_and_nonnull() {
+        // `${VAR:+word}` — returns `word` when VAR is set *and* non-null,
+        // otherwise returns empty.  Covers the `op_bytes == b":+"` then-arm
+        // (`expand_parameter_word_as_expansion` branch) as well as the
+        // else-arm (empty result) for null-or-unset.
+        assert_no_syscalls(|| {
+            let mut ctx = FakeContext::new();
+            ctx.env.insert(b"NN".to_vec(), b"v".to_vec());
+            let set_nonnull = expand_braced_parameter(&mut ctx, b"NN:+alt", false).unwrap();
+            assert_eq!(set_nonnull, Expansion::One(b"alt".to_vec()));
+
+            ctx.env.insert(b"NN".to_vec(), Vec::new());
+            let null = expand_braced_parameter(&mut ctx, b"NN:+alt", false).unwrap();
+            assert_eq!(null, Expansion::One(Vec::new()));
+
+            ctx.env.remove(b"NN".as_ref());
+            let unset = expand_braced_parameter(&mut ctx, b"NN:+alt", false).unwrap();
+            assert_eq!(unset, Expansion::One(Vec::new()));
+        });
+    }
+
+    #[test]
+    fn parse_parameter_expression_accepts_multi_digit_positional() {
+        // The digit-name loop in parse_parameter_expression is only reached
+        // for names longer than one digit (e.g. `${12}`).  Assert the parser
+        // returns the full digit run as the name component and the correct
+        // trailing `op`/`word` slices.
+        assert_no_syscalls(|| {
+            let (name, op, word) = parse_parameter_expression(b"12").expect("12");
+            assert_eq!(name, b"12");
+            assert!(op.is_none() && word.is_none());
+
+            let (name, op, word) = parse_parameter_expression(b"99:-default").expect("99:-default");
+            assert_eq!(name, b"99");
+            assert_eq!(op, Some(b":-".as_ref()));
+            assert_eq!(word, Some(b"default".as_ref()));
+        });
+    }
+
+    #[test]
+    fn remove_parameter_pattern_no_match_returns_value_unchanged() {
+        // When no prefix/suffix matches, `remove_parameter_pattern` falls
+        // through to the final `Ok(value)` return with the value untouched.
+        // Covers that fall-through for every mode.
+        assert_no_syscalls(|| {
+            for mode in [
+                PatternRemoval::SmallestPrefix,
+                PatternRemoval::LargestPrefix,
+                PatternRemoval::SmallestSuffix,
+                PatternRemoval::LargestSuffix,
+            ] {
+                let out =
+                    remove_parameter_pattern(b"hello".to_vec(), b"xyz", mode).expect("no match");
+                assert_eq!(out, b"hello", "no-match pattern must not mutate input");
+            }
+        });
+    }
 }

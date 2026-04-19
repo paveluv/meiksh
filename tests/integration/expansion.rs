@@ -3,6 +3,27 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::process::Command;
 
+// `$(( ))` forces the arithmetic parser into `parse_primary` with an
+// empty remaining buffer. `try_scan_name` then sees
+// `self.index >= self.source.len()`, which is the only code path that
+// falls through its outer `if` without hitting the early `return
+// Some(...)`. The parser eventually raises "expected arithmetic
+// operand" from `parse_number` after `try_scan_name` returns None,
+// but the specific branch coverage we need is for the empty scan.
+#[test]
+fn empty_arithmetic_expression_reports_operand_error() {
+    let out = Command::new(meiksh())
+        .args(["-c", "echo $(( ))"])
+        .output()
+        .expect("run meiksh");
+    assert!(!out.status.success(), "empty `$(( ))` must not succeed");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("expected arithmetic operand"),
+        "expected arithmetic-operand diagnostic, got {stderr:?}",
+    );
+}
+
 // ── Parameter expansion ──
 
 #[test]
@@ -2949,6 +2970,191 @@ fn parameter_length_of_hash_and_positional() {
     // "héllo" is 5 characters (é counted as one), but we don't want to over-
     // commit to locale; at minimum first two are deterministic.
     assert!(s.starts_with("3|2|"), "stdout={s}");
+}
+
+// ── Coverage: pathname expansion edge cases ──
+
+#[test]
+fn absolute_path_glob_matches_tempdir_entries() {
+    // Exercises `expand_path_segments` with `absolute=true`: the final
+    // `index == segments.len()` branch copies `base` (already the full
+    // matched absolute path) into the match list.  Without an absolute
+    // glob, that arm goes uncovered in `expand/pathname.rs`.
+    let dir = TempDir::new("meiksh-absglob");
+    fs::write(dir.path().join("apple"), "").unwrap();
+    fs::write(dir.path().join("apricot"), "").unwrap();
+    fs::write(dir.path().join("banana"), "").unwrap();
+    let pattern = format!("{}/ap*", dir.path().display());
+    let out = Command::new(meiksh())
+        .args(["-c", &format!("printf '%s|' {pattern}")])
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let expected = format!("{d}/apple|{d}/apricot|", d = dir.path().display());
+    assert_eq!(String::from_utf8_lossy(&out.stdout), expected);
+}
+
+#[test]
+fn field_split_mixes_glob_and_literal_fields() {
+    // When `IFS`-splitting produces multiple fields where only some carry
+    // a glob metacharacter, `ExpandOutput::finish_into_impl` enters the
+    // `has_any_glob && pathname_expansion` branch and iterates: the
+    // glob-bearing field goes through `expand_pathname_into` while the
+    // plain-text field takes the literal `argv.push(entry.text)` path
+    // (`expand/expand_parts.rs` `else` arm around line 208).  We verify
+    // the literal field survives unchanged and the glob field falls back
+    // to its pattern bytes when no files match.
+    let dir = TempDir::new("meiksh-mixglob");
+    let out = Command::new(meiksh())
+        .current_dir(dir.path())
+        .args(["-c", "IFS=' '; X='plain nomatch_*.xyz'; printf '[%s]' $X"])
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "[plain][nomatch_*.xyz]",
+    );
+}
+
+#[test]
+fn tilde_unknown_user_with_glob_chars_falls_back_to_literal() {
+    // `~nonexistent*user/path` — the tilde user lookup fails, so
+    // `expand_tilde` writes the literal `~` then the literal user bytes
+    // via `push_literal` (per-byte glob check at `expand_parts.rs:48`).
+    // Because the user portion contains `*`, `has_any_glob` flips on.
+    // Pathname expansion finds no matches, so the field falls back to
+    // its literal bytes.  We choose a user name we know cannot exist
+    // (contains glob metas) and assert the original word survives.
+    let out = Command::new(meiksh())
+        .args(["-c", "printf '%s' ~definitelynosuchuser_star_*_marker/end"])
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "~definitelynosuchuser_star_*_marker/end",
+    );
+}
+
+#[test]
+fn braced_default_word_with_embedded_newline_increments_lineno() {
+    // `${x:-line1<NL>line2}` keeps the newline inside the default word;
+    // `build_word_parts_for_slice` records the newline count on the
+    // Literal WordPart, and `expand_parts_into` drives
+    // `ctx.inc_lineno()` once per embedded newline (the `for _ in
+    // 0..*newlines { ctx.inc_lineno() }` loop at
+    // `expand_parts.rs:260-262`).  After the expansion succeeds, a
+    // subsequent parse error must report the already-advanced line
+    // number — proving the increment hit the real `Shell` state.
+    let out = Command::new(meiksh())
+        .args([
+            "-c",
+            "unset x; printf '%s\\n' \"${x:-first\nsecond}\"\necho done\n((",
+        ])
+        .output()
+        .expect("run");
+    assert!(!out.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "first\nsecond\ndone\n",
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("line 4"),
+        "expected error on line 4 (newline in expansion should have \
+         advanced lineno). stderr={stderr}",
+    );
+}
+
+#[test]
+fn braced_remove_prefix_with_tilde_literal_pattern() {
+    // `${V#~}` — `build_word_parts_for_slice` for the pattern word emits
+    // a `WordPart::TildeLiteral`.  `build_pattern_segments` currently
+    // renders that part as an empty pattern (the
+    // `WordPart::TildeLiteral { .. } => {}` arm at `expand_parts.rs:634`),
+    // so the empty-prefix strip leaves `$V` unchanged.  We nail down this
+    // behavior to keep the otherwise-uncovered arm exercised; updating
+    // the assertion is the signal that tilde expansion in remove-pattern
+    // words was implemented POSIX-style.
+    let out = Command::new(meiksh())
+        .env("HOME", "/not-a-prefix-of-value")
+        .args(["-c", "V=/home/actual/path; printf '>%s<' \"${V#~}\""])
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&out.stdout), ">/home/actual/path<",);
+}
+
+#[test]
+fn case_pattern_positional_digit_via_expand_dollar() {
+    // `case $1 in $2) ... esac` — the pattern word is processed through
+    // the legacy `expand_raw` scanner, which routes `$2` through
+    // `expand_dollar`'s `is_digit(next)` arm (`expand/parameter.rs:110`).
+    // That arm converts the positional parameter into an
+    // `Expansion::One` and, via `require_set_parameter`, exercises the
+    // otherwise-uncovered positional-digit lookup path at line 116.
+    let out = Command::new(meiksh())
+        .args([
+            "-c",
+            "set -- foo bar baz; \
+             case $1 in $2) printf match;; foo) printf fallback;; esac",
+        ])
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    // $1=foo, $2=bar — $1 does not match $2, but it does match the literal
+    // `foo` branch.  If the $2 path had misfired and expanded to an empty
+    // pattern, `foo` would have matched the $2 branch first.
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "fallback");
+}
+
+#[test]
+fn case_pattern_positional_digit_unset_under_nounset_is_error() {
+    // Under `set -u`, expanding an unset positional parameter inside a
+    // case pattern must error out: the `?` at
+    // `expand/parameter.rs:116` propagates the
+    // `require_set_parameter` failure upwards, which
+    // `expand_word_pattern` returns to the case executor.  The shell
+    // exits non-zero with a diagnostic naming the offending parameter.
+    let out = Command::new(meiksh())
+        .args([
+            "-c",
+            // No positional parameters are set.
+            "set -u; case foo in $2) printf match;; esac",
+        ])
+        .output()
+        .expect("run");
+    assert!(
+        !out.status.success(),
+        "expected non-zero exit under set -u; stdout={}",
+        String::from_utf8_lossy(&out.stdout),
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("2: parameter not set"),
+        "expected nounset diagnostic naming `2`; stderr={stderr}",
+    );
 }
 
 #[test]
