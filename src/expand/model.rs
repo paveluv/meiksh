@@ -1,6 +1,3 @@
-#[cfg(test)]
-use crate::syntax::byte_class::{is_ascii_ws, is_glob_char};
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum QuoteState {
     Quoted,
@@ -25,100 +22,6 @@ pub(super) enum Expansion {
 #[derive(Debug)]
 pub(super) struct ExpandedWord {
     pub(super) segments: Vec<Segment>,
-    // Consumed only by cfg(test) code paths (expand_word_raw_fallback and
-    // its unit tests); populated unconditionally by expand_raw because the
-    // production code path exercises expand_raw via expand_redirect_word
-    // and expand_word_text_assignment where the flags simply go unread.
-    #[allow(dead_code)]
-    pub(super) had_quoted_content: bool,
-    #[allow(dead_code)]
-    pub(super) had_quoted_null_outside_at: bool,
-}
-
-#[cfg(test)]
-#[derive(Debug, PartialEq, Eq)]
-pub(super) struct Field {
-    pub(super) text: Vec<u8>,
-    pub(super) has_unquoted_glob: bool,
-}
-
-#[cfg(test)]
-pub(super) fn segment_bytes(segments: &[Segment]) -> impl Iterator<Item = (u8, QuoteState)> + '_ {
-    segments
-        .iter()
-        .flat_map(|seg| match seg {
-            Segment::Text(text, state) => {
-                let s = *state;
-                Some(text.iter().map(move |&b| (b, s)))
-            }
-            _ => None,
-        })
-        .flatten()
-}
-
-#[cfg(test)]
-pub(super) fn split_fields_from_segments(segments: &[Segment], ifs: &[u8]) -> Vec<Field> {
-    if ifs.is_empty() {
-        return vec![Field {
-            text: flatten_segments(segments),
-            has_unquoted_glob: segments.iter().any(|seg| {
-                matches!(seg, Segment::Text(text, state) if *state != QuoteState::Quoted && text.iter().any(|&b| is_glob_char(b)))
-            }),
-        }];
-    }
-
-    let ifs_ws: Vec<u8> = ifs.iter().copied().filter(|b| is_ascii_ws(*b)).collect();
-    let ifs_other: Vec<u8> = ifs.iter().copied().filter(|b| !is_ascii_ws(*b)).collect();
-    let mut iter = segment_bytes(segments).peekable();
-
-    let mut fields = Vec::new();
-    let mut current = Vec::new();
-    let mut current_glob = false;
-
-    while let Some((b, state)) = iter.next() {
-        let splittable = state == QuoteState::Expanded;
-        if splittable && ifs_other.contains(&b) {
-            fields.push(Field {
-                text: std::mem::take(&mut current),
-                has_unquoted_glob: current_glob,
-            });
-            current_glob = false;
-            while iter
-                .peek()
-                .is_some_and(|&(pb, ps)| ps == QuoteState::Expanded && ifs_ws.contains(&pb))
-            {
-                iter.next();
-            }
-            continue;
-        }
-        if splittable && ifs_ws.contains(&b) {
-            if !current.is_empty() {
-                fields.push(Field {
-                    text: std::mem::take(&mut current),
-                    has_unquoted_glob: current_glob,
-                });
-                current_glob = false;
-            }
-            while iter
-                .peek()
-                .is_some_and(|&(pb, ps)| ps == QuoteState::Expanded && ifs_ws.contains(&pb))
-            {
-                iter.next();
-            }
-            continue;
-        }
-        current_glob |= state != QuoteState::Quoted && is_glob_char(b);
-        current.push(b);
-    }
-
-    if !current.is_empty() {
-        fields.push(Field {
-            text: current,
-            has_unquoted_glob: current_glob,
-        });
-    }
-
-    fields
 }
 
 pub(super) fn push_segment(segments: &mut Vec<Segment>, text: Vec<u8>, state: QuoteState) {
@@ -186,10 +89,8 @@ mod tests {
     use super::*;
     use crate::expand::glob::{match_bracket, pattern_matches};
     use crate::expand::pathname::{expand_path_segments, expand_pathname};
-    use crate::expand::test_support::FakeContext;
-    use crate::expand::word::{
-        expand_here_document, expand_redirect_word, expand_word, flatten_expansion,
-    };
+    use crate::expand::test_support::{FakeContext, expand_word};
+    use crate::expand::word::{expand_here_document, expand_redirect_word, flatten_expansion};
     use crate::syntax::ast::Word;
     use crate::sys::test_support::{assert_no_syscalls, run_trace};
     use crate::trace_entries;
@@ -233,7 +134,6 @@ mod tests {
             .expect("expand"),
             Vec::<&[u8]>::new()
         );
-        assert!(split_fields_from_segments(&[], b" \t\n").is_empty());
     }
 
     #[test]
@@ -241,35 +141,6 @@ mod tests {
         run_trace(
             trace_entries![opendir(_) -> err(crate::sys::constants::ENOENT)],
             || {
-                let segs = vec![Segment::Text(b"*.txt".to_vec(), QuoteState::Expanded)];
-                assert_eq!(
-                    split_fields_from_segments(&segs, b""),
-                    vec![Field {
-                        text: b"*.txt".to_vec(),
-                        has_unquoted_glob: true,
-                    }]
-                );
-
-                assert_eq!(
-                    split_fields_from_segments(
-                        &[Segment::Text(
-                            b"alpha,  beta".to_vec(),
-                            QuoteState::Expanded
-                        )],
-                        b" ,"
-                    ),
-                    vec![
-                        Field {
-                            text: b"alpha".to_vec(),
-                            has_unquoted_glob: false,
-                        },
-                        Field {
-                            text: b"beta".to_vec(),
-                            has_unquoted_glob: false,
-                        },
-                    ]
-                );
-
                 assert_eq!(expand_pathname(b"plain.txt"), vec![b"plain.txt".to_vec()]);
 
                 let mut matches: Vec<std::ffi::CString> = Vec::new();
@@ -414,20 +285,6 @@ mod tests {
             )
             .expect("unquoted at empty"),
             Vec::<&[u8]>::new()
-        );
-    }
-
-    #[test]
-    fn segment_bytes_skips_at_break() {
-        let segs = vec![
-            Segment::Text(b"a".to_vec(), QuoteState::Expanded),
-            Segment::AtBreak,
-            Segment::Text(b"b".to_vec(), QuoteState::Quoted),
-        ];
-        let chars: Vec<_> = segment_bytes(&segs).collect();
-        assert_eq!(
-            chars,
-            vec![(b'a', QuoteState::Expanded), (b'b', QuoteState::Quoted)]
         );
     }
 

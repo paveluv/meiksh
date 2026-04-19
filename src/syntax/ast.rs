@@ -471,9 +471,22 @@ impl<'a> Parser<'a> {
             | Token::AndIf
             | Token::RParen => Err(self.error(b"expected command")),
             _ => {
-                let name = Box::from(self.peek_token()?.display_name());
+                let name: Box<[u8]> = Box::from(self.peek_token()?.display_name());
                 self.advance_token();
-                self.parse_simple_command_with_first_word(name, Box::new([]), line)
+                // Keyword-as-command recovery: `display_name()` returns a
+                // pure literal reserved-word byte string (`fi`, `then`,
+                // `!`, `{`, ...) with no quoting, expansion, or glob
+                // metacharacters, so a single `WordPart::Literal` spanning
+                // the whole raw faithfully represents it. Emitting it
+                // keeps every Word in the AST satisfying the invariant
+                // that `parts` is non-empty when `raw` is non-empty.
+                let parts: Box<[WordPart]> = Box::new([WordPart::Literal {
+                    start: 0,
+                    end: name.len(),
+                    has_glob: false,
+                    newlines: 0,
+                }]);
+                self.parse_simple_command_with_first_word(name, parts, line)
                     .map(Command::Simple)
             }
         }
