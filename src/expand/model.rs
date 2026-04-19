@@ -51,13 +51,12 @@ pub(super) fn push_segment_slice(segments: &mut Vec<Segment>, text: &[u8], state
 }
 
 pub(super) fn flatten_segments(segments: &[Segment]) -> Vec<u8> {
-    let total: usize = segments
-        .iter()
-        .map(|s| match s {
-            Segment::Text(part, _) => part.len(),
-            _ => 0,
-        })
-        .sum();
+    let mut total = 0usize;
+    for seg in segments {
+        if let Segment::Text(part, _) = seg {
+            total += part.len();
+        }
+    }
     let mut result = Vec::with_capacity(total);
     for seg in segments {
         if let Segment::Text(part, _) = seg {

@@ -804,4 +804,44 @@ mod tests {
         let writer = ByteWriter::new().bytes(b"test");
         assert_eq!(writer.as_bytes(), b"test");
     }
+
+    #[test]
+    fn write_cstring_into_happy_path_reuses_buffer() {
+        // write_cstring_into is the allocation-reusing variant used by the
+        // pathname-expansion walker.  The happy path must reuse the caller's
+        // scratch buffer (no reallocation for repeated writes that fit) and
+        // yield a NUL-terminated C string whose byte contents match the input.
+        let mut scratch = Vec::with_capacity(64);
+        let scratch_ptr_before = scratch.as_ptr();
+
+        let first = write_cstring_into(b"/tmp/foo", &mut scratch).expect("no NUL");
+        assert_eq!(first.to_bytes(), b"/tmp/foo");
+        assert_eq!(first.to_bytes_with_nul(), b"/tmp/foo\0");
+        assert_eq!(scratch.len(), b"/tmp/foo\0".len());
+        assert_eq!(
+            scratch.as_ptr(),
+            scratch_ptr_before,
+            "fitting-size write must not reallocate",
+        );
+
+        let second = write_cstring_into(b"bar", &mut scratch).expect("no NUL");
+        assert_eq!(second.to_bytes(), b"bar");
+        assert_eq!(scratch.len(), b"bar\0".len());
+    }
+
+    #[test]
+    fn write_cstring_into_interior_nul_reports_error_without_touching_buffer() {
+        // Cold path: an interior NUL must produce a NulError whose nul_position
+        // matches the offending byte, matching CString::new's contract.  The
+        // caller's scratch is left usable afterwards (we verify a follow-up
+        // happy write still succeeds).
+        let mut scratch = Vec::with_capacity(16);
+        let err =
+            write_cstring_into(b"abc\0def", &mut scratch).expect_err("interior NUL should fail");
+        assert_eq!(err.nul_position(), 3);
+        assert_eq!(err.into_vec(), b"abc\0def");
+
+        let ok = write_cstring_into(b"next", &mut scratch).expect("recovery");
+        assert_eq!(ok.to_bytes(), b"next");
+    }
 }

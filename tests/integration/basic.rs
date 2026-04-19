@@ -9,6 +9,7 @@ mod common;
 mod builtins;
 mod control_flow;
 mod expansion;
+mod interactive;
 mod os_interface;
 mod parser_coverage;
 mod redirection;

@@ -472,9 +472,8 @@ pub(super) fn exit_process(status: c_int) {
 
 #[cfg(not(test))]
 pub(super) fn setenv(key: &[u8], value: &[u8]) -> SysResult<()> {
-    if key.is_empty() || key.contains(&b'=') {
-        return Err(SysError::Errno(libc::EINVAL));
-    }
+    // libc's own `setenv(3)` already rejects empty keys and keys with
+    // `=` with EINVAL, so the pre-check is redundant here.
     let c_key = crate::bstr::to_cstring(key).map_err(|_| SysError::NulInPath)?;
     let c_value = crate::bstr::to_cstring(value).map_err(|_| SysError::NulInPath)?;
     let rc = unsafe { libc::setenv(c_key.as_ptr(), c_value.as_ptr(), 1) };
@@ -488,9 +487,8 @@ pub(super) fn setenv(key: &[u8], value: &[u8]) -> SysResult<()> {
 #[cfg(not(test))]
 #[allow(dead_code)]
 pub(super) fn unsetenv(key: &[u8]) -> SysResult<()> {
-    if key.is_empty() || key.contains(&b'=') {
-        return Err(SysError::Errno(libc::EINVAL));
-    }
+    // libc's own `unsetenv(3)` rejects empty keys and keys with `=`
+    // with EINVAL, so the pre-check is redundant here.
     let c_key = crate::bstr::to_cstring(key).map_err(|_| SysError::NulInPath)?;
     let rc = unsafe { libc::unsetenv(c_key.as_ptr()) };
     if rc == 0 { Ok(()) } else { Err(last_error()) }
