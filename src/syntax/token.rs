@@ -21,7 +21,7 @@ fn is_alias_eligible(word: &[u8]) -> bool {
 }
 
 struct HereDocInfo {
-    delimiter: Box<[u8]>,
+    delimiter: Vec<u8>,
     strip_tabs: bool,
     expand: bool,
 }
@@ -47,7 +47,7 @@ fn parse_i32_bytes(b: &[u8]) -> Option<i32> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum Token {
-    Word(Box<[u8]>, Box<[WordPart]>),
+    Word(Vec<u8>, Vec<WordPart>),
     IoNumber(i32),
 
     Pipe,
@@ -70,8 +70,8 @@ pub(super) enum Token {
     HereDoc {
         strip_tabs: bool,
         expand: bool,
-        delimiter: Box<[u8]>,
-        body: Box<[u8]>,
+        delimiter: Vec<u8>,
+        body: Vec<u8>,
         body_line: usize,
     },
 
@@ -120,7 +120,7 @@ impl Token {
 }
 
 impl Token {
-    pub(super) fn into_word(self) -> Option<(Box<[u8]>, Box<[WordPart]>)> {
+    pub(super) fn into_word(self) -> Option<(Vec<u8>, Vec<WordPart>)> {
         if let Token::Word(w, p) = self {
             Some((w, p))
         } else {
@@ -1064,10 +1064,7 @@ impl<'a> Parser<'a> {
                     if !self.word_raw.is_empty() {
                         let raw = std::mem::take(&mut self.word_raw);
                         let parts = std::mem::take(&mut self.word_parts);
-                        queued_items.push(HereDocLineItem::Token(Token::Word(
-                            raw.into_boxed_slice(),
-                            parts.into_boxed_slice(),
-                        )));
+                        queued_items.push(HereDocLineItem::Token(Token::Word(raw, parts)));
                     }
                 }
                 _ => {
@@ -1085,10 +1082,7 @@ impl<'a> Parser<'a> {
                     if !self.word_raw.is_empty() {
                         let raw = std::mem::take(&mut self.word_raw);
                         let parts = std::mem::take(&mut self.word_parts);
-                        queued_items.push(HereDocLineItem::Token(Token::Word(
-                            raw.into_boxed_slice(),
-                            parts.into_boxed_slice(),
-                        )));
+                        queued_items.push(HereDocLineItem::Token(Token::Word(raw, parts)));
                     }
                 }
             }
@@ -1098,12 +1092,11 @@ impl<'a> Parser<'a> {
             self.advance_byte();
         }
 
-        let mut bodies: Vec<(Box<[u8]>, usize)> = Vec::new();
+        let mut bodies: Vec<(Vec<u8>, usize)> = Vec::new();
         for entry in &heredoc_entries {
             let body_line = self.line;
-            let body: Box<[u8]> = self
-                .read_here_doc_body(&entry.delimiter, entry.strip_tabs, entry.expand)?
-                .into_boxed_slice();
+            let body: Vec<u8> =
+                self.read_here_doc_body(&entry.delimiter, entry.strip_tabs, entry.expand)?;
             bodies.push((body, body_line));
         }
 
@@ -1236,10 +1229,7 @@ impl<'a> Parser<'a> {
             flush_quoted_buf(&mut self.word_qbuf, &mut self.word_parts);
             let raw = std::mem::take(&mut self.word_raw);
             let parts = std::mem::take(&mut self.word_parts);
-            return Ok(Token::Word(
-                raw.into_boxed_slice(),
-                parts.into_boxed_slice(),
-            ));
+            return Ok(Token::Word(raw, parts));
         }
     }
 
@@ -1459,7 +1449,7 @@ impl<'a> Parser<'a> {
                     if content_start == content_end {
                         flush_quoted_buf(qbuf, parts);
                         parts.push(WordPart::QuotedLiteral {
-                            bytes: Box::new([]),
+                            bytes: Vec::new(),
                             newlines: 0,
                         });
                     } else {
@@ -1478,7 +1468,7 @@ impl<'a> Parser<'a> {
                     if dq_raw.is_empty() {
                         flush_quoted_buf(qbuf, parts);
                         parts.push(WordPart::QuotedLiteral {
-                            bytes: Box::new([]),
+                            bytes: Vec::new(),
                             newlines: 0,
                         });
                     } else {
@@ -1706,7 +1696,7 @@ fn classify_dollar_from_slice(slice: &[u8], _quoted: bool, base: usize) -> (Expa
                             end: base + 2,
                         },
                         op: BracedOp::None,
-                        parts: Box::new([]),
+                        parts: Vec::new(),
                     },
                     consumed,
                 );
@@ -1728,7 +1718,7 @@ fn classify_dollar_from_slice(slice: &[u8], _quoted: bool, base: usize) -> (Expa
                     ExpansionKind::Braced {
                         name: braced_name,
                         op: BracedOp::Length,
-                        parts: Box::new([]),
+                        parts: Vec::new(),
                     },
                     consumed,
                 );
@@ -1744,7 +1734,7 @@ fn classify_dollar_from_slice(slice: &[u8], _quoted: bool, base: usize) -> (Expa
             let word_parts = if word_rel_start < brace_end {
                 build_word_parts_for_slice(slice, word_rel_start, brace_end, base)
             } else {
-                Box::new([])
+                Vec::new()
             };
             (
                 ExpansionKind::Braced {
@@ -1854,7 +1844,7 @@ fn flush_quoted_buf(qbuf: &mut Vec<u8>, parts: &mut Vec<WordPart>) {
     if !qbuf.is_empty() {
         parts.push(WordPart::QuotedLiteral {
             newlines: qbuf.iter().filter(|&&b| b == b'\n').count() as u16,
-            bytes: Box::from(qbuf.as_slice()),
+            bytes: qbuf.clone(),
         });
         qbuf.clear();
     }
@@ -1942,12 +1932,7 @@ fn parse_braced_name_end(expr: &[u8]) -> usize {
 /// Builds `WordPart` entries for a sub-range of a raw byte buffer.
 /// `base` is added to all positional offsets so they reference positions
 /// in the full `Word.raw` buffer (use 0 when `raw` is already the full buffer).
-fn build_word_parts_for_slice(
-    raw: &[u8],
-    start: usize,
-    end: usize,
-    base: usize,
-) -> Box<[WordPart]> {
+fn build_word_parts_for_slice(raw: &[u8], start: usize, end: usize, base: usize) -> Vec<WordPart> {
     build_word_parts_impl(raw, start, end, base, true)
 }
 
@@ -1957,7 +1942,7 @@ fn build_word_parts_impl(
     end: usize,
     base: usize,
     allow_tilde: bool,
-) -> Box<[WordPart]> {
+) -> Vec<WordPart> {
     let mut parts = Vec::new();
     let mut qbuf = Vec::new();
     let mut i = start;
@@ -2097,7 +2082,7 @@ fn build_word_parts_impl(
         }
     }
     flush_quoted_buf(&mut qbuf, &mut parts);
-    parts.into_boxed_slice()
+    parts
 }
 
 fn find_closing_brace(raw: &[u8], start: usize, end: usize) -> usize {
@@ -2291,7 +2276,7 @@ pub(super) struct SavedAliasState {
     trailing_blank_pending: bool,
 }
 
-pub(super) fn parse_here_doc_delimiter(raw: &[u8]) -> (Box<[u8]>, bool) {
+pub(super) fn parse_here_doc_delimiter(raw: &[u8]) -> (Vec<u8>, bool) {
     let mut delimiter = Vec::new();
     let mut index = 0usize;
     let mut expand = true;
@@ -2373,7 +2358,7 @@ pub(super) fn parse_here_doc_delimiter(raw: &[u8]) -> (Box<[u8]>, bool) {
         }
     }
 
-    (delimiter.into_boxed_slice(), expand)
+    (delimiter, expand)
 }
 
 #[cfg(test)]
@@ -2737,8 +2722,8 @@ mod tests {
         );
     }
 
-    fn bx(s: &[u8]) -> Box<[u8]> {
-        s.to_vec().into_boxed_slice()
+    fn bx(s: &[u8]) -> Vec<u8> {
+        s.to_vec()
     }
 
     #[test]
@@ -2847,7 +2832,7 @@ mod tests {
         assert_eq!(&*Token::LBrace.display_name(), b"{");
         assert_eq!(&*Token::RBrace.display_name(), b"}");
         assert_eq!(
-            &*Token::Word(bx(b"foo"), Box::new([])).display_name(),
+            &*Token::Word(bx(b"foo"), Vec::new()).display_name(),
             b"word"
         );
     }
@@ -2855,9 +2840,9 @@ mod tests {
     #[test]
     fn token_into_word_some_and_none() {
         use crate::syntax::word_parts::WordPart;
-        let empty_parts: Box<[WordPart]> = Box::new([]);
+        let empty_parts: Vec<WordPart> = Vec::new();
         assert_eq!(
-            Token::Word(bx(b"hi"), Box::new([])).into_word(),
+            Token::Word(bx(b"hi"), Vec::new()).into_word(),
             Some((bx(b"hi"), empty_parts))
         );
         assert_eq!(Token::Eof.into_word(), None);
@@ -2968,7 +2953,7 @@ mod tests {
         )));
     }
 
-    fn parse_words(input: &[u8]) -> Vec<(Box<[u8]>, Box<[WordPart]>)> {
+    fn parse_words(input: &[u8]) -> Vec<(Vec<u8>, Vec<WordPart>)> {
         let prog = crate::syntax::parse(input).expect("parse");
         let cmd = &prog.items[0].and_or.first.commands[0];
         match cmd {

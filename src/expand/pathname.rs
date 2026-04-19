@@ -180,7 +180,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"$WORDS".as_ref().into(),
-                    parts: Box::new([]),
+                    parts: Vec::new(),
                     line: 0
                 },
             )
@@ -192,7 +192,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"*".as_ref().into(),
-                    parts: Box::new([]),
+                    parts: Vec::new(),
                     line: 0
                 }
             )
@@ -263,7 +263,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"file_*.txt".as_ref().into(),
-                    parts: Box::new([]),
+                    parts: Vec::new(),
                     line: 0,
                 },
             )

@@ -413,14 +413,13 @@ mod tests {
                 let error = expand_simple(
                     &mut shell,
                     &SimpleCommand {
-                        words: vec![literal_word(b"cat")].into_boxed_slice(),
+                        words: vec![literal_word(b"cat")],
                         redirections: vec![Redirection {
                             fd: None,
                             kind: RedirectionKind::HereDoc,
                             target: literal_word(b"EOF"),
                             here_doc: None,
-                        }]
-                        .into_boxed_slice(),
+                        }],
                         ..SimpleCommand::default()
                     },
                 )
@@ -431,14 +430,13 @@ mod tests {
                 let error = expand_simple(
                     &mut shell,
                     &SimpleCommand {
-                        words: vec![literal_word(b"echo")].into_boxed_slice(),
+                        words: vec![literal_word(b"echo")],
                         redirections: vec![Redirection {
                             fd: Some(1),
                             kind: RedirectionKind::DupOutput,
                             target: literal_word(b"bad"),
                             here_doc: None,
-                        }]
-                        .into_boxed_slice(),
+                        }],
                         ..SimpleCommand::default()
                     },
                 )

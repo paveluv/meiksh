@@ -135,9 +135,7 @@ pub(super) fn parse_trap_action(action: &[u8]) -> Option<TrapAction> {
         _ => {
             let program =
                 crate::syntax::parse_with_aliases(action, &crate::hash::ShellMap::default())
-                    .unwrap_or_else(|_| Program {
-                        items: Box::new([]),
-                    });
+                    .unwrap_or_else(|_| Program { items: Vec::new() });
             Some(TrapAction::Command {
                 text: action.into(),
                 program: Rc::new(program),

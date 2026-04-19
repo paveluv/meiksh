@@ -8,6 +8,7 @@ use super::core::{Context, ExpandError};
 use super::glob::pattern_matches_with_offsets;
 use super::model::{QuoteState, Segment, render_pattern_from_segments};
 use super::parameter::{lookup_param, require_set_parameter};
+use super::scratch::ExpandScratch;
 use super::word::trim_trailing_newlines;
 use crate::syntax::byte_class::{is_glob_char, is_name};
 
@@ -31,10 +32,6 @@ pub(crate) struct ExpandOutput {
 }
 
 impl ExpandOutput {
-    pub(super) fn new() -> Self {
-        Self::default()
-    }
-
     pub(super) fn push_literal_with_glob(&mut self, bytes: &[u8], has_glob: bool) {
         if has_glob {
             self.current_has_glob = true;
@@ -67,16 +64,15 @@ impl ExpandOutput {
         self.current_has_glob = false;
     }
 
-    pub(super) fn push_expanded(&mut self, bytes: &[u8], ifs: &[u8]) {
-        if ifs.is_empty() {
+    pub(super) fn push_expanded(&mut self, bytes: &[u8], ifs_chars: &[IfsChar]) {
+        if ifs_chars.is_empty() {
             self.current.extend_from_slice(bytes);
             return;
         }
 
-        let ifs_chars = decompose_ifs(ifs);
         let mut i = 0;
         while i < bytes.len() {
-            if let Some((_, byte_seq, is_ws)) = find_ifs_char_at(&ifs_chars, &bytes[i..]) {
+            if let Some((_, byte_seq, is_ws)) = find_ifs_char_at(ifs_chars, &bytes[i..]) {
                 if is_ws {
                     if !self.current.is_empty() {
                         self.push_current_field();
@@ -96,11 +92,11 @@ impl ExpandOutput {
         }
     }
 
-    pub(super) fn push_value(&mut self, bytes: &[u8], quoted: bool, ifs: &[u8]) {
+    pub(super) fn push_value(&mut self, bytes: &[u8], quoted: bool, ifs_chars: &[IfsChar]) {
         if quoted {
             self.push_quoted(bytes);
         } else {
-            self.push_expanded(bytes, ifs);
+            self.push_expanded(bytes, ifs_chars);
         }
     }
 
@@ -244,9 +240,9 @@ pub(super) fn expand_parts_into<C: Context>(
     ctx: &mut C,
     raw: &[u8],
     parts: &[WordPart],
-    ifs: &[u8],
     quoted: bool,
     output: &mut ExpandOutput,
+    scratch: &mut ExpandScratch,
 ) -> Result<(), ExpandError> {
     for part in parts {
         match part {
@@ -282,7 +278,7 @@ pub(super) fn expand_parts_into<C: Context>(
             }
             WordPart::Expansion { kind, quoted: q } => {
                 let effective_quoted = quoted || *q;
-                expand_kind(ctx, raw, kind, ifs, effective_quoted, output)?;
+                expand_kind(ctx, raw, kind, effective_quoted, output, scratch)?;
             }
         }
     }
@@ -329,47 +325,47 @@ fn expand_kind<C: Context>(
     ctx: &mut C,
     raw: &[u8],
     kind: &ExpansionKind,
-    ifs: &[u8],
     quoted: bool,
     output: &mut ExpandOutput,
+    scratch: &mut ExpandScratch,
 ) -> Result<(), ExpandError> {
     match kind {
         ExpansionKind::SimpleVar { start, end } => {
             let name = &raw[*start..*end];
             let value = lookup_param(ctx, name);
             let value = require_set_parameter(ctx, name, value)?;
-            output.push_value(value.as_bytes(), quoted, ifs);
+            output.push_value(value.as_bytes(), quoted, &scratch.ifs_chars);
         }
         ExpansionKind::Positional { index } => {
             let idx = *index as usize;
             let value = ctx.positional_param(idx);
             let value = require_set_parameter(ctx, &[b'0' + index], value)?;
-            output.push_value(value.as_bytes(), quoted, ifs);
+            output.push_value(value.as_bytes(), quoted, &scratch.ifs_chars);
         }
         ExpansionKind::ShellName => {
             let name = ctx.shell_name();
-            output.push_value(name, quoted, ifs);
+            output.push_value(name, quoted, &scratch.ifs_chars);
         }
         ExpansionKind::SpecialVar { ch } => {
-            expand_special_var(ctx, *ch, ifs, quoted, output)?;
+            expand_special_var(ctx, *ch, quoted, output, scratch)?;
         }
         ExpansionKind::Braced { name, op, parts } => {
-            expand_braced(ctx, raw, name, *op, parts, ifs, quoted, output)?;
+            expand_braced(ctx, raw, name, *op, parts, quoted, output, scratch)?;
         }
         ExpansionKind::Command { program } => {
             let out = ctx.command_substitute(program)?;
             let trimmed = trim_trailing_newlines(&out);
-            output.push_value(trimmed, quoted, ifs);
+            output.push_value(trimmed, quoted, &scratch.ifs_chars);
         }
         ExpansionKind::Arithmetic { parts } => {
-            expand_arithmetic(ctx, raw, parts, ifs, quoted, output)?;
+            expand_arithmetic(ctx, raw, parts, quoted, output, scratch)?;
         }
         ExpansionKind::ArithmeticLiteral { start, end } => {
             let saved_line = ctx.lineno();
             let value = eval_arithmetic(ctx, &raw[*start..*end])?;
             ctx.set_lineno(saved_line);
             let buf = bstr::I64Buf::new(value);
-            output.push_value(buf.as_bytes(), quoted, ifs);
+            output.push_value(buf.as_bytes(), quoted, &scratch.ifs_chars);
         }
         ExpansionKind::LiteralDollar => {
             if quoted {
@@ -385,9 +381,9 @@ fn expand_kind<C: Context>(
 fn expand_special_var<C: Context>(
     ctx: &mut C,
     ch: u8,
-    ifs: &[u8],
     quoted: bool,
     output: &mut ExpandOutput,
+    scratch: &mut ExpandScratch,
 ) -> Result<(), ExpandError> {
     match ch {
         b'@' => {
@@ -396,7 +392,7 @@ fn expand_special_var<C: Context>(
             } else {
                 let joined = Cow::Owned(bstr::join_bstrings(ctx.positional_params(), b" "));
                 let value = require_set_parameter(ctx, b"@", Some(joined))?;
-                output.push_expanded(value.as_bytes(), ifs);
+                output.push_expanded(value.as_bytes(), &scratch.ifs_chars);
             }
         }
         b'*' => {
@@ -407,12 +403,12 @@ fn expand_special_var<C: Context>(
                 Some(s) => &s[..crate::sys::locale::first_char_len(s)],
             };
             let value = bstr::join_bstrings(ctx.positional_params(), sep);
-            output.push_value(&value, quoted, ifs);
+            output.push_value(&value, quoted, &scratch.ifs_chars);
         }
         _ => {
             let value = ctx.special_param(ch);
             let value = require_set_parameter(ctx, &[ch], value)?;
-            output.push_value(value.as_bytes(), quoted, ifs);
+            output.push_value(value.as_bytes(), quoted, &scratch.ifs_chars);
         }
     }
     Ok(())
@@ -450,9 +446,9 @@ fn expand_braced<C: Context>(
     braced_name: &BracedName,
     op: BracedOp,
     word_parts: &[WordPart],
-    ifs: &[u8],
     quoted: bool,
     output: &mut ExpandOutput,
+    scratch: &mut ExpandScratch,
 ) -> Result<(), ExpandError> {
     let name = braced_name_bytes(raw, braced_name);
     if name.is_empty() {
@@ -465,7 +461,7 @@ fn expand_braced<C: Context>(
             let value = lookup_braced_param(ctx, raw, braced_name);
             let value = require_set_parameter(ctx, name, value)?;
             let len = bstr::u64_to_bytes(crate::sys::locale::count_chars(&value));
-            output.push_value(&len, quoted, ifs);
+            output.push_value(&len, quoted, &scratch.ifs_chars);
         }
         BracedOp::None => {
             if !word_parts.is_empty() {
@@ -475,7 +471,7 @@ fn expand_braced<C: Context>(
             }
             let value = lookup_braced_param(ctx, raw, braced_name);
             let value = require_set_parameter(ctx, name, value)?;
-            output.push_value(value.as_bytes(), quoted, ifs);
+            output.push_value(value.as_bytes(), quoted, &scratch.ifs_chars);
         }
         BracedOp::Default | BracedOp::DefaultColon => {
             let value = lookup_braced_param(ctx, raw, braced_name);
@@ -488,10 +484,10 @@ fn expand_braced<C: Context>(
                 // nounset side-effect only; default word will be used
             }
             if use_word {
-                expand_braced_word(ctx, raw, word_parts, ifs, quoted, output)?;
+                expand_braced_word(ctx, raw, word_parts, quoted, output, scratch)?;
             } else {
                 let val = value.unwrap();
-                output.push_value(val.as_bytes(), quoted, ifs);
+                output.push_value(val.as_bytes(), quoted, &scratch.ifs_chars);
             }
         }
         BracedOp::Assign | BracedOp::AssignColon => {
@@ -509,12 +505,12 @@ fn expand_braced<C: Context>(
                         message: msg.into(),
                     });
                 }
-                let expanded = expand_braced_word_text(ctx, raw, word_parts)?;
+                let expanded = expand_braced_word_text(ctx, raw, word_parts, scratch)?;
                 ctx.set_var(name, &expanded)?;
-                output.push_value(&expanded, quoted, ifs);
+                output.push_value(&expanded, quoted, &scratch.ifs_chars);
             } else {
                 let val = value.unwrap();
-                output.push_value(val.as_bytes(), quoted, ifs);
+                output.push_value(val.as_bytes(), quoted, &scratch.ifs_chars);
             }
         }
         BracedOp::Error | BracedOp::ErrorColon => {
@@ -530,7 +526,7 @@ fn expand_braced<C: Context>(
                     m.extend_from_slice(b": parameter null or not set");
                     m
                 } else {
-                    let expanded = expand_braced_word_text(ctx, raw, word_parts)?;
+                    let expanded = expand_braced_word_text(ctx, raw, word_parts, scratch)?;
                     let mut m = name.to_vec();
                     m.extend_from_slice(b": ");
                     m.extend_from_slice(&expanded);
@@ -541,7 +537,7 @@ fn expand_braced<C: Context>(
                 });
             }
             let val = value.unwrap();
-            output.push_value(val.as_bytes(), quoted, ifs);
+            output.push_value(val.as_bytes(), quoted, &scratch.ifs_chars);
         }
         BracedOp::Alt | BracedOp::AltColon => {
             let value = lookup_braced_param(ctx, raw, braced_name);
@@ -551,7 +547,7 @@ fn expand_braced<C: Context>(
                 _ => true,
             };
             if use_word {
-                expand_braced_word(ctx, raw, word_parts, ifs, quoted, output)?;
+                expand_braced_word(ctx, raw, word_parts, quoted, output, scratch)?;
             } else if quoted {
                 output.push_quoted(b"");
             }
@@ -559,16 +555,30 @@ fn expand_braced<C: Context>(
         BracedOp::TrimSuffix | BracedOp::TrimSuffixLong => {
             let value = lookup_braced_param(ctx, raw, braced_name);
             let value = require_set_parameter(ctx, name, value)?.into_owned();
-            let pattern = expand_braced_word_pattern(ctx, raw, word_parts)?;
-            let trimmed = trim_suffix(&value, &pattern, op == BracedOp::TrimSuffixLong);
-            output.push_value(trimmed, quoted, ifs);
+            let pattern = expand_braced_word_pattern(ctx, raw, word_parts, scratch)?;
+            let mut offsets = std::mem::take(&mut scratch.char_offsets);
+            let trimmed = trim_suffix(
+                &value,
+                &pattern,
+                op == BracedOp::TrimSuffixLong,
+                &mut offsets,
+            );
+            output.push_value(trimmed, quoted, &scratch.ifs_chars);
+            scratch.char_offsets = offsets;
         }
         BracedOp::TrimPrefix | BracedOp::TrimPrefixLong => {
             let value = lookup_braced_param(ctx, raw, braced_name);
             let value = require_set_parameter(ctx, name, value)?.into_owned();
-            let pattern = expand_braced_word_pattern(ctx, raw, word_parts)?;
-            let trimmed = trim_prefix(&value, &pattern, op == BracedOp::TrimPrefixLong);
-            output.push_value(trimmed, quoted, ifs);
+            let pattern = expand_braced_word_pattern(ctx, raw, word_parts, scratch)?;
+            let mut offsets = std::mem::take(&mut scratch.char_offsets);
+            let trimmed = trim_prefix(
+                &value,
+                &pattern,
+                op == BracedOp::TrimPrefixLong,
+                &mut offsets,
+            );
+            output.push_value(trimmed, quoted, &scratch.ifs_chars);
+            scratch.char_offsets = offsets;
         }
     }
     Ok(())
@@ -578,31 +588,51 @@ fn expand_braced_word<C: Context>(
     ctx: &mut C,
     raw: &[u8],
     word_parts: &[WordPart],
-    ifs: &[u8],
     quoted: bool,
     output: &mut ExpandOutput,
+    scratch: &mut ExpandScratch,
 ) -> Result<(), ExpandError> {
-    expand_parts_into(ctx, raw, word_parts, ifs, quoted, output)
+    expand_parts_into(ctx, raw, word_parts, quoted, output, scratch)
 }
 
 fn expand_braced_word_text<C: Context>(
     ctx: &mut C,
     raw: &[u8],
     word_parts: &[WordPart],
+    scratch: &mut ExpandScratch,
 ) -> Result<Vec<u8>, ExpandError> {
-    let mut out = ExpandOutput::new();
-    expand_parts_into(ctx, raw, word_parts, b"", true, &mut out)?;
-    Ok(out.drain_single_vec())
+    // Borrow the pooled nested-output slot for the duration of this
+    // call. Taken out so it doesn't alias `scratch` passed alongside;
+    // restored before returning so future calls keep the allocated
+    // capacity.
+    let mut temp = std::mem::take(&mut scratch.output_nested);
+    temp.clear();
+    let result = expand_parts_into(ctx, raw, word_parts, true, &mut temp, scratch);
+    let text = match &result {
+        Ok(()) => temp.drain_single_vec(),
+        Err(_) => Vec::new(),
+    };
+    scratch.output_nested = temp;
+    result.map(|()| text)
 }
 
 fn expand_braced_word_pattern<C: Context>(
     ctx: &mut C,
     raw: &[u8],
     word_parts: &[WordPart],
+    scratch: &mut ExpandScratch,
 ) -> Result<Vec<u8>, ExpandError> {
-    let mut segments = Vec::new();
-    build_pattern_segments(ctx, raw, word_parts, &mut segments)?;
-    Ok(render_pattern_from_segments(&segments))
+    // Borrow the pooled pattern-segment buffer for the duration of
+    // this call. Cleared before use; restored afterwards.
+    let mut segments = std::mem::take(&mut scratch.pattern_segments);
+    segments.clear();
+    let result = build_pattern_segments(ctx, raw, word_parts, &mut segments, scratch);
+    let pattern = match &result {
+        Ok(()) => render_pattern_from_segments(&segments),
+        Err(_) => Vec::new(),
+    };
+    scratch.pattern_segments = segments;
+    result.map(|()| pattern)
 }
 
 fn build_pattern_segments<C: Context>(
@@ -610,6 +640,7 @@ fn build_pattern_segments<C: Context>(
     raw: &[u8],
     parts: &[WordPart],
     segments: &mut Vec<Segment>,
+    scratch: &mut ExpandScratch,
 ) -> Result<(), ExpandError> {
     for part in parts {
         match part {
@@ -621,9 +652,15 @@ fn build_pattern_segments<C: Context>(
                 segments.push(Segment::Text(bytes.to_vec(), QuoteState::Quoted));
             }
             WordPart::Expansion { kind, quoted } => {
-                let mut temp = ExpandOutput::new();
-                expand_kind(ctx, raw, kind, b"", *quoted, &mut temp)?;
-                let text = temp.drain_single_vec();
+                let mut temp = std::mem::take(&mut scratch.output_nested);
+                temp.clear();
+                let result = expand_kind(ctx, raw, kind, *quoted, &mut temp, scratch);
+                let text = match &result {
+                    Ok(()) => temp.drain_single_vec(),
+                    Err(_) => Vec::new(),
+                };
+                scratch.output_nested = temp;
+                result?;
                 let state = if *quoted {
                     QuoteState::Quoted
                 } else {
@@ -641,11 +678,33 @@ fn expand_arithmetic<C: Context>(
     ctx: &mut C,
     raw: &[u8],
     parts: &[WordPart],
-    ifs: &[u8],
     quoted: bool,
     output: &mut ExpandOutput,
+    scratch: &mut ExpandScratch,
 ) -> Result<(), ExpandError> {
-    let mut expr_text = Vec::new();
+    let mut expr_text = std::mem::take(&mut scratch.arith_expr);
+    expr_text.clear();
+    let result = build_arithmetic_expr_text(ctx, raw, parts, &mut expr_text, scratch);
+    let eval_result = result.and_then(|()| {
+        let saved_line = ctx.lineno();
+        let value = eval_arithmetic(ctx, &expr_text)?;
+        ctx.set_lineno(saved_line);
+        Ok(value)
+    });
+    scratch.arith_expr = expr_text;
+    let value = eval_result?;
+    let buf = bstr::I64Buf::new(value);
+    output.push_value(buf.as_bytes(), quoted, &scratch.ifs_chars);
+    Ok(())
+}
+
+fn build_arithmetic_expr_text<C: Context>(
+    ctx: &mut C,
+    raw: &[u8],
+    parts: &[WordPart],
+    expr_text: &mut Vec<u8>,
+    scratch: &mut ExpandScratch,
+) -> Result<(), ExpandError> {
     for part in parts {
         match part {
             WordPart::Literal { start, end, .. } => {
@@ -655,10 +714,16 @@ fn expand_arithmetic<C: Context>(
                 expr_text.extend_from_slice(bytes);
             }
             WordPart::Expansion { kind, .. } => {
-                let mut temp = ExpandOutput::new();
-                expand_kind(ctx, raw, kind, b"", true, &mut temp)?;
-                let flat = temp.drain_single_vec();
-                expr_text.extend_from_slice(&flat);
+                let mut temp = std::mem::take(&mut scratch.output_nested);
+                temp.clear();
+                let result = expand_kind(ctx, raw, kind, true, &mut temp, scratch);
+                if result.is_ok() {
+                    // Append the flat expansion directly into `expr_text`
+                    // without materializing an intermediate `Vec<u8>`.
+                    append_drained_single(&mut temp, expr_text);
+                }
+                scratch.output_nested = temp;
+                result?;
             }
             WordPart::TildeLiteral { .. } => {
                 // Parser invariant: `build_word_parts_impl` is called with
@@ -671,12 +736,24 @@ fn expand_arithmetic<C: Context>(
             }
         }
     }
-    let saved_line = ctx.lineno();
-    let value = eval_arithmetic(ctx, &expr_text)?;
-    ctx.set_lineno(saved_line);
-    let buf = bstr::I64Buf::new(value);
-    output.push_value(buf.as_bytes(), quoted, ifs);
     Ok(())
+}
+
+/// Append the single-field flat form of `temp` into `out`, then reset
+/// `temp` in place. Avoids the per-call `Vec<u8>` materialization that
+/// `ExpandOutput::drain_single_vec` would otherwise produce.
+fn append_drained_single(temp: &mut ExpandOutput, out: &mut Vec<u8>) {
+    if temp.fields.is_empty() {
+        out.extend_from_slice(&temp.current);
+        temp.current.clear();
+    } else {
+        for f in &temp.fields {
+            out.extend_from_slice(&f.text);
+        }
+        out.extend_from_slice(&temp.current);
+        temp.fields.clear();
+        temp.current.clear();
+    }
 }
 
 /// Build the list of character-boundary byte offsets within `value`.
@@ -689,7 +766,17 @@ fn expand_arithmetic<C: Context>(
 /// and a slight overshoot for multibyte input.
 pub(super) fn char_boundary_offsets(value: &[u8]) -> Vec<usize> {
     let mut offsets = Vec::with_capacity(value.len() + 1);
-    offsets.push(0);
+    char_boundary_offsets_into(value, &mut offsets);
+    offsets
+}
+
+/// Append per-character boundary byte offsets of `value` into `out`. Caller
+/// clears `out` first if a fresh buffer is desired. Always pushes the
+/// starting `0` and a final `value.len()`. See [`char_boundary_offsets`]
+/// for details on the ASCII fast path and preallocation behavior.
+pub(super) fn char_boundary_offsets_into(value: &[u8], out: &mut Vec<usize>) {
+    out.reserve(value.len() + 1);
+    out.push(0);
     let mut i = 0;
     while i < value.len() {
         let step = if value[i] < 0x80 {
@@ -699,13 +786,18 @@ pub(super) fn char_boundary_offsets(value: &[u8]) -> Vec<usize> {
             if len == 0 { 1 } else { len }
         };
         i += step;
-        offsets.push(i);
+        out.push(i);
     }
-    offsets
 }
 
-fn trim_suffix<'a>(value: &'a [u8], pattern: &[u8], longest: bool) -> &'a [u8] {
-    let offsets = char_boundary_offsets(value);
+fn trim_suffix<'a>(
+    value: &'a [u8],
+    pattern: &[u8],
+    longest: bool,
+    offsets: &mut Vec<usize>,
+) -> &'a [u8] {
+    offsets.clear();
+    char_boundary_offsets_into(value, offsets);
     let try_match =
         |k: usize, i: usize| pattern_matches_with_offsets(&value[i..], &offsets[k..], i, pattern);
     if longest {
@@ -724,8 +816,14 @@ fn trim_suffix<'a>(value: &'a [u8], pattern: &[u8], longest: bool) -> &'a [u8] {
     value
 }
 
-fn trim_prefix<'a>(value: &'a [u8], pattern: &[u8], longest: bool) -> &'a [u8] {
-    let offsets = char_boundary_offsets(value);
+fn trim_prefix<'a>(
+    value: &'a [u8],
+    pattern: &[u8],
+    longest: bool,
+    offsets: &mut Vec<usize>,
+) -> &'a [u8] {
+    offsets.clear();
+    char_boundary_offsets_into(value, offsets);
     let try_match = |k: usize| {
         let end = offsets[k];
         pattern_matches_with_offsets(&value[..end], &offsets[..=k], 0, pattern)
@@ -750,13 +848,15 @@ fn is_ifs_whitespace(b: u8) -> bool {
     b == b' ' || b == b'\t' || b == b'\n'
 }
 
-pub(super) struct IfsChar {
+#[derive(Clone, Debug)]
+pub(crate) struct IfsChar {
     pub byte_seq: Vec<u8>,
     pub is_ws: bool,
 }
 
-pub(super) fn decompose_ifs(ifs: &[u8]) -> Vec<IfsChar> {
-    let mut result = Vec::new();
+/// Append the decomposed `IfsChar` entries for `ifs` into `out`.
+/// Caller clears `out` first if a fresh buffer is desired.
+pub(super) fn decompose_ifs_into(ifs: &[u8], out: &mut Vec<IfsChar>) {
     let mut i = 0;
     while i < ifs.len() {
         let step = if ifs[i] < 0x80 {
@@ -767,10 +867,9 @@ pub(super) fn decompose_ifs(ifs: &[u8]) -> Vec<IfsChar> {
         };
         let byte_seq = ifs[i..i + step].to_vec();
         let is_ws = step == 1 && is_ifs_whitespace(ifs[i]);
-        result.push(IfsChar { byte_seq, is_ws });
+        out.push(IfsChar { byte_seq, is_ws });
         i += step;
     }
-    result
 }
 
 pub(super) fn find_ifs_char_at<'a>(
@@ -807,13 +906,15 @@ mod tests {
         assert_no_syscalls(|| {
             // U+00E9 = 0xC3 0xA9
             set_test_locale_c();
-            let ifs = decompose_ifs(b"\xc3\xa9");
+            let mut ifs = Vec::new();
+            decompose_ifs_into(b"\xc3\xa9", &mut ifs);
             assert_eq!(ifs.len(), 2);
             assert_eq!(ifs[0].byte_seq, vec![0xc3]);
             assert_eq!(ifs[1].byte_seq, vec![0xa9]);
 
             set_test_locale_utf8();
-            let ifs = decompose_ifs(b"\xc3\xa9");
+            let mut ifs = Vec::new();
+            decompose_ifs_into(b"\xc3\xa9", &mut ifs);
             assert_eq!(ifs.len(), 1);
             assert_eq!(ifs[0].byte_seq, vec![0xc3, 0xa9]);
         });
@@ -843,8 +944,10 @@ mod tests {
                 user_end: 10,
                 end: 15,
             }];
-            let mut output = ExpandOutput::new();
-            expand_parts_into(&mut ctx, raw, &parts, b"", false, &mut output).expect("expand");
+            let mut output = ExpandOutput::default();
+            let mut scratch = ExpandScratch::default();
+            expand_parts_into(&mut ctx, raw, &parts, false, &mut output, &mut scratch)
+                .expect("expand");
             let mut argv: Vec<Vec<u8>> = Vec::new();
             output.finish_into_no_glob(&mut argv).expect("finish");
             assert_eq!(argv, vec![b"/home/slashuser/rest".to_vec()]);
@@ -867,8 +970,10 @@ mod tests {
                 user_end: raw.len(),
                 end: raw.len(),
             }];
-            let mut output = ExpandOutput::new();
-            expand_parts_into(&mut ctx, raw, &parts, b"", false, &mut output).expect("expand");
+            let mut output = ExpandOutput::default();
+            let mut scratch = ExpandScratch::default();
+            expand_parts_into(&mut ctx, raw, &parts, false, &mut output, &mut scratch)
+                .expect("expand");
             // The field buffer must have absorbed the literal bytes…
             assert_eq!(output.current.as_slice(), b"~no*such*user");
             // …and `push_literal`'s per-byte scan must have marked the

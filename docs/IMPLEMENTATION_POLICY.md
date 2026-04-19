@@ -100,7 +100,7 @@ mod tests {
 
 ## POSIX Implementation-Defined Choices
 
-- Variable values are stored as byte arrays (`Vec<u8>`, `Box<[u8]>`), not Rust `String`.
+- Variable values are stored as byte arrays (`Vec<u8>`), not Rust `String`.
 - `ENV` is only sourced when it expands to an absolute path that exists.
 - Default prompt is `meiksh$ ` unless `PS1` is set.
 - `umask` symbolic mode accepts `s` (setuid/setgid) and `X` (conditional execute); `s` contributes zero bits since `umask` only manages the 0o777 permission mask, accepted without error per POSIX's "unspecified" clause.
@@ -142,6 +142,25 @@ All unit tests that exercise OS-interacting code paths use the **trace model** i
 
 - Optimize shell-owned overhead first: startup, parsing, expansion, builtin dispatch, command lookup, and pipeline construction.
 - Prefer clearer, auditable low-level bindings over opaque abstractions when the syscall path materially affects shell semantics or latency.
+
+### Collection types
+
+- Prefer `Vec<T>` over `Box<[T]>` for any collection that is built incrementally by `push`/`extend`. Calling `.into_boxed_slice()` on the finished `Vec<T>` performs a `shrink_to_fit`, which reallocates whenever the `Vec`'s spare capacity is non-zero. On hot paths — parser AST construction, per-expansion buffer assembly — this is a real allocation cost, not a cosmetic one. The 8-byte per-field overhead of `Vec` (capacity) is negligible next to the eliminated reallocations.
+- Use `Box<[T]>` only for long-lived, rarely-rebuilt collections where the capacity savings matter and the build site already has the final length (e.g., via `Box::from(&[T])` or `collect::<Box<[T]>>`), so no shrink is needed.
+- The same rule applies to byte buffers: prefer `Vec<u8>` over `Box<[u8]>` for anything built by concatenation or extension.
+
+### Caller-allocated output buffers
+
+- Functions that produce a collection on a hot path should accept a caller-provided `&mut Vec<T>` (or `&mut Vec<u8>`) and append into it, instead of allocating and returning a fresh `Vec<T>`. Callers clear or reserve as they see fit.
+- Name such functions with an `_into` suffix mirroring the allocating variant (e.g., `decompose_ifs_into`, `char_boundary_offsets_into`). Keep the allocating convenience wrapper available for cold call sites.
+- This pattern lets the same buffer be reused across many invocations, which is what makes expansion-heavy workloads (parameter expansion, field splitting, pattern matching) amortize to zero allocations per word after warm-up.
+
+### Scratch buffers
+
+- Reusable working buffers for a subsystem live on a subsystem-owned scratch struct — currently `ExpandScratch`, stored on `Shell`. The struct holds pre-allocated `Vec`s and partial caches (e.g., `ifs_chars`, `pattern_segments`, `char_offsets`, a nested `ExpandOutput` slot) that would otherwise be freshly allocated on every call into the subsystem.
+- `Shell` owns the scratch (rather than using `thread_local!`) so subshell semantics are explicit: `Shell::clone` resets scratch state, matching the process fork model and avoiding cross-shell buffer reuse.
+- When a function needs a caller-allocated buffer from the scratch, it `std::mem::take`s the field into a local, uses it, and writes the (drained) buffer back before returning. This preserves the allocated capacity for the next caller while cleanly decoupling the borrow from `&mut ExpandScratch` that is threaded alongside.
+- Scratch entries whose contents may be invalidated by outside events (e.g., `ifs_chars` when `IFS` is reassigned) must expose an explicit invalidation helper (`ExpandScratch::invalidate_ifs`) that clears the relevant fields; the cache-validity flag is flipped there, not at the individual call sites.
 
 ## Pending Policy Items
 

@@ -700,10 +700,9 @@ mod tests {
             let cmd = SimpleCommand {
                 words: vec![Word {
                     raw: b"echo `date`".to_vec().into(),
-                    parts: Box::new([]),
+                    parts: Vec::new(),
                     line: 0,
-                }]
-                .into_boxed_slice(),
+                }],
                 ..SimpleCommand::default()
             };
             assert!(has_command_substitution(&cmd));
@@ -711,10 +710,9 @@ mod tests {
             let cmd_no_sub = SimpleCommand {
                 words: vec![Word {
                     raw: b"plain".to_vec().into(),
-                    parts: Box::new([]),
+                    parts: Vec::new(),
                     line: 0,
-                }]
-                .into_boxed_slice(),
+                }],
                 ..SimpleCommand::default()
             };
             assert!(!has_command_substitution(&cmd_no_sub));
@@ -774,7 +772,7 @@ mod tests {
                 strs.iter()
                     .map(|s| Word {
                         raw: s.to_vec().into(),
-                        parts: Box::new([]),
+                        parts: Vec::new(),
                         line: 0,
                     })
                     .collect()
@@ -800,13 +798,12 @@ mod tests {
                     name: b"X".to_vec().into(),
                     value: Word {
                         raw: b"$(date)".to_vec().into(),
-                        parts: Box::new([]),
+                        parts: Vec::new(),
                         line: 0,
                     },
-                }]
-                .into_boxed_slice(),
-                words: vec![].into_boxed_slice(),
-                redirections: vec![].into_boxed_slice(),
+                }],
+                words: vec![],
+                redirections: vec![],
             };
             assert!(has_command_substitution(&cmd));
 
@@ -815,23 +812,21 @@ mod tests {
                     name: b"X".to_vec().into(),
                     value: Word {
                         raw: b"`date`".to_vec().into(),
-                        parts: Box::new([]),
+                        parts: Vec::new(),
                         line: 0,
                     },
-                }]
-                .into_boxed_slice(),
-                words: vec![].into_boxed_slice(),
-                redirections: vec![].into_boxed_slice(),
+                }],
+                words: vec![],
+                redirections: vec![],
             };
             assert!(has_command_substitution(&cmd_backtick_assign));
 
             let cmd_dollar_paren_word = SimpleCommand {
                 words: vec![Word {
                     raw: b"echo $(date)".to_vec().into(),
-                    parts: Box::new([]),
+                    parts: Vec::new(),
                     line: 0,
-                }]
-                .into_boxed_slice(),
+                }],
                 ..SimpleCommand::default()
             };
             assert!(has_command_substitution(&cmd_dollar_paren_word));
@@ -841,18 +836,16 @@ mod tests {
                     name: b"X".to_vec().into(),
                     value: Word {
                         raw: b"plain".to_vec().into(),
-                        parts: Box::new([]),
+                        parts: Vec::new(),
                         line: 0,
                     },
-                }]
-                .into_boxed_slice(),
+                }],
                 words: vec![Word {
                     raw: b"echo".to_vec().into(),
-                    parts: Box::new([]),
+                    parts: Vec::new(),
                     line: 0,
-                }]
-                .into_boxed_slice(),
-                redirections: vec![].into_boxed_slice(),
+                }],
+                redirections: vec![],
             };
             assert!(!has_command_substitution(&cmd_none));
         });
@@ -864,30 +857,28 @@ mod tests {
         assert_no_syscalls(|| {
             let cmd_with_parts = SimpleCommand {
                 words: vec![Word {
-                    raw: b"$(echo hi)".to_vec().into(),
-                    parts: Box::new([WordPart::Expansion {
+                    raw: b"$(echo hi)".to_vec(),
+                    parts: vec![WordPart::Expansion {
                         kind: ExpansionKind::Command {
                             program: std::rc::Rc::new(crate::syntax::ast::Program::default()),
                         },
                         quoted: false,
-                    }]),
+                    }],
                     line: 0,
-                }]
-                .into_boxed_slice(),
+                }],
                 ..SimpleCommand::default()
             };
             assert!(has_command_substitution(&cmd_with_parts));
 
             let cmd_no_cmdsub = SimpleCommand {
                 words: vec![Word {
-                    raw: b"$X".to_vec().into(),
-                    parts: Box::new([WordPart::Expansion {
+                    raw: b"$X".to_vec(),
+                    parts: vec![WordPart::Expansion {
                         kind: ExpansionKind::SimpleVar { start: 0, end: 2 },
                         quoted: false,
-                    }]),
+                    }],
                     line: 0,
-                }]
-                .into_boxed_slice(),
+                }],
                 ..SimpleCommand::default()
             };
             assert!(!has_command_substitution(&cmd_no_cmdsub));

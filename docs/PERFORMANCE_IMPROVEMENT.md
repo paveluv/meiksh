@@ -21,7 +21,7 @@ In `src/exec/simple.rs` line 206:
 if let Some(function) = shell.functions.get(&owned_argv[0]).cloned() {
 ```
 
-`.cloned()` deep-copies the entire `Command` AST — every `Box<[ListItem]>`, `Box<[Word]>`, `Box<[u8]>` — on every function invocation. For `fib_iter` called 6,400 times with the loop body containing 5+ nodes, this is an allocation storm.
+`.cloned()` deep-copies the entire `Command` AST — every `Vec<ListItem>`, `Vec<Word>`, `Vec<u8>` — on every function invocation. For `fib_iter` called 6,400 times with the loop body containing 5+ nodes, this is an allocation storm.
 
 **Fix:** Borrow the AST via `Rc<Command>` or restructure to use `&Command` reference. The clone exists because the borrow of `shell.functions` conflicts with the mutable borrow needed to execute. A common solution is `Rc::clone()` (cheap reference count bump) or extracting the function body before the mutable borrow.
 

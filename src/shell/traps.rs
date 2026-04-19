@@ -25,9 +25,7 @@ pub(crate) enum TrapAction {
 impl TrapAction {
     pub(crate) fn command(text: &[u8]) -> Self {
         let program = crate::syntax::parse_with_aliases(text, &crate::hash::ShellMap::default())
-            .unwrap_or_else(|_| Program {
-                items: Box::new([]),
-            });
+            .unwrap_or_else(|_| Program { items: Vec::new() });
         TrapAction::Command {
             text: text.into(),
             program: Rc::new(program),

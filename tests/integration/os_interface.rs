@@ -366,10 +366,7 @@ fn job_control_stop_then_continue_drives_wifcontinued_and_wstopsig() {
 fn getenv_null_branch_fires_when_path_is_fully_unset() {
     let out = Command::new(meiksh())
         .env_remove("PATH")
-        .args([
-            "-c",
-            "unset PATH; no_such_cmd_xyz 2>/dev/null; printf ok",
-        ])
+        .args(["-c", "unset PATH; no_such_cmd_xyz 2>/dev/null; printf ok"])
         .output()
         .expect("run meiksh");
     assert!(

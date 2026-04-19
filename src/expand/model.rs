@@ -1,12 +1,12 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum QuoteState {
+pub(crate) enum QuoteState {
     Quoted,
     Literal,
     Expanded,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum Segment {
+pub(crate) enum Segment {
     Text(Vec<u8>, QuoteState),
     AtBreak,
     AtEmpty,
@@ -232,7 +232,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"$V".as_ref().into(),
-                    parts: Box::new([]),
+                    parts: Vec::new(),
                     line: 0,
                 },
             )

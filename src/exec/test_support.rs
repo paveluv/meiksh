@@ -22,14 +22,14 @@ pub(super) fn test_shell() -> Shell {
 /// through `syntax::parse`. The caller is responsible for only passing
 /// plain bytes (no `*`, `?`, `[`, quoting, or expansion metacharacters).
 pub(super) fn literal_word(raw: &[u8]) -> Word {
-    let parts: Box<[WordPart]> = Box::new([WordPart::Literal {
+    let parts: Vec<WordPart> = vec![WordPart::Literal {
         start: 0,
         end: raw.len(),
         has_glob: false,
         newlines: 0,
-    }]);
+    }];
     Word {
-        raw: raw.to_vec().into(),
+        raw: raw.to_vec(),
         parts,
         line: 0,
     }
