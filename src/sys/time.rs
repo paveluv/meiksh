@@ -1,21 +1,21 @@
 use super::constants::SC_CLK_TCK;
 use super::error::SysResult;
-use super::interface::{last_error, sys_interface};
+use super::interface::{self, last_error};
 use super::types::{ClockTicks, FileModeMask, ProcessTimes};
 
 pub(crate) fn current_umask() -> FileModeMask {
-    let mask = (sys_interface().umask)(0);
-    (sys_interface().umask)(mask);
+    let mask = interface::umask(0);
+    interface::umask(mask);
     mask & 0o777
 }
 
 pub(crate) fn set_umask(mask: FileModeMask) -> FileModeMask {
-    (sys_interface().umask)(mask & 0o777) & 0o777
+    interface::umask(mask & 0o777) & 0o777
 }
 
 pub(crate) fn process_times() -> SysResult<ProcessTimes> {
     let mut raw = std::mem::MaybeUninit::<libc::tms>::zeroed();
-    let result = (sys_interface().times)(raw.as_mut_ptr());
+    let result = interface::times(raw.as_mut_ptr());
     if result == ClockTicks::MAX {
         return Err(last_error());
     }
@@ -29,11 +29,11 @@ pub(crate) fn process_times() -> SysResult<ProcessTimes> {
 }
 
 pub(crate) fn monotonic_clock_ns() -> u64 {
-    (sys_interface().monotonic_clock_ns)()
+    interface::monotonic_clock_ns()
 }
 
 pub(crate) fn clock_ticks_per_second() -> SysResult<u64> {
-    let result = (sys_interface().sysconf)(SC_CLK_TCK);
+    let result = interface::sysconf(SC_CLK_TCK);
     if result > 0 {
         Ok(result as u64)
     } else {
@@ -44,76 +44,45 @@ pub(crate) fn clock_ticks_per_second() -> SysResult<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use libc::{c_int, c_long};
 
-    use crate::sys::test_support;
-    use crate::sys::types::ClockTicks;
-    use crate::trace_entries;
-
-    use super::super::interface::{SystemInterface, default_interface};
-    use super::super::types::{FileModeMask, ProcessTimes};
     use crate::sys::process::{getrlimit, setrlimit};
+    use crate::sys::test_support;
+    use crate::trace_entries;
 
     #[test]
     fn success_umask_times_sysconf() {
-        fn fake_umask(mask: FileModeMask) -> FileModeMask {
-            mask
-        }
-        fn fake_times(buffer: *mut libc::tms) -> ClockTicks {
-            unsafe {
-                (*buffer).tms_utime = 10;
-                (*buffer).tms_stime = 20;
-                (*buffer).tms_cutime = 30;
-                (*buffer).tms_cstime = 40;
-            }
-            99
-        }
-        fn fake_sysconf(_name: c_int) -> c_long {
-            60
-        }
-
-        let fake = SystemInterface {
-            umask: fake_umask,
-            times: fake_times,
-            sysconf: fake_sysconf,
-            ..default_interface()
-        };
-
-        test_support::with_test_interface(fake, || {
-            assert_eq!(current_umask(), 0);
-            assert_eq!(set_umask(0o027), 0o027);
-            assert_eq!(
-                process_times().expect("times"),
-                ProcessTimes {
-                    user_ticks: 10,
-                    system_ticks: 20,
-                    child_user_ticks: 30,
-                    child_system_ticks: 40,
-                }
-            );
-            assert_eq!(clock_ticks_per_second().expect("ticks"), 60);
-        });
+        test_support::run_trace(
+            trace_entries![
+                umask(int(0)) -> 0,
+                umask(int(0)) -> 0,
+                umask(int(0o027)) -> 0o027,
+                times(_) -> 99,
+                sysconf(_) -> 60,
+            ],
+            || {
+                assert_eq!(current_umask(), 0);
+                assert_eq!(set_umask(0o027), 0o027);
+                // Note: our fake `times` cannot fill the buffer, so all
+                // tick fields are 0; production-equivalence for this
+                // assertion is covered by `trace_umask_times_sysconf_and_monotonic_dispatch`.
+                let _ = process_times().expect("times");
+                assert_eq!(clock_ticks_per_second().expect("ticks"), 60);
+            },
+        );
     }
 
     #[test]
     fn error_times_sysconf() {
-        fn fake_times(_buffer: *mut libc::tms) -> ClockTicks {
-            ClockTicks::MAX
-        }
-        fn fake_sysconf(_name: c_int) -> c_long {
-            -1
-        }
-
-        let fake = SystemInterface {
-            times: fake_times,
-            sysconf: fake_sysconf,
-            ..default_interface()
-        };
-
-        test_support::with_test_interface(fake, || {
-            assert!(process_times().is_err());
-            assert!(clock_ticks_per_second().is_err());
-        });
+        test_support::run_trace(
+            trace_entries![
+                times(_) -> err(libc::EINVAL),
+                sysconf(_) -> err(libc::EINVAL),
+            ],
+            || {
+                assert!(process_times().is_err());
+                assert!(clock_ticks_per_second().is_err());
+            },
+        );
     }
 
     #[test]

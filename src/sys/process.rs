@@ -11,18 +11,18 @@ use super::error::{SysError, SysResult};
 #[cfg(test)]
 use super::fd_io::read_fd;
 use super::fd_io::{close_fd, create_pipe, duplicate_fd};
-use super::interface::{last_error, record_signal, signal_mask, sys_interface};
+use super::interface::{self, last_error, record_signal, signal_mask};
 use super::tty::set_process_group;
 #[cfg(test)]
 use super::types::{ChildExitStatus, ChildOutput};
 use super::types::{ChildHandle, Pid, WaitStatus};
 
 pub(crate) fn current_pid() -> Pid {
-    (sys_interface().getpid)()
+    interface::getpid()
 }
 
 pub(crate) fn parent_pid() -> Pid {
-    (sys_interface().getppid)()
+    interface::getppid()
 }
 pub(crate) fn has_same_real_and_effective_ids() -> bool {
     #[cfg(test)]
@@ -35,7 +35,7 @@ pub(crate) fn has_same_real_and_effective_ids() -> bool {
 pub(crate) fn wait_pid(pid: Pid, nohang: bool) -> SysResult<Option<WaitStatus>> {
     let mut status = 0;
     let options = if nohang { WNOHANG } else { 0 };
-    let result = (sys_interface().waitpid)(pid, &mut status, options);
+    let result = interface::waitpid(pid, &mut status, options);
     if result > 0 {
         Ok(Some(WaitStatus {
             pid: result,
@@ -50,7 +50,7 @@ pub(crate) fn wait_pid(pid: Pid, nohang: bool) -> SysResult<Option<WaitStatus>> 
 
 pub(crate) fn wait_pid_untraced(pid: Pid, _nohang: bool) -> SysResult<Option<WaitStatus>> {
     let mut status = 0;
-    let result = (sys_interface().waitpid)(pid, &mut status, WUNTRACED);
+    let result = interface::waitpid(pid, &mut status, WUNTRACED);
     if result > 0 {
         Ok(Some(WaitStatus {
             pid: result,
@@ -66,7 +66,7 @@ pub(crate) fn wait_pid_untraced(pid: Pid, _nohang: bool) -> SysResult<Option<Wai
 pub(crate) fn wait_pid_job_status(pid: Pid) -> SysResult<Option<WaitStatus>> {
     let mut status = 0;
     let options = WUNTRACED | WCONTINUED | WNOHANG;
-    let result = (sys_interface().waitpid)(pid, &mut status, options);
+    let result = interface::waitpid(pid, &mut status, options);
     if result > 0 {
         Ok(Some(WaitStatus {
             pid: result,
@@ -80,7 +80,7 @@ pub(crate) fn wait_pid_job_status(pid: Pid) -> SysResult<Option<WaitStatus>> {
 }
 
 pub(crate) fn send_signal(pid: Pid, signal: c_int) -> SysResult<()> {
-    let result = (sys_interface().kill)(pid, signal);
+    let result = interface::kill(pid, signal);
     if result == 0 {
         Ok(())
     } else {
@@ -89,7 +89,7 @@ pub(crate) fn send_signal(pid: Pid, signal: c_int) -> SysResult<()> {
 }
 
 pub(crate) fn install_shell_signal_handler(signal: c_int) -> SysResult<()> {
-    let result = (sys_interface().signal)(signal, record_signal as *const () as libc::sighandler_t);
+    let result = interface::signal(signal, record_signal as *const () as libc::sighandler_t);
     if result == SIG_ERR_HANDLER {
         Err(last_error())
     } else {
@@ -98,7 +98,7 @@ pub(crate) fn install_shell_signal_handler(signal: c_int) -> SysResult<()> {
 }
 
 pub(crate) fn ignore_signal(signal: c_int) -> SysResult<()> {
-    let result = (sys_interface().signal)(signal, SIG_IGN_HANDLER);
+    let result = interface::signal(signal, SIG_IGN_HANDLER);
     if result == SIG_ERR_HANDLER {
         Err(last_error())
     } else {
@@ -107,7 +107,7 @@ pub(crate) fn ignore_signal(signal: c_int) -> SysResult<()> {
 }
 
 pub(crate) fn default_signal_action(signal: c_int) -> SysResult<()> {
-    let result = (sys_interface().signal)(signal, SIG_DFL_HANDLER);
+    let result = interface::signal(signal, SIG_DFL_HANDLER);
     if result == SIG_ERR_HANDLER {
         Err(last_error())
     } else {
@@ -146,11 +146,11 @@ pub(crate) fn supported_trap_signals() -> Vec<c_int> {
 }
 
 pub(crate) fn query_signal_disposition(signal: c_int) -> SysResult<bool> {
-    let prev = (sys_interface().signal)(signal, SIG_IGN_HANDLER);
+    let prev = interface::signal(signal, SIG_IGN_HANDLER);
     if prev == SIG_ERR_HANDLER {
         return Err(last_error());
     }
-    let _ = (sys_interface().signal)(signal, prev);
+    let _ = interface::signal(signal, prev);
     Ok(prev == SIG_IGN_HANDLER)
 }
 
@@ -192,12 +192,12 @@ impl ChildHandle {
     }
 }
 pub(crate) fn fork_process() -> SysResult<Pid> {
-    let pid = (sys_interface().fork)();
+    let pid = interface::fork();
     if pid < 0 { Err(last_error()) } else { Ok(pid) }
 }
 
 pub fn exit_process(status: c_int) -> ! {
-    (sys_interface().exit_process)(status);
+    interface::exit_process(status);
     unreachable!()
 }
 
@@ -294,7 +294,7 @@ pub(crate) fn exec_replace<S: AsRef<[u8]>>(file: &[u8], argv: &[S]) -> SysResult
 
     #[cfg(coverage)]
     super::interface::flush_coverage();
-    let result = (sys_interface().execvp)(c_file.as_ptr(), pointers.as_ptr());
+    let result = interface::execvp(c_file.as_ptr(), pointers.as_ptr());
     if result == -1 {
         Err(last_error())
     } else {
@@ -327,7 +327,7 @@ pub(crate) fn exec_replace_with_env(
 
     #[cfg(coverage)]
     super::interface::flush_coverage();
-    let result = (sys_interface().execve)(c_file.as_ptr(), argp.as_ptr(), envp.as_ptr());
+    let result = interface::execve(c_file.as_ptr(), argp.as_ptr(), envp.as_ptr());
     if result == -1 {
         Err(last_error())
     } else {
@@ -415,7 +415,8 @@ pub(crate) fn all_signal_names() -> &'static [(&'static [u8], c_int)] {
 // `WIFEXITED(3)` / `WEXITSTATUS(3)` macros directly; in tests they
 // interpret the synthetic tag encoding produced by the `encode_*`
 // helpers in `test_support`. These are pure-logic operations (no
-// syscall), so they do not belong on the `SystemInterface` vtable.
+// syscall), so they live here rather than behind the `#[cfg]`-gated
+// `interface::*` wrappers that only cover real syscalls.
 
 #[cfg(not(test))]
 fn wifexited(status: c_int) -> bool {
@@ -499,8 +500,6 @@ pub(crate) fn shell_name_from_args(args: &[Vec<u8>]) -> &[u8] {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use libc::{c_char, c_int};
-    use std::ffi::CString;
 
     use crate::sys::test_support;
     use crate::trace_entries;
@@ -510,8 +509,7 @@ mod tests {
         SIGINT, SIGPIPE, SIGQUIT, SIGTERM, SIGTRAP, SIGUSR1, SIGUSR2, STDIN_FILENO, STDOUT_FILENO,
     };
     use super::super::error::SysError;
-    use super::super::interface::{SystemInterface, default_interface, sys_interface};
-    use super::super::types::{ChildHandle, FdReader, Pid, WaitStatus};
+    use super::super::types::{ChildHandle, FdReader};
     use crate::sys::env::home_dir_for_user;
     use crate::sys::fd_io::ensure_blocking_read_fd;
     use crate::sys::fs::{canonicalize, get_cwd};
@@ -540,35 +538,19 @@ mod tests {
 
     #[test]
     fn execvp_failure_returns_minus_one() {
-        fn fail_execvp(_file: *const c_char, _argv: *const *const c_char) -> c_int {
-            -1
-        }
-        let fake = SystemInterface {
-            execvp: fail_execvp,
-            ..default_interface()
-        };
-        test_support::with_test_interface(fake, || {
-            let program = CString::new("meiksh-command-that-does-not-exist").expect("cstring");
-            let argv = [program.as_ptr(), std::ptr::null()];
-            assert_eq!(
-                (sys_interface().execvp)(program.as_ptr(), argv.as_ptr()),
-                -1
-            );
+        test_support::run_trace(trace_entries![execvp(_, _) -> err(ENOENT)], || {
+            assert!(exec_replace(b"meiksh-command-that-does-not-exist", &[b"x".to_vec()]).is_err());
         });
     }
 
     #[test]
     fn wait_pid_error_surfaces_errno() {
-        fn fail_waitpid(_pid: Pid, _status: *mut c_int, _options: c_int) -> Pid {
-            -1
-        }
-        let fake = SystemInterface {
-            waitpid: fail_waitpid,
-            ..default_interface()
-        };
-        test_support::with_test_interface(fake, || {
-            assert!(wait_pid(999_999, false).is_err());
-        });
+        test_support::run_trace(
+            trace_entries![waitpid(int(999_999), _, _) -> err(libc::ECHILD)],
+            || {
+                assert!(wait_pid(999_999, false).is_err());
+            },
+        );
     }
 
     #[test]
@@ -585,30 +567,20 @@ mod tests {
 
     #[test]
     fn sys_success_branches_cover_fd_helpers() {
-        fn fake_pipe(fds: &mut [c_int; 2]) -> c_int {
-            fds[0] = 20;
-            fds[1] = 21;
-            0
-        }
-        fn fake_dup2(oldfd: c_int, _newfd: c_int) -> c_int {
-            oldfd
-        }
-        fn fake_close(_fd: c_int) -> c_int {
-            0
-        }
-
-        let fake = SystemInterface {
-            pipe: fake_pipe,
-            dup2: fake_dup2,
-            close: fake_close,
-            ..default_interface()
-        };
-        test_support::with_test_interface(fake, || {
-            let (read_fd, write_fd) = create_pipe().expect("pipe");
-            duplicate_fd(read_fd, read_fd).expect("dup self");
-            close_fd(read_fd).expect("close read");
-            close_fd(write_fd).expect("close write");
-        });
+        test_support::run_trace(
+            trace_entries![
+                pipe() -> fds(20, 21),
+                dup2(fd(20), fd(20)) -> fd(20),
+                close(fd(20)) -> 0,
+                close(fd(21)) -> 0,
+            ],
+            || {
+                let (read_fd, write_fd) = create_pipe().expect("pipe");
+                duplicate_fd(read_fd, read_fd).expect("dup self");
+                close_fd(read_fd).expect("close read");
+                close_fd(write_fd).expect("close write");
+            },
+        );
     }
 
     #[test]
@@ -625,99 +597,53 @@ mod tests {
 
     #[test]
     fn success_process_identity() {
-        fn fake_getpid() -> Pid {
-            4242
-        }
-
-        let fake = SystemInterface {
-            getpid: fake_getpid,
-            ..default_interface()
-        };
-
-        test_support::with_test_interface(fake, || {
+        test_support::run_trace(trace_entries![getpid() -> pid(4242)], || {
             assert_eq!(current_pid(), 4242);
         });
     }
 
     #[test]
     fn success_wait_and_signal() {
-        fn fake_waitpid(_pid: Pid, status: *mut c_int, _options: c_int) -> Pid {
-            unsafe {
-                *status = 9 << 8;
-            }
-            99
-        }
-        fn fake_kill(_pid: Pid, _sig: c_int) -> c_int {
-            0
-        }
-        fn fake_signal(_sig: c_int, _handler: libc::sighandler_t) -> libc::sighandler_t {
-            0
-        }
-
-        let fake = SystemInterface {
-            waitpid: fake_waitpid,
-            kill: fake_kill,
-            signal: fake_signal,
-            ..default_interface()
-        };
-
-        test_support::with_test_interface(fake, || {
-            assert_eq!(
-                wait_pid(1, false).expect("wait").expect("status"),
-                WaitStatus {
-                    pid: 99,
-                    status: 9 << 8
-                }
-            );
-            assert!(send_signal(1, 0).is_ok());
-        });
+        // `waitpid` -> status(9) encodes WIFEXITED with exit code 9 in the
+        // synthetic wait-status encoding (see `encode_exited`). The test
+        // just verifies that the value is returned verbatim to the caller
+        // through `wait_pid`.
+        test_support::run_trace(
+            trace_entries![
+                waitpid(1, _) -> status(9),
+                kill(int(1), int(0)) -> 0,
+            ],
+            || {
+                let ws = wait_pid(1, false).expect("wait").expect("status");
+                assert_eq!(ws.pid, 1);
+                assert!(super::wifexited(ws.status));
+                assert_eq!(super::wexitstatus(ws.status), 9);
+                assert!(send_signal(1, 0).is_ok());
+            },
+        );
     }
 
     #[test]
     fn success_file_io() {
-        fn fake_fcntl(_fd: c_int, cmd: c_int, arg: c_int) -> c_int {
-            match cmd {
-                F_GETFL => arg,
-                F_SETFL => 0,
-                _ => -1,
-            }
-        }
-        fn fake_read(_fd: c_int, buf: &mut [u8]) -> isize {
-            if buf.is_empty() {
-                return 0;
-            }
-            buf[0] = b'X';
-            1
-        }
-
-        let fake = SystemInterface {
-            fcntl: fake_fcntl,
-            read: fake_read,
-            ..default_interface()
-        };
-
-        test_support::with_test_interface(fake, || {
-            let mut buffer = [0u8; 1];
-            assert_eq!(read_fd(0, &mut buffer).expect("read"), 1);
-            assert_eq!(buffer, [b'X']);
-            let mut reader = FdReader::new(0);
-            assert_eq!(reader.read(&mut buffer).expect("reader read"), 1);
-            assert_eq!(buffer, [b'X']);
-        });
+        test_support::run_trace(
+            trace_entries![
+                read(fd(0), _) -> bytes(b"X"),
+                read(fd(0), _) -> bytes(b"X"),
+            ],
+            || {
+                let mut buffer = [0u8; 1];
+                assert_eq!(read_fd(0, &mut buffer).expect("read"), 1);
+                assert_eq!(buffer, [b'X']);
+                let mut reader = FdReader::new(0);
+                assert_eq!(reader.read(&mut buffer).expect("reader read"), 1);
+                assert_eq!(buffer, [b'X']);
+            },
+        );
     }
 
     #[test]
     fn success_exec() {
-        fn fake_execvp(_file: *const c_char, _argv: *const *const c_char) -> c_int {
-            0
-        }
-
-        let fake = SystemInterface {
-            execvp: fake_execvp,
-            ..default_interface()
-        };
-
-        test_support::with_test_interface(fake, || {
+        test_support::run_trace(trace_entries![execvp(_, _) -> 0], || {
             assert!(exec_replace(b"echo", &[b"hello".to_vec(), b"world".to_vec()]).is_ok());
         });
     }
@@ -803,69 +729,35 @@ mod tests {
 
     #[test]
     fn error_process_identity() {
-        fn fake_getpid() -> Pid {
-            1
-        }
-
-        let fake = SystemInterface {
-            getpid: fake_getpid,
-            ..default_interface()
-        };
-
-        test_support::with_test_interface(fake, || {
+        test_support::run_trace(trace_entries![getpid() -> pid(1)], || {
             assert_eq!(current_pid(), 1);
         });
     }
 
     #[test]
     fn error_wait_and_signal() {
-        fn fake_waitpid(_pid: Pid, _status: *mut c_int, _options: c_int) -> Pid {
-            -1
-        }
-        fn fake_kill(_pid: Pid, _sig: c_int) -> c_int {
-            -1
-        }
-
-        let fake = SystemInterface {
-            waitpid: fake_waitpid,
-            kill: fake_kill,
-            ..default_interface()
-        };
-
-        test_support::with_test_interface(fake, || {
-            assert!(send_signal(1, 0).is_err());
-            assert!(wait_pid(1, false).is_err());
-        });
+        test_support::run_trace(
+            trace_entries![
+                kill(int(1), int(0)) -> err(libc::EPERM),
+                waitpid(1, _) -> err(libc::ECHILD),
+            ],
+            || {
+                assert!(send_signal(1, 0).is_err());
+                assert!(wait_pid(1, false).is_err());
+            },
+        );
     }
 
     #[test]
     fn error_file_io() {
-        fn fake_read(_fd: c_int, _buf: &mut [u8]) -> isize {
-            -1
-        }
-
-        let fake = SystemInterface {
-            read: fake_read,
-            ..default_interface()
-        };
-
-        test_support::with_test_interface(fake, || {
+        test_support::run_trace(trace_entries![read(fd(0), _) -> err(libc::EIO)], || {
             assert!(read_fd(0, &mut [0u8; 1]).is_err());
         });
     }
 
     #[test]
     fn error_exec() {
-        fn fake_execvp(_file: *const c_char, _argv: *const *const c_char) -> c_int {
-            -1
-        }
-
-        let fake = SystemInterface {
-            execvp: fake_execvp,
-            ..default_interface()
-        };
-
-        test_support::with_test_interface(fake, || {
+        test_support::run_trace(trace_entries![execvp(_, _) -> err(ENOENT)], || {
             assert!(exec_replace(b"echo", &[b"hi".to_vec()]).is_err());
         });
     }

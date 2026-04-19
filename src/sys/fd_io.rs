@@ -2,14 +2,14 @@ use libc::c_int;
 
 use super::constants::{F_DUPFD_CLOEXEC, F_GETFL, F_SETFL, O_NONBLOCK, S_IFIFO, S_IFMT};
 use super::error::{SysError, SysResult};
-use super::interface::{last_error, sys_interface};
+use super::interface::{self, last_error};
 use super::tty::is_interactive_fd;
 #[cfg(test)]
 use super::types::FdReader;
 
 pub(crate) fn create_pipe() -> SysResult<(c_int, c_int)> {
     let mut fds = [0; 2];
-    let result = (sys_interface().pipe)(&mut fds);
+    let result = interface::pipe(&mut fds);
     if result == 0 {
         Ok((fds[0], fds[1]))
     } else {
@@ -18,7 +18,7 @@ pub(crate) fn create_pipe() -> SysResult<(c_int, c_int)> {
 }
 
 pub(crate) fn duplicate_fd(oldfd: c_int, newfd: c_int) -> SysResult<()> {
-    let result = (sys_interface().dup2)(oldfd, newfd);
+    let result = interface::dup2(oldfd, newfd);
     if result >= 0 {
         Ok(())
     } else {
@@ -27,7 +27,7 @@ pub(crate) fn duplicate_fd(oldfd: c_int, newfd: c_int) -> SysResult<()> {
 }
 
 pub(crate) fn duplicate_fd_to_new(fd: c_int) -> SysResult<c_int> {
-    let result = (sys_interface().fcntl)(fd, F_DUPFD_CLOEXEC, 10);
+    let result = interface::fcntl(fd, F_DUPFD_CLOEXEC, 10);
     if result >= 0 {
         Ok(result)
     } else {
@@ -36,7 +36,7 @@ pub(crate) fn duplicate_fd_to_new(fd: c_int) -> SysResult<c_int> {
 }
 
 pub(crate) fn close_fd(fd: c_int) -> SysResult<()> {
-    let result = (sys_interface().close)(fd);
+    let result = interface::close(fd);
     if result == 0 {
         Ok(())
     } else {
@@ -45,7 +45,7 @@ pub(crate) fn close_fd(fd: c_int) -> SysResult<()> {
 }
 
 pub(crate) fn clear_cloexec(fd: c_int) -> SysResult<()> {
-    let result = (sys_interface().fcntl)(fd, super::constants::F_SETFD, 0);
+    let result = interface::fcntl(fd, super::constants::F_SETFD, 0);
     if result >= 0 {
         Ok(())
     } else {
@@ -54,7 +54,7 @@ pub(crate) fn clear_cloexec(fd: c_int) -> SysResult<()> {
 }
 
 fn fd_status_flags(fd: c_int) -> SysResult<c_int> {
-    let result = (sys_interface().fcntl)(fd, F_GETFL, 0);
+    let result = interface::fcntl(fd, F_GETFL, 0);
     if result >= 0 {
         Ok(result)
     } else {
@@ -63,7 +63,7 @@ fn fd_status_flags(fd: c_int) -> SysResult<c_int> {
 }
 
 fn set_fd_status_flags(fd: c_int, flags: c_int) -> SysResult<()> {
-    let result = (sys_interface().fcntl)(fd, F_SETFL, flags);
+    let result = interface::fcntl(fd, F_SETFL, flags);
     if result >= 0 {
         Ok(())
     } else {
@@ -73,7 +73,7 @@ fn set_fd_status_flags(fd: c_int, flags: c_int) -> SysResult<()> {
 
 fn fifo_like_fd(fd: c_int) -> bool {
     let mut buf = std::mem::MaybeUninit::<libc::stat>::zeroed();
-    let result = (sys_interface().fstat)(fd, buf.as_mut_ptr());
+    let result = interface::fstat(fd, buf.as_mut_ptr());
     if result != 0 {
         return false;
     }
@@ -93,7 +93,7 @@ pub(crate) fn ensure_blocking_read_fd(fd: c_int) -> SysResult<()> {
 }
 
 pub(crate) fn read_fd(fd: c_int, buf: &mut [u8]) -> SysResult<usize> {
-    let result = (sys_interface().read)(fd, buf);
+    let result = interface::read(fd, buf);
     if result >= 0 {
         Ok(result as usize)
     } else {
@@ -101,7 +101,7 @@ pub(crate) fn read_fd(fd: c_int, buf: &mut [u8]) -> SysResult<usize> {
     }
 }
 pub(crate) fn write_fd(fd: c_int, data: &[u8]) -> SysResult<usize> {
-    let result = (sys_interface().write)(fd, data);
+    let result = interface::write(fd, data);
     if result >= 0 {
         Ok(result as usize)
     } else {
@@ -130,152 +130,96 @@ impl FdReader {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use libc::c_int;
 
-    use crate::sys::test_support;
+    use crate::sys::test_support::{self, run_trace};
+    use crate::trace_entries;
 
-    use super::super::constants::{F_DUPFD_CLOEXEC, F_GETFL, F_SETFL, O_NONBLOCK, STDIN_FILENO};
+    use super::super::constants::{
+        F_DUPFD_CLOEXEC, F_GETFL, F_SETFD, F_SETFL, O_NONBLOCK, STDIN_FILENO,
+    };
     use super::super::error::SysError;
-    use super::super::interface::{SystemInterface, default_interface};
     use super::super::tty::{
         current_foreground_pgrp, is_interactive_fd, set_foreground_pgrp, set_process_group,
     };
-    use super::super::types::Pid;
 
     #[test]
     fn pipe_roundtrip() {
-        fn fake_pipe(fds: &mut [c_int; 2]) -> c_int {
-            fds[0] = 10;
-            fds[1] = 11;
-            0
-        }
-        fn fake_close(_fd: c_int) -> c_int {
-            0
-        }
-
-        let fake = SystemInterface {
-            pipe: fake_pipe,
-            close: fake_close,
-            ..default_interface()
-        };
-        test_support::with_test_interface(fake, || {
-            let (read_fd, write_fd) = create_pipe().expect("pipe");
-            assert_eq!(read_fd, 10);
-            assert_eq!(write_fd, 11);
-            close_fd(read_fd).expect("close read");
-            close_fd(write_fd).expect("close write");
-        });
+        run_trace(
+            trace_entries![
+                pipe() -> fds(10, 11),
+                close(fd(10)) -> 0,
+                close(fd(11)) -> 0,
+            ],
+            || {
+                let (read_fd, write_fd) = create_pipe().expect("pipe");
+                assert_eq!(read_fd, 10);
+                assert_eq!(write_fd, 11);
+                close_fd(read_fd).expect("close read");
+                close_fd(write_fd).expect("close write");
+            },
+        );
     }
 
     #[test]
     fn invalid_fd_operations_fail_cleanly() {
-        fn fail_isatty(_fd: c_int) -> c_int {
-            0
-        }
-        fn fail_dup2(_old: c_int, _new: c_int) -> c_int {
-            -1
-        }
-        fn fail_close(_fd: c_int) -> c_int {
-            -1
-        }
-        fn fail_tcgetpgrp(_fd: c_int) -> Pid {
-            -1
-        }
-        fn fail_tcsetpgrp(_fd: c_int, _pgid: Pid) -> c_int {
-            -1
-        }
-        fn fail_setpgid(_pid: Pid, _pgid: Pid) -> c_int {
-            -1
-        }
-
-        let fake = SystemInterface {
-            isatty: fail_isatty,
-            dup2: fail_dup2,
-            close: fail_close,
-            tcgetpgrp: fail_tcgetpgrp,
-            tcsetpgrp: fail_tcsetpgrp,
-            setpgid: fail_setpgid,
-            ..default_interface()
-        };
-        test_support::with_test_interface(fake, || {
-            assert!(!is_interactive_fd(-1));
-            assert!(duplicate_fd(-1, -1).is_err());
-            assert!(close_fd(-1).is_err());
-            assert!(current_foreground_pgrp(-1).is_err());
-            assert!(set_foreground_pgrp(-1, 0).is_err());
-            assert!(set_process_group(999_999, 999_999).is_err());
-        });
+        run_trace(
+            trace_entries![
+                isatty(fd(-1)) -> 0,
+                dup2(fd(-1), fd(-1)) -> err(libc::EBADF),
+                close(fd(-1)) -> err(libc::EBADF),
+                tcgetpgrp(fd(-1)) -> err(libc::EBADF),
+                tcsetpgrp(fd(-1), 0) -> err(libc::EBADF),
+                setpgid(999_999, 999_999) -> err(libc::ESRCH),
+            ],
+            || {
+                assert!(!is_interactive_fd(-1));
+                assert!(duplicate_fd(-1, -1).is_err());
+                assert!(close_fd(-1).is_err());
+                assert!(current_foreground_pgrp(-1).is_err());
+                assert!(set_foreground_pgrp(-1, 0).is_err());
+                assert!(set_process_group(999_999, 999_999).is_err());
+            },
+        );
     }
 
     #[test]
     fn success_pipe_and_fd() {
-        fn fake_pipe(fds: &mut [c_int; 2]) -> c_int {
-            fds[0] = 10;
-            fds[1] = 11;
-            0
-        }
-        fn fake_fcntl(fd: c_int, cmd: c_int, _arg: c_int) -> c_int {
-            if cmd == F_DUPFD_CLOEXEC { fd + 100 } else { -1 }
-        }
-        fn fake_dup2(oldfd: c_int, _newfd: c_int) -> c_int {
-            oldfd
-        }
-        fn fake_close(_fd: c_int) -> c_int {
-            0
-        }
-
-        let fake = SystemInterface {
-            pipe: fake_pipe,
-            fcntl: fake_fcntl,
-            dup2: fake_dup2,
-            close: fake_close,
-            ..default_interface()
-        };
-
-        test_support::with_test_interface(fake, || {
-            assert_eq!(create_pipe().expect("pipe"), (10, 11));
-            assert_eq!(duplicate_fd_to_new(4).expect("dup"), 104);
-            assert!(duplicate_fd(4, 5).is_ok());
-            assert!(close_fd(4).is_ok());
-        });
+        run_trace(
+            trace_entries![
+                pipe() -> fds(10, 11),
+                fcntl(fd(4), int(F_DUPFD_CLOEXEC), int(10)) -> int(104),
+                dup2(fd(4), fd(5)) -> fd(4),
+                close(fd(4)) -> 0,
+            ],
+            || {
+                assert_eq!(create_pipe().expect("pipe"), (10, 11));
+                assert_eq!(duplicate_fd_to_new(4).expect("dup"), 104);
+                assert!(duplicate_fd(4, 5).is_ok());
+                assert!(close_fd(4).is_ok());
+            },
+        );
     }
 
     #[test]
     fn error_pipe_and_fd() {
-        fn fake_pipe(_fds: &mut [c_int; 2]) -> c_int {
-            -1
-        }
-        fn fake_fcntl(_fd: c_int, _cmd: c_int, _arg: c_int) -> c_int {
-            -1
-        }
-        fn fake_dup2(_oldfd: c_int, _newfd: c_int) -> c_int {
-            -1
-        }
-        fn fake_close(_fd: c_int) -> c_int {
-            -1
-        }
-
-        let fake = SystemInterface {
-            pipe: fake_pipe,
-            fcntl: fake_fcntl,
-            dup2: fake_dup2,
-            close: fake_close,
-            ..default_interface()
-        };
-
-        test_support::with_test_interface(fake, || {
-            assert!(create_pipe().is_err());
-            assert!(duplicate_fd_to_new(1).is_err());
-            assert!(duplicate_fd(1, 2).is_err());
-            assert!(close_fd(1).is_err());
-        });
+        run_trace(
+            trace_entries![
+                pipe() -> err(libc::EMFILE),
+                fcntl(fd(1), int(F_DUPFD_CLOEXEC), int(10)) -> err(libc::EBADF),
+                dup2(fd(1), fd(2)) -> err(libc::EBADF),
+                close(fd(1)) -> err(libc::EBADF),
+            ],
+            || {
+                assert!(create_pipe().is_err());
+                assert!(duplicate_fd_to_new(1).is_err());
+                assert!(duplicate_fd(1, 2).is_err());
+                assert!(close_fd(1).is_err());
+            },
+        );
     }
 
     #[test]
     fn ensure_blocking_read_fd_clears_nonblocking_for_tty() {
-        use crate::trace_entries;
-        use test_support::run_trace;
-
         run_trace(
             trace_entries![
                 isatty(fd(STDIN_FILENO)) -> int(1),
@@ -290,9 +234,6 @@ mod tests {
 
     #[test]
     fn ensure_blocking_read_fd_clears_nonblocking_for_fifo() {
-        use crate::trace_entries;
-        use test_support::run_trace;
-
         run_trace(
             trace_entries![
                 isatty(fd(42)) -> int(0),
@@ -308,9 +249,6 @@ mod tests {
 
     #[test]
     fn ensure_blocking_read_fd_surfaces_fcntl_errors() {
-        use crate::trace_entries;
-        use test_support::run_trace;
-
         run_trace(
             trace_entries![
                 isatty(fd(STDIN_FILENO)) -> int(1),
@@ -324,9 +262,6 @@ mod tests {
 
     #[test]
     fn fifo_like_fd_fstat_error() {
-        use crate::trace_entries;
-        use test_support::run_trace;
-
         run_trace(
             trace_entries![
                 isatty(fd(99)) -> int(0),
@@ -340,44 +275,45 @@ mod tests {
 
     #[test]
     fn clear_cloexec_error() {
-        fn fail_fcntl(_fd: c_int, _cmd: c_int, _arg: c_int) -> c_int {
-            -1
-        }
-        let fake = SystemInterface {
-            fcntl: fail_fcntl,
-            ..default_interface()
-        };
-        test_support::with_test_interface(fake, || {
-            assert!(clear_cloexec(5).is_err());
-        });
+        run_trace(
+            trace_entries![
+                fcntl(fd(5), int(F_SETFD), int(0)) -> err(libc::EBADF),
+            ],
+            || {
+                assert!(clear_cloexec(5).is_err());
+            },
+        );
     }
 
     #[test]
     fn clear_cloexec_success() {
-        fn ok_fcntl(_fd: c_int, _cmd: c_int, _arg: c_int) -> c_int {
-            0
-        }
-        let fake = SystemInterface {
-            fcntl: ok_fcntl,
-            ..default_interface()
-        };
-        test_support::with_test_interface(fake, || {
-            assert!(clear_cloexec(5).is_ok());
-        });
+        run_trace(
+            trace_entries![
+                fcntl(fd(5), int(F_SETFD), int(0)) -> int(0),
+            ],
+            || {
+                assert!(clear_cloexec(5).is_ok());
+            },
+        );
     }
 
     #[test]
     fn write_all_fd_zero_write_eio() {
-        fn fake_write(_fd: c_int, _data: &[u8]) -> isize {
-            0
-        }
-        let fake = SystemInterface {
-            write: fake_write,
-            ..default_interface()
-        };
-        test_support::with_test_interface(fake, || {
-            let err = write_all_fd(1, b"data").unwrap_err();
-            assert_eq!(err, SysError::Errno(libc::EIO));
-        });
+        run_trace(
+            trace_entries![
+                ..vec![test_support::t(
+                    "write",
+                    vec![
+                        test_support::ArgMatcher::Fd(1),
+                        test_support::ArgMatcher::Bytes(b"data".to_vec()),
+                    ],
+                    test_support::TraceResult::Int(0),
+                )],
+            ],
+            || {
+                let err = write_all_fd(1, b"data").unwrap_err();
+                assert_eq!(err, SysError::Errno(libc::EIO));
+            },
+        );
     }
 }
