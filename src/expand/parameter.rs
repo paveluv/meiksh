@@ -981,7 +981,7 @@ pub(super) fn remove_parameter_pattern(
 mod tests {
     use super::*;
     use crate::expand::model::Expansion;
-    use crate::expand::test_support::{DefaultPathContext, FakeContext, expand_word, expect_one};
+    use crate::expand::test_support::{DefaultPathContext, FakeContext, expect_one};
     use crate::expand::word::{expand_parameter_text, expand_word_text};
     use crate::syntax::ast::Word;
     use crate::sys::test_support::assert_no_syscalls;
@@ -1030,294 +1030,6 @@ mod tests {
         assert_eq!(parse_variable_base_escape(b"1017", 8, 3), (0o101, 3));
         assert_eq!(parse_variable_base_escape(b"Z", 16, 2), (0, 0));
     }
-
-    #[test]
-    fn supports_parameter_operators_and_positionals() {
-        let mut ctx = FakeContext::new();
-        ctx.positional = vec![
-            b"a".to_vec(),
-            b"b".to_vec(),
-            b"c".to_vec(),
-            b"d".to_vec(),
-            b"e".to_vec(),
-            b"f".to_vec(),
-            b"g".to_vec(),
-            b"h".to_vec(),
-            b"i".to_vec(),
-            b"j".to_vec(),
-        ];
-
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: b"${10}".as_ref().into(),
-                    parts: Box::new([]),
-                    line: 0
-                },
-            )
-            .expect("expand"),
-            vec![b"j".as_ref()]
-        );
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: b"$10".as_ref().into(),
-                    parts: Box::new([]),
-                    line: 0
-                }
-            )
-            .expect("expand"),
-            vec![b"a0".as_ref()]
-        );
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: b"${#10}".as_ref().into(),
-                    parts: Box::new([]),
-                    line: 0
-                },
-            )
-            .expect("expand"),
-            vec![b"1".as_ref()]
-        );
-        ctx.env.insert(b"IFS".to_vec(), b":".to_vec());
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: b"$*".as_ref().into(),
-                    parts: Box::new([]),
-                    line: 0
-                }
-            )
-            .expect("expand"),
-            vec![
-                b"a".as_ref(),
-                b"b".as_ref(),
-                b"c".as_ref(),
-                b"d".as_ref(),
-                b"e".as_ref(),
-                b"f".as_ref(),
-                b"g".as_ref(),
-                b"h".as_ref(),
-                b"i".as_ref(),
-                b"j".as_ref()
-            ]
-        );
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: b"\"$*\"".as_ref().into(),
-                    parts: Box::new([]),
-                    line: 0
-                },
-            )
-            .expect("expand"),
-            vec![b"a:b:c:d:e:f:g:h:i:j".as_ref()]
-        );
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: b"${UNSET-word}".as_ref().into(),
-                    parts: Box::new([]),
-                    line: 0
-                },
-            )
-            .expect("expand"),
-            vec![b"word".as_ref()]
-        );
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: b"${UNSET:-word}".as_ref().into(),
-                    parts: Box::new([]),
-                    line: 0
-                },
-            )
-            .expect("expand"),
-            vec![b"word".as_ref()]
-        );
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: b"${EMPTY-word}".as_ref().into(),
-                    parts: Box::new([]),
-                    line: 0
-                },
-            )
-            .expect("expand"),
-            Vec::<&[u8]>::new()
-        );
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: b"${EMPTY:-word}".as_ref().into(),
-                    parts: Box::new([]),
-                    line: 0
-                },
-            )
-            .expect("expand"),
-            vec![b"word".as_ref()]
-        );
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: b"${USER:+alt}".as_ref().into(),
-                    parts: Box::new([]),
-                    line: 0
-                },
-            )
-            .expect("expand"),
-            vec![b"alt".as_ref()]
-        );
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: b"${UNSET+alt}".as_ref().into(),
-                    parts: Box::new([]),
-                    line: 0
-                },
-            )
-            .expect("expand"),
-            Vec::<&[u8]>::new()
-        );
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: b"${NEW:=value}".as_ref().into(),
-                    parts: Box::new([]),
-                    line: 0
-                },
-            )
-            .expect("expand"),
-            vec![b"value".as_ref()]
-        );
-        assert_eq!(
-            ctx.env.get(b"NEW".as_ref()).map(|v| v.as_slice()),
-            Some(b"value".as_ref())
-        );
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: b"${#}".as_ref().into(),
-                    parts: Box::new([]),
-                    line: 0
-                }
-            )
-            .expect("expand"),
-            vec![b"10".as_ref()]
-        );
-
-        let error = expand_word(
-            &mut ctx,
-            &Word {
-                raw: b"${UNSET:?boom}".as_ref().into(),
-                parts: Box::new([]),
-                line: 0,
-            },
-        )
-        .expect_err("unset error");
-        assert_eq!(&*error.message, b"UNSET: boom".as_ref());
-
-        let error = expand_word(
-            &mut ctx,
-            &Word {
-                raw: b"${UNSET:?$'unterminated}".as_ref().into(),
-                parts: Box::new([]),
-                line: 0,
-            },
-        )
-        .expect_err("colon-question word expansion error");
-        assert!(!error.message.is_empty());
-
-        let error = expand_word(
-            &mut ctx,
-            &Word {
-                raw: b"${MISSING?$'unterminated}".as_ref().into(),
-                parts: Box::new([]),
-                line: 0,
-            },
-        )
-        .expect_err("plain-question word expansion error");
-        assert!(!error.message.is_empty());
-    }
-
-    #[test]
-    fn nounset_option_rejects_plain_unset_parameter_expansions() {
-        let mut ctx = FakeContext::new();
-        ctx.nounset_enabled = true;
-
-        let error = expand_word(
-            &mut ctx,
-            &Word {
-                raw: b"$UNSET".as_ref().into(),
-                parts: Box::new([]),
-                line: 0,
-            },
-        )
-        .expect_err("nounset variable");
-        assert_eq!(&*error.message, b"UNSET: parameter not set".as_ref());
-
-        let error = expand_word(
-            &mut ctx,
-            &Word {
-                raw: b"${UNSET}".as_ref().into(),
-                parts: Box::new([]),
-                line: 0,
-            },
-        )
-        .expect_err("nounset braced");
-        assert_eq!(&*error.message, b"UNSET: parameter not set".as_ref());
-
-        let error = expand_word(
-            &mut ctx,
-            &Word {
-                raw: b"$9".as_ref().into(),
-                parts: Box::new([]),
-                line: 0,
-            },
-        )
-        .expect_err("nounset positional");
-        assert_eq!(&*error.message, b"9: parameter not set".as_ref());
-
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: b"${UNSET-word}".as_ref().into(),
-                    parts: Box::new([]),
-                    line: 0
-                },
-            )
-            .expect("default still works"),
-            vec![b"word".as_ref()]
-        );
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: b"\"$*\"".as_ref().into(),
-                    parts: Box::new([]),
-                    line: 0
-                },
-            )
-            .expect("star exempt"),
-            vec![b"alpha beta".as_ref()]
-        );
-    }
-
     #[test]
     fn direct_expand_dollar_covers_fallbacks_and_nesting() {
         let mut ctx = FakeContext::new();
@@ -1352,6 +1064,70 @@ mod tests {
             expect_one(expand_dollar(&mut ctx, command_input, false)),
             (b"printf (hi)".to_vec(), command_input.len())
         );
+
+        // $0 path (shell name branch), positional $1, and unquoted $'...'
+        // dollar-single-quoted escape.
+        assert_eq!(
+            expect_one(expand_dollar(&mut ctx, b"$0", false)),
+            (b"meiksh".to_vec(), 2)
+        );
+        assert_eq!(
+            expect_one(expand_dollar(&mut ctx, b"$1", false)),
+            (b"alpha".to_vec(), 2)
+        );
+        let (expansion, consumed) =
+            expand_dollar(&mut ctx, b"$'a\\nb'", false).expect("dollar single quote unquoted");
+        assert_eq!(consumed, 7);
+        match expansion {
+            Expansion::One(v) => assert_eq!(v, b"a\nb"),
+            other => panic!("expected Expansion::One, got {other:?}"),
+        }
+
+        // Unterminated arithmetic and command substitution produce errors.
+        assert!(expand_dollar(&mut ctx, b"$((1+2", false).is_err());
+        assert!(expand_dollar(&mut ctx, b"$(echo", false).is_err());
+
+        // `$*` with empty IFS still joins positional params; `$*` with a
+        // multi-byte IFS picks only the first character.
+        ctx.env.insert(b"IFS".to_vec(), Vec::new());
+        assert_eq!(
+            expect_one(expand_dollar(&mut ctx, b"$*", false)),
+            (b"alphabeta".to_vec(), 2)
+        );
+        ctx.env.remove(b"IFS".as_ref());
+        assert_eq!(
+            expect_one(expand_dollar(&mut ctx, b"$*", false)),
+            (b"alpha beta".to_vec(), 2)
+        );
+    }
+
+    #[test]
+    fn expand_braced_parameter_hash_and_error_operators() {
+        // Covers the `${#}`, `${#name}`, and ?/:? error default-message paths
+        // in expand_braced_parameter (the Expansion-returning variant).
+        let mut ctx = FakeContext::new();
+        ctx.env.insert(b"NAME".to_vec(), b"h\xc3\xa9llo".to_vec());
+
+        let hash_count = expand_braced_parameter(&mut ctx, b"#", false).expect("hash count");
+        assert_eq!(hash_count, Expansion::One(b"2".to_vec()));
+
+        let name_len = expand_braced_parameter(&mut ctx, b"#NAME", false).expect("name length");
+        let expected = crate::bstr::u64_to_bytes(crate::sys::locale::count_chars(b"h\xc3\xa9llo"));
+        assert_eq!(name_len, Expansion::One(expected));
+
+        let err = expand_braced_parameter(&mut ctx, b"UNSET?bad", false).expect_err("? unset");
+        assert_eq!(&*err.message, b"bad");
+
+        let err = expand_braced_parameter(&mut ctx, b"UNSET:?boom", false).expect_err(":? unset");
+        assert_eq!(&*err.message, b"boom");
+
+        ctx.env.insert(b"EMPTY2".to_vec(), Vec::new());
+        let err =
+            expand_braced_parameter(&mut ctx, b"EMPTY2:?", false).expect_err(":? null default");
+        assert_eq!(&*err.message, b"EMPTY2: parameter null or not set");
+
+        let err = expand_braced_parameter(&mut ctx, b"UNSET?", false).expect_err("? unset default");
+        assert_eq!(&*err.message, b"UNSET: parameter not set");
     }
 
     #[test]
@@ -1632,161 +1408,6 @@ mod tests {
             expand_braced_parameter(&mut ctx, b"USER/tail", false).expect_err("unsupported expr");
         assert_eq!(&*error.message, b"unsupported parameter expansion".as_ref());
     }
-
-    #[test]
-    fn supports_pattern_removal_parameter_expansions() {
-        let mut ctx = FakeContext::new();
-        ctx.env
-            .insert(b"PATHNAME".to_vec(), b"src/bin/main.rs".to_vec());
-        ctx.env
-            .insert(b"DOTTED".to_vec(), b"alpha.beta.gamma".to_vec());
-
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: b"${PATHNAME#*/}".as_ref().into(),
-                    parts: Box::new([]),
-                    line: 0
-                },
-            )
-            .expect("small prefix"),
-            vec![b"bin/main.rs".as_ref()]
-        );
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: b"${PATHNAME##*/}".as_ref().into(),
-                    parts: Box::new([]),
-                    line: 0
-                },
-            )
-            .expect("large prefix"),
-            vec![b"main.rs".as_ref()]
-        );
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: b"${PATHNAME%/*}".as_ref().into(),
-                    parts: Box::new([]),
-                    line: 0
-                },
-            )
-            .expect("small suffix"),
-            vec![b"src/bin".as_ref()]
-        );
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: b"${PATHNAME%%/*}".as_ref().into(),
-                    parts: Box::new([]),
-                    line: 0
-                },
-            )
-            .expect("large suffix"),
-            vec![b"src".as_ref()]
-        );
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: b"${PATHNAME#\"src/\"}".as_ref().into(),
-                    parts: Box::new([]),
-                    line: 0
-                },
-            )
-            .expect("quoted pattern"),
-            vec![b"bin/main.rs".as_ref()]
-        );
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: b"${DOTTED#*.}".as_ref().into(),
-                    parts: Box::new([]),
-                    line: 0
-                },
-            )
-            .expect("wildcard prefix"),
-            vec![b"beta.gamma".as_ref()]
-        );
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: b"${DOTTED##*.}".as_ref().into(),
-                    parts: Box::new([]),
-                    line: 0
-                },
-            )
-            .expect("largest wildcard prefix"),
-            vec![b"gamma".as_ref()]
-        );
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: b"${DOTTED%.*}".as_ref().into(),
-                    parts: Box::new([]),
-                    line: 0
-                },
-            )
-            .expect("wildcard suffix"),
-            vec![b"alpha.beta".as_ref()]
-        );
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: b"${DOTTED%%.*}".as_ref().into(),
-                    parts: Box::new([]),
-                    line: 0
-                },
-            )
-            .expect("largest wildcard suffix"),
-            vec![b"alpha".as_ref()]
-        );
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: b"${DOTTED#\"*.\"}".as_ref().into(),
-                    parts: Box::new([]),
-                    line: 0
-                },
-            )
-            .expect("quoted wildcard"),
-            vec![b"alpha.beta.gamma".as_ref()]
-        );
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: b"${DOTTED%}".as_ref().into(),
-                    parts: Box::new([]),
-                    line: 0
-                },
-            )
-            .expect("empty suffix pattern"),
-            vec![b"alpha.beta.gamma".as_ref()]
-        );
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: b"${MISSING%%*.}".as_ref().into(),
-                    parts: Box::new([]),
-                    line: 0
-                },
-            )
-            .expect("unset value"),
-            Vec::<&[u8]>::new()
-        );
-    }
-
     #[test]
     fn brace_scanning_respects_quotes_and_nesting() {
         let mut ctx = FakeContext::new();
@@ -1884,33 +1505,6 @@ mod tests {
             b"}"
         );
     }
-
-    #[test]
-    fn error_parameter_expansion_operators() {
-        let mut ctx = FakeContext::new();
-        let error = expand_word(
-            &mut ctx,
-            &Word {
-                raw: b"${UNSET:?custom error}".as_ref().into(),
-                parts: Box::new([]),
-                line: 0,
-            },
-        )
-        .expect_err("colon question");
-        assert_eq!(&*error.message, b"UNSET: custom error".as_ref());
-
-        let error = expand_word(
-            &mut ctx,
-            &Word {
-                raw: b"${UNSET?also error}".as_ref().into(),
-                parts: Box::new([]),
-                line: 0,
-            },
-        )
-        .expect_err("question");
-        assert_eq!(&*error.message, b"UNSET: also error".as_ref());
-    }
-
     #[test]
     fn scan_to_closing_brace_error_on_unterminated() {
         let err = scan_to_closing_brace(b"${var", 2).expect_err("unterminated");
@@ -1974,46 +1568,6 @@ mod tests {
             b"inside"
         );
     }
-
-    #[test]
-    fn error_parameter_expansion_with_null_or_not_set() {
-        let mut ctx = FakeContext::new();
-        ctx.env.insert(b"EMPTY".to_vec(), Vec::new());
-
-        let err = expand_word(
-            &mut ctx,
-            &Word {
-                raw: b"${EMPTY:?null or unset}".as_ref().into(),
-                parts: Box::new([]),
-                line: 0,
-            },
-        )
-        .expect_err("colon question null");
-        assert_eq!(&*err.message, b"EMPTY: null or unset".as_ref());
-
-        let ok = expand_word(
-            &mut ctx,
-            &Word {
-                raw: b"\"${EMPTY?not an error}\"".as_ref().into(),
-                parts: Box::new([]),
-                line: 0,
-            },
-        )
-        .expect("question set but empty");
-        assert_eq!(ok, vec![b"".as_ref()]);
-
-        let err = expand_word(
-            &mut ctx,
-            &Word {
-                raw: b"${NOEXIST?custom msg}".as_ref().into(),
-                parts: Box::new([]),
-                line: 0,
-            },
-        )
-        .expect_err("question unset");
-        assert_eq!(&*err.message, b"NOEXIST: custom msg".as_ref());
-    }
-
     #[test]
     fn brace_scanning_with_arith_and_cmd_sub_and_backtick() {
         let mut ctx = FakeContext::new();
@@ -2156,22 +1710,6 @@ mod tests {
             _ => panic!("expected simple command"),
         }
     }
-
-    #[test]
-    fn quoted_alt_expansion_unset_preserves_empty_field() {
-        assert_no_syscalls(|| {
-            let mut ctx = FakeContext::new();
-            let fields = expand_word(&mut ctx, &parsed_word(b"echo \"${missing+SET}\"\n"))
-                .expect("expand must succeed");
-            assert_eq!(
-                fields.len(),
-                1,
-                "quoted unset +word should produce one empty field"
-            );
-            assert_eq!(fields[0], b"");
-        });
-    }
-
     #[test]
     fn tilde_expanded_in_braced_default_word() {
         assert_no_syscalls(|| {
@@ -2204,21 +1742,6 @@ mod tests {
             assert!(!err.message.is_empty());
         });
     }
-
-    #[test]
-    fn braced_expansion_with_invalid_name_errors() {
-        assert_no_syscalls(|| {
-            let mut ctx = FakeContext::new();
-            let err =
-                expand_word(&mut ctx, &parsed_word(b"echo ${/}\n")).expect_err("${/} must error");
-            assert!(!err.message.is_empty());
-
-            let err =
-                expand_word(&mut ctx, &parsed_word(b"echo ${}\n")).expect_err("${} must error");
-            assert!(!err.message.is_empty());
-        });
-    }
-
     #[test]
     fn braced_expansion_with_trailing_junk_errors() {
         assert_no_syscalls(|| {

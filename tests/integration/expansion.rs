@@ -2464,3 +2464,511 @@ fn command_not_found_exercises_execvp_failure() {
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert_eq!(stdout.trim(), "127");
 }
+
+// ── Coverage: arithmetic operators (expand/arithmetic.rs) ──
+
+#[test]
+fn arithmetic_relational_and_shift_operators() {
+    // Covers parse_relational (<=, >=, <, >) and parse_shift (<<, >>),
+    // plus bitwise |, ^, & (ensuring != and `=`/`==` disambiguation).
+    let out = Command::new(meiksh())
+        .args([
+            "-c",
+            "printf '%s|' $((1<=2)) $((2<=1)) $((2>=1)) $((1>=2)) \
+             $((1<2)) $((2<1)) $((2>1)) $((1>2)) \
+             $((1==1)) $((1==2)) $((1!=2)) $((1!=1)) \
+             $((1<<3)) $((16>>2)) $((5|2)) $((5^6)) $((5&6))",
+        ])
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "1|0|1|0|1|0|1|0|1|0|1|0|8|4|7|3|4|"
+    );
+}
+
+#[test]
+fn arithmetic_compound_assignment_operators() {
+    // Exercises apply_compound_assign for every op (+=, -=, *=, /=, %=,
+    // <<=, >>=, &=, ^=, |=).
+    let out = Command::new(meiksh())
+        .args([
+            "-c",
+            "a=10; b=10; c=10; d=10; e=10; f=1; g=32; h=12; i=12; j=12; \
+             : $((a+=5)) $((b-=3)) $((c*=2)) $((d/=3)) $((e%=3)) \
+             $((f<<=4)) $((g>>=2)) $((h&=10)) $((i^=5)) $((j|=1)); \
+             printf '%s|%s|%s|%s|%s|%s|%s|%s|%s|%s' \"$a\" \"$b\" \"$c\" \"$d\" \"$e\" \"$f\" \"$g\" \"$h\" \"$i\" \"$j\"",
+        ])
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "15|7|20|3|1|16|8|8|9|13"
+    );
+}
+
+#[test]
+fn arithmetic_short_circuit_operators() {
+    // Exercises the skip_depth branches of || (LHS true) and && (LHS false).
+    // meiksh evaluates the RHS even when short-circuited, so keep both sides
+    // side-effect-free.
+    let out = Command::new(meiksh())
+        .args([
+            "-c",
+            "printf '%s|%s|%s|%s' $((1 || 9)) $((0 && 9)) $((0 || 2)) $((1 && 3))",
+        ])
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "1|0|1|1");
+}
+
+#[test]
+fn arithmetic_ternary_missing_colon_errors() {
+    let out = Command::new(meiksh())
+        .args(["-c", "echo $((1 ? 2))"])
+        .output()
+        .expect("run");
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("expected ':' in ternary expression"),
+        "stderr={stderr}"
+    );
+}
+
+#[test]
+fn arithmetic_division_by_zero_errors() {
+    for script in [
+        "echo $((1/0))",
+        "echo $((1%0))",
+        "x=5; : $((x/=0))",
+        "x=5; : $((x%=0))",
+    ] {
+        let out = Command::new(meiksh())
+            .args(["-c", script])
+            .output()
+            .expect("run");
+        assert!(!out.status.success(), "script succeeded: {script}");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.contains("meiksh: line 1: division by zero"),
+            "script={script} stderr={stderr}"
+        );
+    }
+}
+
+#[test]
+fn arithmetic_invalid_hex_errors() {
+    let out = Command::new(meiksh())
+        .args(["-c", "echo $((0x))"])
+        .output()
+        .expect("run");
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("meiksh: line 1: invalid hex constant"),
+        "stderr={stderr}"
+    );
+}
+
+#[test]
+fn arithmetic_hex_and_octal_literals() {
+    let out = Command::new(meiksh())
+        .args([
+            "-c",
+            "printf '%s|%s|%s|%s' $((0x10)) $((0xFF)) $((010)) $((0))",
+        ])
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "16|255|8|0");
+}
+
+#[test]
+fn arithmetic_variable_with_hex_and_octal_values() {
+    // Exercises the variable-resolution path that re-parses the stored value
+    // as hex / octal / decimal.
+    let out = Command::new(meiksh())
+        .args([
+            "-c",
+            "a=0x10; b=010; c=7; printf '%s|%s|%s' $((a+1)) $((b+1)) $((c+1))",
+        ])
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "17|9|8");
+}
+
+#[test]
+fn arithmetic_nounset_unset_variable_errors() {
+    let out = Command::new(meiksh())
+        .args(["-c", "set -u; echo $((missing+1))"])
+        .output()
+        .expect("run");
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("meiksh: line 1: missing: parameter not set"),
+        "stderr={stderr}"
+    );
+}
+
+#[test]
+fn arithmetic_invalid_stored_value_errors() {
+    let out = Command::new(meiksh())
+        .args(["-c", "a=abc; echo $((a+1))"])
+        .output()
+        .expect("run");
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("meiksh: line 1: invalid variable value for 'a'"),
+        "stderr={stderr}"
+    );
+}
+
+#[test]
+fn arithmetic_dollar_expansion_variants() {
+    // Drives expand_arithmetic_expression's Expansion::One branch via a bare
+    // $name, and the success path where the pre-expanded expression is parsed
+    // and evaluated.
+    let out = Command::new(meiksh())
+        .args([
+            "-c",
+            "y=3; set -- 5; printf '%s|%s|%s' $(($y+1)) $(($1+2)) $((${y}*2))",
+        ])
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "4|7|6");
+}
+
+#[test]
+fn arithmetic_bare_dollar_is_rejected_as_operand() {
+    // A lone `$` is not a valid arithmetic operand in meiksh's parser.
+    let out = Command::new(meiksh())
+        .args(["-c", "echo $((1+$ ))"])
+        .output()
+        .expect("run");
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("meiksh: line 1: expected arithmetic operand"),
+        "stderr={stderr}"
+    );
+}
+
+// ── Coverage: tilde expansion corners (expand/word.rs expand_raw) ──
+
+#[test]
+fn tilde_expansion_variants() {
+    // Covers empty-user (HOME), unknown user fallback, ~/path, and the
+    // "~ followed by name" case that falls through to literal.
+    let out = Command::new(meiksh())
+        .args([
+            "-c",
+            "HOME=/h/user; printf '%s|%s|%s|%s' ~ ~/foo ~nonexistentuser42 ~nonexistentuser42/foo",
+        ])
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "/h/user|/h/user/foo|~nonexistentuser42|~nonexistentuser42/foo"
+    );
+}
+
+#[test]
+fn tilde_trailing_slash_is_trimmed() {
+    let out = Command::new(meiksh())
+        .args(["-c", "HOME=/h/; printf '%s' ~/foo"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "/h/foo");
+}
+
+#[test]
+fn tilde_without_home_env() {
+    let out = Command::new(meiksh())
+        .args(["-c", "unset HOME; printf '%s' ~"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "~");
+}
+
+#[test]
+fn tilde_with_empty_home_produces_empty() {
+    let out = Command::new(meiksh())
+        .args(["-c", "HOME=; printf '<%s>' ~"])
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "<>");
+}
+
+#[test]
+fn tilde_in_case_pattern_uses_expand_raw() {
+    // case patterns go through expand_word_pattern → expand_raw.
+    let out = Command::new(meiksh())
+        .args([
+            "-c",
+            "HOME=/home/x; case /home/x in ~) printf A;; *) printf B;; esac",
+        ])
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "A");
+}
+
+// ── Coverage: expand_raw double-quote escapes and error paths ──
+
+#[test]
+fn double_quoted_backslash_variants() {
+    // Covers expand_raw's double-quoted branches: backslash-newline removal,
+    // non-special backslash kept, literal newline increments lineno, $ and
+    // backtick flushing the buffer before expansion.
+    let out = Command::new(meiksh())
+        .args([
+            "-c",
+            "printf '%s|' \"pre\\\nsuf\" \"a\\zb\" \"pre$(printf X)suf\" \"pre`printf Y`suf\" \"a\nb\"",
+        ])
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    // "pre\\nsuf" → backslash-newline eaten → "presuf"
+    // "a\\zb" → non-special escape kept → "a\\zb"
+    // "pre$(...)suf" → flushes "pre", expands, then "suf"
+    // "pre`...`suf" → same via backtick
+    // "a\nb" → literal newline preserved
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "presuf|a\\zb|preXsuf|preYsuf|a\nb|"
+    );
+}
+
+#[test]
+fn unterminated_double_quote_errors() {
+    let out = Command::new(meiksh())
+        .args(["-c", "case x in p) echo \"unterminated ;; esac"])
+        .output()
+        .expect("run");
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("meiksh: line 1: unterminated double quote"),
+        "stderr={stderr}"
+    );
+}
+
+#[test]
+fn unterminated_single_quote_errors_in_case_pattern() {
+    // case patterns run through expand_raw, which enforces single-quote balance.
+    let out = Command::new(meiksh())
+        .args(["-c", "case x in 'unterm) echo no;; esac"])
+        .output()
+        .expect("run");
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("meiksh: line 1: unterminated single quote"),
+        "stderr={stderr}"
+    );
+}
+
+#[test]
+fn backslash_in_case_pattern_via_expand_raw() {
+    // Backslash escaping a literal character in a case pattern runs through
+    // expand_raw's `\\` branch (top-level, not inside quotes).
+    let out = Command::new(meiksh())
+        .args([
+            "-c",
+            "case foo in f\\oo) printf hit;; *) printf miss;; esac",
+        ])
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "hit");
+}
+
+// ── Coverage: parameter expansion corners (expand/parameter.rs) ──
+
+#[test]
+fn dollar_single_quoted_unquoted_context() {
+    // $'...' at top level (not inside "...") hits the c1 == b'\'' branch.
+    let out = Command::new(meiksh())
+        .args(["-c", "printf '%s' $'a\\tb\\n'"])
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "a\tb\n");
+}
+
+#[test]
+fn positional_and_special_params_via_dollar() {
+    // $0, $1, $2, $* with empty IFS, ${#}, ${#name}.
+    let out = Command::new(meiksh())
+        .args([
+            "-c",
+            "set -- A B C; IFS=; printf '%s|%s|%s|%s|%s|%s' \"$0\" \"$1\" \"$2\" \"$*\" \"${#}\" \"${#1}\"",
+        ])
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let s = String::from_utf8_lossy(&out.stdout).to_string();
+    // $0 is shell name (implementation-defined); rest deterministic.
+    assert!(s.ends_with("|A|B|ABC|3|1"), "stdout={s}");
+}
+
+#[test]
+fn parameter_required_error_messages() {
+    // ${VAR:?msg} / ${VAR?msg} both null and unset, default and custom.
+    for (script, needle) in [
+        ("unset X; : ${X?}", "X:"),
+        ("unset X; : ${X:?}", "X: parameter null or not set"),
+        ("X=; : ${X:?}", "X: parameter null or not set"),
+        ("unset X; : ${X?custom miss}", "custom miss"),
+        ("X=; : ${X:?null msg}", "null msg"),
+    ] {
+        let out = Command::new(meiksh())
+            .args(["-c", script])
+            .output()
+            .expect("run");
+        assert!(!out.status.success(), "script succeeded: {script}");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains(needle), "script={script} stderr={stderr}");
+    }
+}
+
+#[test]
+fn parameter_alternative_operators_ok() {
+    // :+ / + with set-and-nonnull, set-and-null, unset.
+    let out = Command::new(meiksh())
+        .args([
+            "-c",
+            "X=v; Y=; unset Z; \
+             printf '<%s><%s><%s><%s><%s><%s>' \"${X:+a}\" \"${Y:+a}\" \"${Z:+a}\" \
+             \"${X+a}\" \"${Y+a}\" \"${Z+a}\"",
+        ])
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "<a><><><a><a><>");
+}
+
+#[test]
+fn parameter_assign_default_operators() {
+    // := and = only assign when (null-or-unset) / unset respectively.
+    let out = Command::new(meiksh())
+        .args([
+            "-c",
+            "unset X; unset Y; : ${X:=hello}; : ${Y=world}; printf '%s|%s' \"$X\" \"$Y\"",
+        ])
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "hello|world");
+}
+
+#[test]
+fn parameter_length_of_hash_and_positional() {
+    // ${#} → count of positional params; ${#name} → length in chars.
+    let out = Command::new(meiksh())
+        .args([
+            "-c",
+            "set -- a bb ccc; name=héllo; printf '%s|%s|%s' \"${#}\" \"${#2}\" \"${#name}\"",
+        ])
+        .output()
+        .expect("run");
+    assert!(
+        out.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let s = String::from_utf8_lossy(&out.stdout);
+    // "héllo" is 5 characters (é counted as one), but we don't want to over-
+    // commit to locale; at minimum first two are deterministic.
+    assert!(s.starts_with("3|2|"), "stdout={s}");
+}
+
+#[test]
+fn unterminated_arithmetic_and_command_subst_errors() {
+    for (script, needle) in [
+        (
+            "echo $((1+2",
+            "meiksh: line 1: unterminated arithmetic expansion",
+        ),
+        (
+            "echo $(echo hi",
+            "meiksh: line 1: unterminated command substitution",
+        ),
+    ] {
+        let out = Command::new(meiksh())
+            .args(["-c", script])
+            .output()
+            .expect("run");
+        assert!(!out.status.success(), "script succeeded: {script}");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains(needle), "script={script} stderr={stderr}");
+    }
+}

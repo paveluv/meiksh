@@ -400,7 +400,7 @@ mod tests {
 
     use super::*;
     use crate::exec::program::execute_program;
-    use crate::exec::test_support::{parse_test, test_shell};
+    use crate::exec::test_support::{literal_word, parse_test, test_shell};
     use crate::shell::state::Shell;
     use crate::syntax::ast::{
         AndOr, Assignment, CaseCommand, Command, ForCommand, FunctionDef, HereDoc, IfCommand,
@@ -513,12 +513,7 @@ mod tests {
                     negated: false,
                     timed: TimedMode::Off,
                     commands: vec![Command::Simple(SimpleCommand {
-                        words: vec![Word {
-                            raw: b"true".to_vec().into(),
-                            parts: Box::new([]),
-                            line: 0,
-                        }]
-                        .into_boxed_slice(),
+                        words: vec![literal_word(b"true")].into_boxed_slice(),
                         ..SimpleCommand::default()
                     })]
                     .into_boxed_slice(),
@@ -568,35 +563,13 @@ mod tests {
                     timed: TimedMode::Off,
                     commands: vec![
                         Command::Simple(SimpleCommand {
-                            words: vec![
-                                Word {
-                                    raw: b"printf".to_vec().into(),
-                                    parts: Box::new([]),
-                                    line: 0,
-                                },
-                                Word {
-                                    raw: b"ok".to_vec().into(),
-                                    parts: Box::new([]),
-                                    line: 0,
-                                },
-                            ]
-                            .into_boxed_slice(),
+                            words: vec![literal_word(b"printf"), literal_word(b"ok")]
+                                .into_boxed_slice(),
                             ..SimpleCommand::default()
                         }),
                         Command::Simple(SimpleCommand {
-                            words: vec![
-                                Word {
-                                    raw: b"wc".to_vec().into(),
-                                    parts: Box::new([]),
-                                    line: 0,
-                                },
-                                Word {
-                                    raw: b"-c".to_vec().into(),
-                                    parts: Box::new([]),
-                                    line: 0,
-                                },
-                            ]
-                            .into_boxed_slice(),
+                            words: vec![literal_word(b"wc"), literal_word(b"-c")]
+                                .into_boxed_slice(),
                             ..SimpleCommand::default()
                         }),
                     ]
@@ -618,12 +591,7 @@ mod tests {
                         negated: false,
                         timed: TimedMode::Off,
                         commands: vec![Command::Simple(SimpleCommand {
-                            words: vec![Word {
-                                raw: b"true".to_vec().into(),
-                                parts: Box::new([]),
-                                line: 0,
-                            }]
-                            .into_boxed_slice(),
+                            words: vec![literal_word(b"true")].into_boxed_slice(),
                             ..SimpleCommand::default()
                         })]
                         .into_boxed_slice(),
@@ -691,12 +659,7 @@ mod tests {
                         negated: false,
                         timed: TimedMode::Off,
                         commands: vec![Command::Simple(SimpleCommand {
-                            words: vec![Word {
-                                raw: b"true".to_vec().into(),
-                                parts: Box::new([]),
-                                line: 0,
-                            }]
-                            .into_boxed_slice(),
+                            words: vec![literal_word(b"true")].into_boxed_slice(),
                             ..SimpleCommand::default()
                         })]
                         .into_boxed_slice(),
@@ -733,29 +696,13 @@ mod tests {
                 }),
                 Command::For(ForCommand {
                     name: b"item".to_vec().into(),
-                    items: Some(
-                        vec![Word {
-                            raw: b"a".to_vec().into(),
-                            parts: Box::new([]),
-                            line: 0,
-                        }]
-                        .into_boxed_slice(),
-                    ),
+                    items: Some(vec![literal_word(b"a")].into_boxed_slice()),
                     body: Program::default(),
                 }),
                 Command::Case(CaseCommand {
-                    word: Word {
-                        raw: b"item".to_vec().into(),
-                        parts: Box::new([]),
-                        line: 0,
-                    },
+                    word: literal_word(b"item"),
                     arms: vec![crate::syntax::ast::CaseArm {
-                        patterns: vec![Word {
-                            raw: b"item".to_vec().into(),
-                            parts: Box::new([]),
-                            line: 0,
-                        }]
-                        .into_boxed_slice(),
+                        patterns: vec![literal_word(b"item")].into_boxed_slice(),
                         body: Program::default(),
                         fallthrough: false,
                     }]

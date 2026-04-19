@@ -333,7 +333,7 @@ mod tests {
     use crate::exec::command::execute_nested_program;
     use crate::exec::process::ExpandedRedirection;
     use crate::exec::simple::{expand_redirections, expand_simple};
-    use crate::exec::test_support::{parse_test, test_shell};
+    use crate::exec::test_support::{literal_word, parse_test, test_shell};
     use crate::shell::state::Shell;
     use crate::syntax::ast::{Assignment, HereDoc, Redirection, SimpleCommand, Word};
     use crate::sys::test_support::{assert_no_syscalls, run_trace};
@@ -413,20 +413,11 @@ mod tests {
                 let error = expand_simple(
                     &mut shell,
                     &SimpleCommand {
-                        words: vec![Word {
-                            raw: b"cat".to_vec().into(),
-                            parts: Box::new([]),
-                            line: 0,
-                        }]
-                        .into_boxed_slice(),
+                        words: vec![literal_word(b"cat")].into_boxed_slice(),
                         redirections: vec![Redirection {
                             fd: None,
                             kind: RedirectionKind::HereDoc,
-                            target: Word {
-                                raw: b"EOF".to_vec().into(),
-                                parts: Box::new([]),
-                                line: 0,
-                            },
+                            target: literal_word(b"EOF"),
                             here_doc: None,
                         }]
                         .into_boxed_slice(),
@@ -440,20 +431,11 @@ mod tests {
                 let error = expand_simple(
                     &mut shell,
                     &SimpleCommand {
-                        words: vec![Word {
-                            raw: b"echo".to_vec().into(),
-                            parts: Box::new([]),
-                            line: 0,
-                        }]
-                        .into_boxed_slice(),
+                        words: vec![literal_word(b"echo")].into_boxed_slice(),
                         redirections: vec![Redirection {
                             fd: Some(1),
                             kind: RedirectionKind::DupOutput,
-                            target: Word {
-                                raw: b"bad".to_vec().into(),
-                                parts: Box::new([]),
-                                line: 0,
-                            },
+                            target: literal_word(b"bad"),
                             here_doc: None,
                         }]
                         .into_boxed_slice(),
@@ -469,11 +451,7 @@ mod tests {
                     &[Redirection {
                         fd: None,
                         kind: RedirectionKind::HereDoc,
-                        target: Word {
-                            raw: b"EOF".to_vec().into(),
-                            parts: Box::new([]),
-                            line: 0,
-                        },
+                        target: literal_word(b"EOF"),
                         here_doc: Some(HereDoc {
                             delimiter: b"EOF".to_vec().into(),
                             body: b"hello $USER".to_vec().into(),
@@ -496,11 +474,7 @@ mod tests {
                     &[Redirection {
                         fd: None,
                         kind: RedirectionKind::HereDoc,
-                        target: Word {
-                            raw: b"EOF".to_vec().into(),
-                            parts: Box::new([]),
-                            line: 0,
-                        },
+                        target: literal_word(b"EOF"),
                         here_doc: Some(HereDoc {
                             delimiter: b"EOF".to_vec().into(),
                             body: b"hello $USER".to_vec().into(),
@@ -522,11 +496,7 @@ mod tests {
                     &[Redirection {
                         fd: None,
                         kind: RedirectionKind::HereDoc,
-                        target: Word {
-                            raw: b"EOF".to_vec().into(),
-                            parts: Box::new([]),
-                            line: 0,
-                        },
+                        target: literal_word(b"EOF"),
                         here_doc: None,
                     }],
                 )
@@ -539,11 +509,7 @@ mod tests {
                     &[Redirection {
                         fd: None,
                         kind: RedirectionKind::HereDoc,
-                        target: Word {
-                            raw: b"EOF".to_vec().into(),
-                            parts: Box::new([]),
-                            line: 0,
-                        },
+                        target: literal_word(b"EOF"),
                         here_doc: Some(HereDoc {
                             delimiter: b"EOF".to_vec().into(),
                             body: b"hello\nworld\n".to_vec().into(),
@@ -565,11 +531,7 @@ mod tests {
                     &[Redirection {
                         fd: Some(2),
                         kind: RedirectionKind::DupOutput,
-                        target: Word {
-                            raw: b"abc".to_vec().into(),
-                            parts: Box::new([]),
-                            line: 0,
-                        },
+                        target: literal_word(b"abc"),
                         here_doc: None,
                     }],
                 )

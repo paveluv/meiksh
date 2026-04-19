@@ -89,53 +89,11 @@ mod tests {
     use super::*;
     use crate::expand::glob::{match_bracket, pattern_matches};
     use crate::expand::pathname::{expand_path_segments, expand_pathname};
-    use crate::expand::test_support::{FakeContext, expand_word};
+    use crate::expand::test_support::FakeContext;
     use crate::expand::word::{expand_here_document, expand_redirect_word, flatten_expansion};
     use crate::syntax::ast::Word;
     use crate::sys::test_support::{assert_no_syscalls, run_trace};
     use crate::trace_entries;
-
-    #[test]
-    fn performs_field_splitting_more_like_posix() {
-        let mut ctx = FakeContext::new();
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: b"$WORDS".as_ref().into(),
-                    parts: Box::new([]),
-                    line: 0
-                },
-            )
-            .expect("expand"),
-            vec![b"one".as_ref(), b"two".as_ref(), b"three".as_ref()]
-        );
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: b"$DELIMS".as_ref().into(),
-                    parts: Box::new([]),
-                    line: 0
-                },
-            )
-            .expect("expand"),
-            vec![b"".as_ref() as &[u8], b"", b""]
-        );
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: b"$EMPTY".as_ref().into(),
-                    parts: Box::new([]),
-                    line: 0
-                },
-            )
-            .expect("expand"),
-            Vec::<&[u8]>::new()
-        );
-    }
-
     #[test]
     fn field_and_pattern_helpers_cover_corner_cases() {
         run_trace(
@@ -255,74 +213,6 @@ mod tests {
             .expect("expand heredoc double backslash");
         assert_eq!(double_backslash, b"a\\b\n");
     }
-
-    #[test]
-    fn unquoted_at_undergoes_field_splitting() {
-        let mut ctx = FakeContext::new();
-        ctx.positional = vec![b"a b".to_vec(), b"c".to_vec()];
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: b"$@".as_ref().into(),
-                    parts: Box::new([]),
-                    line: 0
-                }
-            )
-            .expect("unquoted at"),
-            vec![b"a".as_ref(), b"b", b"c"]
-        );
-
-        ctx.positional = Vec::new();
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: b"$@".as_ref().into(),
-                    parts: Box::new([]),
-                    line: 0
-                }
-            )
-            .expect("unquoted at empty"),
-            Vec::<&[u8]>::new()
-        );
-    }
-
-    #[test]
-    fn field_splitting_empty_result_returns_empty_vec() {
-        let mut ctx = FakeContext::new();
-        ctx.env.insert(b"WS".to_vec(), b"   ".to_vec());
-        assert_eq!(
-            expand_word(
-                &mut ctx,
-                &Word {
-                    raw: b"$WS".as_ref().into(),
-                    parts: Box::new([]),
-                    line: 0
-                }
-            )
-            .expect("whitespace only"),
-            Vec::<&[u8]>::new()
-        );
-    }
-
-    #[test]
-    fn at_break_with_glob_in_at_fields() {
-        let mut ctx = FakeContext::new();
-        ctx.pathname_expansion_enabled = false;
-        ctx.positional = vec![b"*.txt".to_vec(), b"b".to_vec()];
-        let result = expand_word(
-            &mut ctx,
-            &Word {
-                raw: b"\"$@\"".as_ref().into(),
-                parts: Box::new([]),
-                line: 0,
-            },
-        )
-        .expect("at with glob-like");
-        assert_eq!(result, vec![b"*.txt".as_ref(), b"b"]);
-    }
-
     #[test]
     fn flatten_expansion_covers_at_fields() {
         assert_eq!(
@@ -334,35 +224,6 @@ mod tests {
             b"a b"
         );
     }
-
-    #[test]
-    fn at_empty_combined_with_at_break() {
-        let mut ctx = FakeContext::new();
-        ctx.positional = vec![b"x".to_vec()];
-        let result = expand_word(
-            &mut ctx,
-            &Word {
-                raw: b"\"$@\"".as_ref().into(),
-                parts: Box::new([]),
-                line: 0,
-            },
-        )
-        .expect("at one param");
-        assert_eq!(result, vec![b"x".as_ref()]);
-
-        ctx.positional = Vec::new();
-        let result2 = expand_word(
-            &mut ctx,
-            &Word {
-                raw: b"\"$@\"".as_ref().into(),
-                parts: Box::new([]),
-                line: 0,
-            },
-        )
-        .expect("at empty");
-        assert_eq!(result2, Vec::<&[u8]>::new());
-    }
-
     #[test]
     fn redirect_word_with_expanded_field_splitting() {
         assert_no_syscalls(|| {
