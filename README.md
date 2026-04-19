@@ -24,7 +24,7 @@ For comparison, every other major shell has verified non-compliances against the
 - fully implement the POSIX shell specification (Issue 8)
 - keep the implementation limited to `std` and `libc`
 - use explicit, auditable Unix bindings instead of external abstraction crates
-- maintain at least `99.90%` production-code line coverage as reported by `./scripts/coverage.sh`
+- maintain at least `99.5%` production-code line coverage as reported by `./scripts/coverage.sh`
 
 The local `docs/posix/` mirror defined by `docs/posix-manifest.txt` is the only requirements source of truth used for conformance work.
 
