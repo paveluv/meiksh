@@ -513,10 +513,9 @@ mod tests {
                     negated: false,
                     timed: TimedMode::Off,
                     commands: vec![Command::Simple(SimpleCommand {
-                        words: vec![literal_word(b"true")].into_boxed_slice(),
+                        words: vec![literal_word(b"true")],
                         ..SimpleCommand::default()
-                    })]
-                    .into_boxed_slice(),
+                    })],
                 };
                 let status = execute_pipeline(&mut shell, &pipeline, true).expect("async");
                 assert_eq!(status, 0);
@@ -563,17 +562,14 @@ mod tests {
                     timed: TimedMode::Off,
                     commands: vec![
                         Command::Simple(SimpleCommand {
-                            words: vec![literal_word(b"printf"), literal_word(b"ok")]
-                                .into_boxed_slice(),
+                            words: vec![literal_word(b"printf"), literal_word(b"ok")],
                             ..SimpleCommand::default()
                         }),
                         Command::Simple(SimpleCommand {
-                            words: vec![literal_word(b"wc"), literal_word(b"-c")]
-                                .into_boxed_slice(),
+                            words: vec![literal_word(b"wc"), literal_word(b"-c")],
                             ..SimpleCommand::default()
                         }),
-                    ]
-                    .into_boxed_slice(),
+                    ],
                 };
                 let status =
                     execute_pipeline(&mut shell, &pipeline, false).expect("negated pipeline");
@@ -591,17 +587,15 @@ mod tests {
                         negated: false,
                         timed: TimedMode::Off,
                         commands: vec![Command::Simple(SimpleCommand {
-                            words: vec![literal_word(b"true")].into_boxed_slice(),
+                            words: vec![literal_word(b"true")],
                             ..SimpleCommand::default()
-                        })]
-                        .into_boxed_slice(),
+                        })],
                     },
-                    rest: Vec::new().into_boxed_slice(),
+                    rest: Vec::new(),
                 },
                 asynchronous: false,
                 line: 0,
-            }]
-            .into_boxed_slice(),
+            }],
         };
 
         run_trace(
@@ -637,8 +631,7 @@ mod tests {
                         commands: vec![
                             Command::Subshell(program.clone()),
                             Command::Group(program.clone()),
-                        ]
-                        .into_boxed_slice(),
+                        ],
                     },
                     None,
                 )
@@ -659,17 +652,15 @@ mod tests {
                         negated: false,
                         timed: TimedMode::Off,
                         commands: vec![Command::Simple(SimpleCommand {
-                            words: vec![literal_word(b"true")].into_boxed_slice(),
+                            words: vec![literal_word(b"true")],
                             ..SimpleCommand::default()
-                        })]
-                        .into_boxed_slice(),
+                        })],
                     },
-                    rest: Vec::new().into_boxed_slice(),
+                    rest: Vec::new(),
                 },
                 asynchronous: false,
                 line: 0,
-            }]
-            .into_boxed_slice(),
+            }],
         };
         let pipeline = Pipeline {
             negated: false,
@@ -685,8 +676,7 @@ mod tests {
                     elif_branches: vec![crate::syntax::ast::ElifBranch {
                         condition: program.clone(),
                         body: program.clone(),
-                    }]
-                    .into_boxed_slice(),
+                    }],
                     else_branch: Some(program.clone()),
                 }),
                 Command::Loop(LoopCommand {
@@ -696,20 +686,18 @@ mod tests {
                 }),
                 Command::For(ForCommand {
                     name: b"item".to_vec().into(),
-                    items: Some(vec![literal_word(b"a")].into_boxed_slice()),
+                    items: Some(vec![literal_word(b"a")]),
                     body: Program::default(),
                 }),
                 Command::Case(CaseCommand {
                     word: literal_word(b"item"),
                     arms: vec![crate::syntax::ast::CaseArm {
-                        patterns: vec![literal_word(b"item")].into_boxed_slice(),
+                        patterns: vec![literal_word(b"item")],
                         body: Program::default(),
                         fallthrough: false,
-                    }]
-                    .into_boxed_slice(),
+                    }],
                 }),
-            ]
-            .into_boxed_slice(),
+            ],
         };
         run_trace(
             trace_entries![

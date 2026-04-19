@@ -6,7 +6,7 @@ use super::word_parts::WordPart;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Program {
-    pub(crate) items: Box<[ListItem]>,
+    pub(crate) items: Vec<ListItem>,
 }
 
 #[derive(Clone, Debug)]
@@ -26,7 +26,7 @@ impl Eq for ListItem {}
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct AndOr {
     pub(crate) first: Pipeline,
-    pub(crate) rest: Box<[(LogicalOp, Pipeline)]>,
+    pub(crate) rest: Vec<(LogicalOp, Pipeline)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -46,7 +46,7 @@ pub(crate) enum TimedMode {
 pub(crate) struct Pipeline {
     pub(crate) negated: bool,
     pub(crate) timed: TimedMode,
-    pub(crate) commands: Box<[Command]>,
+    pub(crate) commands: Vec<Command>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -59,26 +59,26 @@ pub(crate) enum Command {
     Loop(LoopCommand),
     For(ForCommand),
     Case(CaseCommand),
-    Redirected(Box<Command>, Box<[Redirection]>),
+    Redirected(Box<Command>, Vec<Redirection>),
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct SimpleCommand {
-    pub(crate) assignments: Box<[Assignment]>,
-    pub(crate) words: Box<[Word]>,
-    pub(crate) redirections: Box<[Redirection]>,
+    pub(crate) assignments: Vec<Assignment>,
+    pub(crate) words: Vec<Word>,
+    pub(crate) redirections: Vec<Redirection>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Assignment {
-    pub(crate) name: Box<[u8]>,
+    pub(crate) name: Vec<u8>,
     pub(crate) value: Word,
 }
 
 #[derive(Clone, Debug)]
 pub(crate) struct Word {
-    pub(crate) raw: Box<[u8]>,
-    pub(crate) parts: Box<[WordPart]>,
+    pub(crate) raw: Vec<u8>,
+    pub(crate) parts: Vec<WordPart>,
     pub(crate) line: usize,
 }
 
@@ -99,7 +99,7 @@ pub(crate) struct Redirection {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct FunctionDef {
-    pub(crate) name: Box<[u8]>,
+    pub(crate) name: Vec<u8>,
     pub(crate) body: Rc<Command>,
 }
 
@@ -107,7 +107,7 @@ pub(crate) struct FunctionDef {
 pub(crate) struct IfCommand {
     pub(crate) condition: Program,
     pub(crate) then_branch: Program,
-    pub(crate) elif_branches: Box<[ElifBranch]>,
+    pub(crate) elif_branches: Vec<ElifBranch>,
     pub(crate) else_branch: Option<Program>,
 }
 
@@ -126,28 +126,28 @@ pub(crate) struct LoopCommand {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ForCommand {
-    pub(crate) name: Box<[u8]>,
-    pub(crate) items: Option<Box<[Word]>>,
+    pub(crate) name: Vec<u8>,
+    pub(crate) items: Option<Vec<Word>>,
     pub(crate) body: Program,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct CaseCommand {
     pub(crate) word: Word,
-    pub(crate) arms: Box<[CaseArm]>,
+    pub(crate) arms: Vec<CaseArm>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct CaseArm {
-    pub(crate) patterns: Box<[Word]>,
+    pub(crate) patterns: Vec<Word>,
     pub(crate) body: Program,
     pub(crate) fallthrough: bool,
 }
 
 #[derive(Clone, Debug)]
 pub(crate) struct HereDoc {
-    pub(crate) delimiter: Box<[u8]>,
-    pub(crate) body: Box<[u8]>,
+    pub(crate) delimiter: Vec<u8>,
+    pub(crate) body: Vec<u8>,
     pub(crate) expand: bool,
     pub(crate) strip_tabs: bool,
     pub(crate) body_line: usize,
@@ -195,8 +195,8 @@ fn build_assignment_value_parts(
     _raw: &[u8],
     _parts: &[WordPart],
     _eq_plus_one: usize,
-) -> Box<[WordPart]> {
-    Box::new([])
+) -> Vec<WordPart> {
+    Vec::new()
 }
 
 impl<'a> Parser<'a> {
@@ -240,7 +240,7 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    fn take_word(&mut self) -> (Box<[u8]>, Box<[WordPart]>) {
+    fn take_word(&mut self) -> (Vec<u8>, Vec<WordPart>) {
         self.next_token().into_word().unwrap()
     }
 
@@ -291,9 +291,7 @@ impl<'a> Parser<'a> {
             });
         }
 
-        Ok(Program {
-            items: items.into_boxed_slice(),
-        })
+        Ok(Program { items })
     }
 
     fn parse_and_or(&mut self) -> Result<AndOr, ParseError> {
@@ -316,10 +314,7 @@ impl<'a> Parser<'a> {
             let rhs = self.parse_pipeline()?;
             rest.push((op, rhs));
         }
-        Ok(AndOr {
-            first,
-            rest: rest.into_boxed_slice(),
-        })
+        Ok(AndOr { first, rest })
     }
 
     fn parse_pipeline(&mut self) -> Result<Pipeline, ParseError> {
@@ -363,7 +358,7 @@ impl<'a> Parser<'a> {
         Ok(Pipeline {
             negated,
             timed,
-            commands: commands.into_boxed_slice(),
+            commands,
         })
     }
 
@@ -471,7 +466,7 @@ impl<'a> Parser<'a> {
             | Token::AndIf
             | Token::RParen => Err(self.error(b"expected command")),
             _ => {
-                let name: Box<[u8]> = Box::from(self.peek_token()?.display_name());
+                let name: Vec<u8> = self.peek_token()?.display_name().to_vec();
                 self.advance_token();
                 // Keyword-as-command recovery: `display_name()` returns a
                 // pure literal reserved-word byte string (`fi`, `then`,
@@ -480,12 +475,12 @@ impl<'a> Parser<'a> {
                 // the whole raw faithfully represents it. Emitting it
                 // keeps every Word in the AST satisfying the invariant
                 // that `parts` is non-empty when `raw` is non-empty.
-                let parts: Box<[WordPart]> = Box::new([WordPart::Literal {
+                let parts: Vec<WordPart> = vec![WordPart::Literal {
                     start: 0,
                     end: name.len(),
                     has_glob: false,
                     newlines: 0,
-                }]);
+                }];
                 self.parse_simple_command_with_first_word(name, parts, line)
                     .map(Command::Simple)
             }
@@ -494,8 +489,8 @@ impl<'a> Parser<'a> {
 
     fn parse_simple_command_with_first_word(
         &mut self,
-        first_raw: Box<[u8]>,
-        first_parts: Box<[WordPart]>,
+        first_raw: Vec<u8>,
+        first_parts: Vec<WordPart>,
         first_line: usize,
     ) -> Result<SimpleCommand, ParseError> {
         let mut assignments = Vec::new();
@@ -506,9 +501,9 @@ impl<'a> Parser<'a> {
             let value_parts =
                 build_assignment_value_parts(&first_raw, &first_parts, name.len() + 1);
             assignments.push(Assignment {
-                name: Box::from(name),
+                name: name.to_vec(),
                 value: Word {
-                    raw: Box::from(value_raw),
+                    raw: value_raw.to_vec(),
                     parts: value_parts,
                     line: first_line,
                 },
@@ -528,9 +523,9 @@ impl<'a> Parser<'a> {
         }
 
         Ok(SimpleCommand {
-            assignments: assignments.into_boxed_slice(),
-            words: words.into_boxed_slice(),
-            redirections: redirections.into_boxed_slice(),
+            assignments,
+            words,
+            redirections,
         })
     }
 
@@ -546,9 +541,9 @@ impl<'a> Parser<'a> {
         self.simple_command_scan_loop(&mut assignments, &mut words, &mut redirections)?;
 
         Ok(SimpleCommand {
-            assignments: assignments.into_boxed_slice(),
-            words: words.into_boxed_slice(),
-            redirections: redirections.into_boxed_slice(),
+            assignments,
+            words,
+            redirections,
         })
     }
 
@@ -583,9 +578,9 @@ impl<'a> Parser<'a> {
                 if let Some((name, value_raw)) = split_assignment(&raw) {
                     let value_parts = build_assignment_value_parts(&raw, &parts, name.len() + 1);
                     assignments.push(Assignment {
-                        name: Box::from(name),
+                        name: name.to_vec(),
                         value: Word {
-                            raw: Box::from(value_raw),
+                            raw: value_raw.to_vec(),
                             parts: value_parts,
                             line,
                         },
@@ -636,7 +631,7 @@ impl<'a> Parser<'a> {
                 kind: RedirectionKind::HereDoc,
                 target: Word {
                     raw: delimiter.clone(),
-                    parts: Box::new([]),
+                    parts: Vec::new(),
                     line,
                 },
                 here_doc: Some(HereDoc {
@@ -695,10 +690,7 @@ impl<'a> Parser<'a> {
         if redirections.is_empty() {
             Ok(command)
         } else {
-            Ok(Command::Redirected(
-                Box::new(command),
-                redirections.into_boxed_slice(),
-            ))
+            Ok(Command::Redirected(Box::new(command), redirections))
         }
     }
 
@@ -756,7 +748,7 @@ impl<'a> Parser<'a> {
         Ok(Command::If(IfCommand {
             condition,
             then_branch,
-            elif_branches: elif_branches.into_boxed_slice(),
+            elif_branches,
             else_branch,
         }))
     }
@@ -812,7 +804,7 @@ impl<'a> Parser<'a> {
                     line: word_line,
                 });
             }
-            Some(items.into_boxed_slice())
+            Some(items)
         } else {
             None
         };
@@ -866,9 +858,9 @@ impl<'a> Parser<'a> {
                     if matches!(self.peek_token()?, Token::Word(_, _)) {
                         self.take_word()
                     } else if let Some(name) = self.peek_token()?.keyword_name() {
-                        let w: Box<[u8]> = Box::from(name);
+                        let w: Vec<u8> = name.to_vec();
                         self.advance_token();
-                        (w, Box::new([]) as Box<[WordPart]>)
+                        (w, Vec::<WordPart>::new())
                     } else {
                         return Err(self.error(b"expected case pattern"));
                     };
@@ -908,7 +900,7 @@ impl<'a> Parser<'a> {
             };
 
             arms.push(CaseArm {
-                patterns: patterns.into_boxed_slice(),
+                patterns,
                 body,
                 fallthrough,
             });
@@ -922,10 +914,7 @@ impl<'a> Parser<'a> {
         }
 
         self.eat_keyword(Token::Esac, b"esac")?;
-        Ok(Command::Case(CaseCommand {
-            word,
-            arms: arms.into_boxed_slice(),
-        }))
+        Ok(Command::Case(CaseCommand { word, arms }))
     }
 
     fn parse_function_keyword(&mut self) -> Result<Command, ParseError> {
@@ -990,9 +979,7 @@ impl<'a> Parser<'a> {
                 break;
             }
         }
-        Ok(Some(Program {
-            items: items.into_boxed_slice(),
-        }))
+        Ok(Some(Program { items }))
     }
 }
 
@@ -1011,12 +998,15 @@ mod tests {
     use crate::syntax::byte_class::alias_has_trailing_blank;
     use crate::syntax::{parse, parse_with_aliases};
 
-    fn bx(s: &[u8]) -> Box<[u8]> {
-        s.to_vec().into_boxed_slice()
+    fn bx(s: &[u8]) -> Vec<u8> {
+        s.to_vec()
     }
 
     fn alias_map(pairs: &[(&[u8], &[u8])]) -> ShellMap<Box<[u8]>, Box<[u8]>> {
-        pairs.iter().map(|(k, v)| (bx(k), bx(v))).collect()
+        pairs
+            .iter()
+            .map(|(k, v)| (Box::from(*k), Box::from(*v)))
+            .collect()
     }
 
     fn parse_test(source: &str) -> Result<Program, super::super::ParseError> {
@@ -1326,7 +1316,7 @@ mod tests {
     fn parser_covers_misc_error_and_token_paths() {
         assert_eq!(
             &*super::super::ParseError {
-                message: bx(b"x"),
+                message: Box::from(&b"x"[..]),
                 line: None,
             }
             .message,
@@ -1658,28 +1648,25 @@ mod tests {
                 name: bx(b"X"),
                 value: Word {
                     raw: bx(b"1"),
-                    parts: Box::new([]),
+                    parts: Vec::new(),
                     line: 0,
                 },
-            }]
-            .into_boxed_slice(),
+            }],
             words: vec![Word {
                 raw: bx(b"echo"),
-                parts: Box::new([]),
+                parts: Vec::new(),
                 line: 0,
-            }]
-            .into_boxed_slice(),
+            }],
             redirections: vec![Redirection {
                 fd: Some(2),
                 kind: RedirectionKind::Write,
                 target: Word {
                     raw: bx(b"err"),
-                    parts: Box::new([]),
+                    parts: Vec::new(),
                     line: 0,
                 },
                 here_doc: None,
-            }]
-            .into_boxed_slice(),
+            }],
         });
         let s = simple.clone();
         assert!(matches!(&s, Command::Simple(sc) if &*sc.words[0].raw == b"echo"));
@@ -1690,20 +1677,17 @@ mod tests {
                     first: Pipeline {
                         negated: false,
                         timed: TimedMode::Off,
-                        commands: vec![s.clone()].into_boxed_slice(),
+                        commands: vec![s.clone()],
                     },
-                    rest: vec![].into_boxed_slice(),
+                    rest: vec![],
                 },
                 asynchronous: false,
                 line: 0,
-            }]
-            .into_boxed_slice(),
+            }],
         });
         assert!(matches!(subshell.clone(), Command::Subshell(_)));
 
-        let group = Command::Group(Program {
-            items: vec![].into_boxed_slice(),
-        });
+        let group = Command::Group(Program { items: vec![] });
         assert!(matches!(group.clone(), Command::Group(_)));
 
         let func = Command::FunctionDef(FunctionDef {
@@ -1713,73 +1697,49 @@ mod tests {
         assert!(matches!(&func, Command::FunctionDef(fd) if &*fd.name == b"f"));
 
         let if_cmd = Command::If(IfCommand {
-            condition: Program {
-                items: vec![].into_boxed_slice(),
-            },
-            then_branch: Program {
-                items: vec![].into_boxed_slice(),
-            },
+            condition: Program { items: vec![] },
+            then_branch: Program { items: vec![] },
             elif_branches: vec![ElifBranch {
-                condition: Program {
-                    items: vec![].into_boxed_slice(),
-                },
-                body: Program {
-                    items: vec![].into_boxed_slice(),
-                },
-            }]
-            .into_boxed_slice(),
-            else_branch: Some(Program {
-                items: vec![].into_boxed_slice(),
-            }),
+                condition: Program { items: vec![] },
+                body: Program { items: vec![] },
+            }],
+            else_branch: Some(Program { items: vec![] }),
         });
         assert!(matches!(if_cmd, Command::If(_)));
 
         let loop_cmd = Command::Loop(LoopCommand {
             kind: LoopKind::While,
-            condition: Program {
-                items: vec![].into_boxed_slice(),
-            },
-            body: Program {
-                items: vec![].into_boxed_slice(),
-            },
+            condition: Program { items: vec![] },
+            body: Program { items: vec![] },
         });
         assert!(matches!(loop_cmd, Command::Loop(_)));
 
         let for_cmd = Command::For(ForCommand {
             name: bx(b"i"),
-            items: Some(
-                vec![Word {
-                    raw: bx(b"a"),
-                    parts: Box::new([]),
-                    line: 0,
-                }]
-                .into_boxed_slice(),
-            ),
-            body: Program {
-                items: vec![].into_boxed_slice(),
-            },
+            items: Some(vec![Word {
+                raw: bx(b"a"),
+                parts: Vec::new(),
+                line: 0,
+            }]),
+            body: Program { items: vec![] },
         });
         assert!(matches!(&for_cmd, Command::For(fc) if &*fc.name == b"i"));
 
         let case_cmd = Command::Case(CaseCommand {
             word: Word {
                 raw: bx(b"x"),
-                parts: Box::new([]),
+                parts: Vec::new(),
                 line: 0,
             },
             arms: vec![CaseArm {
                 patterns: vec![Word {
                     raw: bx(b"*"),
-                    parts: Box::new([]),
+                    parts: Vec::new(),
                     line: 0,
-                }]
-                .into_boxed_slice(),
-                body: Program {
-                    items: vec![].into_boxed_slice(),
-                },
+                }],
+                body: Program { items: vec![] },
                 fallthrough: false,
-            }]
-            .into_boxed_slice(),
+            }],
         });
         assert!(matches!(case_cmd, Command::Case(_)));
 
@@ -1790,7 +1750,7 @@ mod tests {
                 kind: RedirectionKind::Write,
                 target: Word {
                     raw: bx(b"out"),
-                    parts: Box::new([]),
+                    parts: Vec::new(),
                     line: 0,
                 },
                 here_doc: Some(HereDoc {
@@ -1800,8 +1760,7 @@ mod tests {
                     strip_tabs: false,
                     body_line: 0,
                 }),
-            }]
-            .into_boxed_slice(),
+            }],
         );
         assert!(matches!(redir, Command::Redirected(_, _)));
     }

@@ -40,9 +40,9 @@ pub(super) fn expand_dollar<C: Context>(
                         depth += 1;
                     } else if ch == b')' {
                         if depth == 1 && source.get(index + 1) == Some(&b')') {
-                            let expression = source[3..index].to_vec();
+                            let expression = &source[3..index];
                             let saved_line = ctx.lineno();
-                            let pre_expanded = expand_arithmetic_expression(ctx, &expression)?;
+                            let pre_expanded = expand_arithmetic_expression(ctx, expression)?;
                             ctx.set_lineno(saved_line);
                             let value = eval_arithmetic(ctx, &pre_expanded)?;
                             let buf = bstr::I64Buf::new(value);
@@ -65,8 +65,8 @@ pub(super) fn expand_dollar<C: Context>(
                     } else if ch == b')' {
                         depth -= 1;
                         if depth == 0 {
-                            let command = source[2..index].to_vec();
-                            let output = ctx.command_substitute_raw(&command)?;
+                            let command = &source[2..index];
+                            let output = ctx.command_substitute_raw(command)?;
                             let trimmed = trim_trailing_newlines(&output).to_vec();
                             return Ok((Expansion::One(trimmed), index + 1));
                         }
@@ -90,12 +90,12 @@ pub(super) fn expand_dollar<C: Context>(
         }
         b'*' => {
             let ifs = ctx.env_var(b"IFS");
-            let sep = match ifs.as_deref() {
-                None => b" ".to_vec(),
-                Some(b"") => Vec::new(),
-                Some(s) => s[..crate::sys::locale::first_char_len(s)].to_vec(),
+            let sep: &[u8] = match ifs.as_deref() {
+                None => b" ",
+                Some(b"") => b"",
+                Some(s) => &s[..crate::sys::locale::first_char_len(s)],
             };
-            let value = bstr::join_bstrings(ctx.positional_params(), &sep);
+            let value = bstr::join_bstrings(ctx.positional_params(), sep);
             Ok((Expansion::One(value), 2))
         }
         b'?' | b'$' | b'!' | b'#' | b'-' | b'0' => {
@@ -1418,7 +1418,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"${VAR:-\"a}b\"}".as_ref().into(),
-                    parts: Box::new([]),
+                    parts: Vec::new(),
                     line: 0
                 },
             )
@@ -1431,7 +1431,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"${VAR:-$(echo ok)}".as_ref().into(),
-                    parts: Box::new([]),
+                    parts: Vec::new(),
                     line: 0
                 },
             )
@@ -1444,7 +1444,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"${VAR:-$((1+2))}".as_ref().into(),
-                    parts: Box::new([]),
+                    parts: Vec::new(),
                     line: 0
                 },
             )
@@ -1458,7 +1458,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"${VAR:-${INNER}}".as_ref().into(),
-                    parts: Box::new([]),
+                    parts: Vec::new(),
                     line: 0
                 },
             )
@@ -1471,7 +1471,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"${VAR:-`echo hi`}".as_ref().into(),
-                    parts: Box::new([]),
+                    parts: Vec::new(),
                     line: 0
                 },
             )
@@ -1484,7 +1484,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"${VAR:-'a}b'}".as_ref().into(),
-                    parts: Box::new([]),
+                    parts: Vec::new(),
                     line: 0
                 },
             )
@@ -1497,7 +1497,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"${VAR:-\\}}".as_ref().into(),
-                    parts: Box::new([]),
+                    parts: Vec::new(),
                     line: 0
                 },
             )
@@ -1521,7 +1521,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"${VAR:-$((2+3))}".as_ref().into(),
-                    parts: Box::new([]),
+                    parts: Vec::new(),
                     line: 0
                 },
             )
@@ -1534,7 +1534,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"${VAR:-$(echo deep)}".as_ref().into(),
-                    parts: Box::new([]),
+                    parts: Vec::new(),
                     line: 0
                 },
             )
@@ -1547,7 +1547,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"${VAR:-`echo bt`}".as_ref().into(),
-                    parts: Box::new([]),
+                    parts: Vec::new(),
                     line: 0
                 },
             )
@@ -1560,7 +1560,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"${VAR:-\"inside\"}".as_ref().into(),
-                    parts: Box::new([]),
+                    parts: Vec::new(),
                     line: 0
                 },
             )
@@ -1578,7 +1578,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"${V:-$((1+(2*3)))}".as_ref().into(),
-                    parts: Box::new([]),
+                    parts: Vec::new(),
                     line: 0
                 },
             )
@@ -1591,7 +1591,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"${V:-$(echo (hi))}".as_ref().into(),
-                    parts: Box::new([]),
+                    parts: Vec::new(),
                     line: 0
                 },
             )
@@ -1604,7 +1604,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"${V:-`echo \\\\x`}".as_ref().into(),
-                    parts: Box::new([]),
+                    parts: Vec::new(),
                     line: 0
                 },
             )
@@ -1617,7 +1617,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"${V:-\"q\\}x\"}".as_ref().into(),
-                    parts: Box::new([]),
+                    parts: Vec::new(),
                     line: 0
                 },
             )

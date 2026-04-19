@@ -3,7 +3,7 @@ use crate::syntax::ast::Word;
 use crate::syntax::word_parts::WordPart;
 
 use super::core::{Context, ExpandError};
-use super::expand_parts::{ExpandOutput, expand_parts_into};
+use super::expand_parts::{ExpandOutput, decompose_ifs_into, expand_parts_into};
 use super::model::{
     ExpandedWord, Expansion, QuoteState, Segment, flatten_segments, push_segment,
     push_segment_slice, render_pattern_from_segments,
@@ -58,6 +58,8 @@ fn ensure_ifs_cached<C: Context>(ctx: &C, scratch: &mut ExpandScratch) {
         Some(c) => scratch.ifs_bytes.extend_from_slice(&c),
         None => scratch.ifs_bytes.extend_from_slice(b" \t\n"),
     }
+    scratch.ifs_chars.clear();
+    decompose_ifs_into(&scratch.ifs_bytes, &mut scratch.ifs_chars);
     scratch.ifs_valid = true;
 }
 
@@ -67,10 +69,13 @@ fn expand_word_with_scratch<C: Context>(
     scratch: &mut ExpandScratch,
     argv: &mut Vec<Vec<u8>>,
 ) -> Result<(), ExpandError> {
-    let ExpandScratch {
-        ifs_bytes, output, ..
-    } = scratch;
-    expand_word_into(ctx, word, ifs_bytes, output, argv)
+    // Move `scratch.output` out so `scratch` can be threaded alongside
+    // the main output buffer without aliasing. The taken value is
+    // placed back before returning (even on error).
+    let mut output = std::mem::take(&mut scratch.output);
+    let result = expand_word_into(ctx, word, &mut output, scratch, argv);
+    scratch.output = output;
+    result
 }
 
 pub(crate) fn expand_word_as_declaration_assignment<C: Context>(
@@ -81,8 +86,8 @@ pub(crate) fn expand_word_as_declaration_assignment<C: Context>(
     let value_raw = word_assignment_value(&word.raw).unwrap_or(&word.raw);
     let name = &word.raw[..word.raw.len() - value_raw.len()];
     let value_word = Word {
-        raw: value_raw.into(),
-        parts: Box::new([]),
+        raw: value_raw.to_vec(),
+        parts: Vec::new(),
         line: word.line,
     };
     let expanded_value = expand_word_text_assignment(ctx, &value_word, true)?;
@@ -121,8 +126,8 @@ pub(super) fn word_assignment_value(raw: &[u8]) -> Option<&[u8]> {
 fn expand_word_into<C: Context>(
     ctx: &mut C,
     word: &Word,
-    ifs: &[u8],
-    scratch: &mut ExpandOutput,
+    output: &mut ExpandOutput,
+    scratch: &mut ExpandScratch,
     argv: &mut Vec<Vec<u8>>,
 ) -> Result<(), ExpandError> {
     ctx.set_lineno(word.line);
@@ -160,9 +165,9 @@ fn expand_word_into<C: Context>(
         return Ok(());
     }
 
-    scratch.clear();
-    super::expand_parts::expand_parts_into(ctx, &word.raw, &word.parts, ifs, false, scratch)?;
-    scratch.finish_into(ctx, argv)
+    output.clear();
+    super::expand_parts::expand_parts_into(ctx, &word.raw, &word.parts, false, output, scratch)?;
+    output.finish_into(ctx, argv)
 }
 
 pub(crate) fn expand_redirect_word<C: Context>(
@@ -174,14 +179,22 @@ pub(crate) fn expand_redirect_word<C: Context>(
     if !word.parts.is_empty() {
         return with_scratch(ctx, |ctx, scratch| {
             ensure_ifs_cached(ctx, scratch);
-            let ExpandScratch {
-                ifs_bytes, output, ..
-            } = scratch;
+            let mut output = std::mem::take(&mut scratch.output);
             output.clear();
-            expand_parts_into(ctx, &word.raw, &word.parts, ifs_bytes, false, output)?;
-            let mut argv: Vec<Vec<u8>> = Vec::new();
-            output.finish_into_no_glob(&mut argv)?;
-            Ok(bstr::join_bstrings(&argv, b" "))
+            let result =
+                expand_parts_into(ctx, &word.raw, &word.parts, false, &mut output, scratch);
+            let joined = match &result {
+                Ok(()) => {
+                    let mut argv: Vec<Vec<u8>> = Vec::new();
+                    output
+                        .finish_into_no_glob(&mut argv)
+                        .map(|()| bstr::join_bstrings(&argv, b" "))
+                }
+                Err(_) => Ok(Vec::new()),
+            };
+            scratch.output = output;
+            result?;
+            joined
         });
     }
 
@@ -197,10 +210,15 @@ pub(crate) fn expand_word_text<C: Context>(
 
     if !word.parts.is_empty() {
         return with_scratch(ctx, |ctx, scratch| {
-            let output = &mut scratch.output;
+            let mut output = std::mem::take(&mut scratch.output);
             output.clear();
-            expand_parts_into(ctx, &word.raw, &word.parts, b"", true, output)?;
-            Ok(output.drain_single_vec())
+            let result = expand_parts_into(ctx, &word.raw, &word.parts, true, &mut output, scratch);
+            let value = match &result {
+                Ok(()) => output.drain_single_vec(),
+                Err(_) => Vec::new(),
+            };
+            scratch.output = output;
+            result.map(|()| value)
         });
     }
 
@@ -224,10 +242,15 @@ pub(crate) fn expand_assignment_value<C: Context>(
 
     if !word.parts.is_empty() {
         return with_scratch(ctx, |ctx, scratch| {
-            let output = &mut scratch.output;
+            let mut output = std::mem::take(&mut scratch.output);
             output.clear();
-            expand_parts_into(ctx, &word.raw, &word.parts, b"", true, output)?;
-            Ok(output.drain_single_vec())
+            let result = expand_parts_into(ctx, &word.raw, &word.parts, true, &mut output, scratch);
+            let value = match &result {
+                Ok(()) => output.drain_single_vec(),
+                Err(_) => Vec::new(),
+            };
+            scratch.output = output;
+            result.map(|()| value)
         });
     }
     expand_word_text_assignment(ctx, word, true)
@@ -770,7 +793,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"`echo \\$USER`".as_ref().into(),
-                    parts: Box::new([]),
+                    parts: Vec::new(),
                     line: 0
                 },
             )
@@ -782,7 +805,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"\"`echo \\$USER`\"".as_ref().into(),
-                    parts: Box::new([]),
+                    parts: Vec::new(),
                     line: 0
                 },
             )
@@ -835,7 +858,7 @@ mod tests {
             &mut ctx,
             &Word {
                 raw: b"~/bin:~testuser/lib".as_ref().into(),
-                parts: Box::new([]),
+                parts: Vec::new(),
                 line: 0,
             },
         )
@@ -873,7 +896,7 @@ mod tests {
             &mut ctx,
             &Word {
                 raw: b"~/a:'literal:colon'".as_ref().into(),
-                parts: Box::new([]),
+                parts: Vec::new(),
                 line: 0,
             },
         )
@@ -888,7 +911,7 @@ mod tests {
                 &mut ctx,
                 &Word {
                     raw: b"$UNSET_VAR".as_ref().into(),
-                    parts: Box::new([]),
+                    parts: Vec::new(),
                     line: 0,
                 },
             )
@@ -1006,7 +1029,7 @@ mod tests {
             &mut ctx,
             &Word {
                 raw: b"~".as_ref().into(),
-                parts: Box::new([]),
+                parts: Vec::new(),
                 line: 0,
             },
         )
@@ -1021,7 +1044,7 @@ mod tests {
             &mut ctx,
             &Word {
                 raw: b"$F".as_ref().into(),
-                parts: Box::new([]),
+                parts: Vec::new(),
                 line: 0,
             },
         )
@@ -1036,7 +1059,7 @@ mod tests {
             &mut ctx,
             &Word {
                 raw: b"hello$Y".as_ref().into(),
-                parts: Box::new([]),
+                parts: Vec::new(),
                 line: 0,
             },
         )
@@ -1108,11 +1131,11 @@ mod tests {
         assert_no_syscalls(|| {
             let mut ctx = FakeContext::new();
             let word = Word {
-                raw: b"\"\"".as_ref().into(),
-                parts: Box::new([WordPart::QuotedLiteral {
-                    bytes: Box::from(&b""[..]),
+                raw: b"\"\"".to_vec(),
+                parts: vec![WordPart::QuotedLiteral {
+                    bytes: Vec::new(),
                     newlines: 0,
-                }]),
+                }],
                 line: 0,
             };
             let result = expand_redirect_word(&mut ctx, &word).expect("redirect empty quoted");
@@ -1290,18 +1313,18 @@ mod tests {
         assert_no_syscalls(|| {
             let mut ctx = FakeContext::new();
             let empty = Word {
-                raw: Box::from(&b""[..]),
-                parts: Box::<[WordPart]>::from(Vec::new()),
+                raw: Vec::new(),
+                parts: Vec::new(),
                 line: 7,
             };
             let populated = Word {
-                raw: Box::from(&b"keep"[..]),
-                parts: Box::from([WordPart::Literal {
+                raw: b"keep".to_vec(),
+                parts: vec![WordPart::Literal {
                     start: 0,
                     end: 4,
                     has_glob: false,
                     newlines: 0,
-                }]),
+                }],
                 line: 7,
             };
             let mut argv: Vec<Vec<u8>> = Vec::new();

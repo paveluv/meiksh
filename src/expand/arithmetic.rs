@@ -10,16 +10,28 @@ pub(super) fn expand_arithmetic_expression<C: Context>(
     ctx: &mut C,
     expression: &[u8],
 ) -> Result<Vec<u8>, ExpandError> {
-    let mut result = Vec::new();
+    let mut out = Vec::new();
+    expand_arithmetic_expression_into(ctx, expression, &mut out)?;
+    Ok(out)
+}
+
+/// Append the pre-expanded form of an arithmetic `expression` (with `$…`,
+/// `` `…` ``, and line-continuation handling performed) into `out`.
+/// Caller clears `out` first if a fresh buffer is desired.
+pub(super) fn expand_arithmetic_expression_into<C: Context>(
+    ctx: &mut C,
+    expression: &[u8],
+    out: &mut Vec<u8>,
+) -> Result<(), ExpandError> {
     let mut i = 0;
     while i < expression.len() {
         if expression[i] == b'$' {
             let (expansion, consumed) = expand_dollar(ctx, &expression[i..], true)?;
             match expansion {
-                Expansion::One(s) => result.extend_from_slice(&s),
-                Expansion::Static(s) => result.extend_from_slice(s),
+                Expansion::One(s) => out.extend_from_slice(&s),
+                Expansion::Static(s) => out.extend_from_slice(s),
                 Expansion::AtFields(fields) => {
-                    result.extend_from_slice(&bstr::join_bstrings(&fields, b" "));
+                    out.extend_from_slice(&bstr::join_bstrings(&fields, b" "));
                 }
             }
             i += consumed;
@@ -27,17 +39,17 @@ pub(super) fn expand_arithmetic_expression<C: Context>(
             i += 1;
             let command = scan_backtick_command(expression, &mut i, true)?;
             let output = ctx.command_substitute_raw(&command)?;
-            result.extend_from_slice(trim_trailing_newlines(&output));
+            out.extend_from_slice(trim_trailing_newlines(&output));
         } else if expression[i] == b'\n' {
             ctx.inc_lineno();
-            result.push(b'\n');
+            out.push(b'\n');
             i += 1;
         } else {
-            result.push(expression[i]);
+            out.push(expression[i]);
             i += 1;
         }
     }
-    Ok(result)
+    Ok(())
 }
 
 pub(super) fn eval_arithmetic<C: Context>(

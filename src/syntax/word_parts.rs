@@ -11,7 +11,7 @@ pub(crate) enum WordPart {
         newlines: u16,
     },
     QuotedLiteral {
-        bytes: Box<[u8]>,
+        bytes: Vec<u8>,
         newlines: u16,
     },
     TildeLiteral {
@@ -41,13 +41,13 @@ pub(crate) enum ExpansionKind {
     Braced {
         name: BracedName,
         op: BracedOp,
-        parts: Box<[WordPart]>,
+        parts: Vec<WordPart>,
     },
     Command {
         program: Rc<Program>,
     },
     Arithmetic {
-        parts: Box<[WordPart]>,
+        parts: Vec<WordPart>,
     },
     ArithmeticLiteral {
         start: usize,
