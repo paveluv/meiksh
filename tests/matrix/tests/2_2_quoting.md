@@ -219,6 +219,24 @@ begin test "adjacent quoting forms concatenate into single word"
 end test "adjacent quoting forms concatenate into single word"
 ```
 
+#### Test: adjacent dollar-single-quote concatenates with other forms
+
+The dollar-single-quote form is just another quoting mechanism and participates
+in the same concatenation rule. Placing `$'...'` next to a single-quoted and a
+bare word without whitespace yields a single token.
+
+```
+begin test "adjacent dollar-single-quote concatenates with other forms"
+  script
+    set -- 'foo'$'\x2d'bar
+    printf '%s\n%s\n' "$#" "$1"
+  expect
+    stdout "1\nfoo-bar"
+    stderr ""
+    exit_code 0
+end test "adjacent dollar-single-quote concatenates with other forms"
+```
+
 #### Test: quoting prevents reserved word recognition
 
 Quoting can prevent a reserved word from being recognized as such. Here the
@@ -403,6 +421,23 @@ begin test "line continuation: backslash-newline removed before tokenizing"
 end test "line continuation: backslash-newline removed before tokenizing"
 ```
 
+#### Test: backslash before ordinary character yields character literally
+
+An unquoted backslash preserves the literal value of the following character.
+When the following character is not otherwise special, the backslash is simply
+removed and the character is retained. Here `\a\b\c` becomes `abc`.
+
+```
+begin test "backslash before ordinary character yields character literally"
+  script
+    printf '%s\n' \a\b\c
+  expect
+    stdout "abc"
+    stderr ""
+    exit_code 0
+end test "backslash before ordinary character yields character literally"
+```
+
 ## 2.2.2 Single-Quotes
 
 Enclosing characters in single-quotes (`''`) shall preserve the literal value of each character within the single-quotes. A single-quote cannot occur within single-quotes.
@@ -458,6 +493,23 @@ begin test "single quotes preserve literal newline"
     stderr ""
     exit_code 0
 end test "single quotes preserve literal newline"
+```
+
+#### Test: single quotes preserve literal backslash
+
+Inside single-quotes, backslash has no special meaning and is preserved
+literally along with any characters that would otherwise be an escape outside
+quotes. The string `'a\nb'` therefore has four characters: `a`, `\`, `n`, `b`.
+
+```
+begin test "single quotes preserve literal backslash"
+  script
+    printf '%s\n' 'a\nb'
+  expect
+    stdout "a\\nb"
+    stderr ""
+    exit_code 0
+end test "single quotes preserve literal backslash"
 ```
 
 #### Test: single-quote cannot occur within single-quotes
@@ -547,6 +599,24 @@ begin test "inner double quotes inside command substitution"
     stderr ""
     exit_code 0
 end test "inner double quotes inside command substitution"
+```
+
+#### Test: inner single quotes inside command substitution
+
+The characters inside `"$(...)"` are not affected by the outer double-quotes.
+A single-quoted string inside `$(...)` therefore begins its own quoting
+context even though the `'` would be an ordinary character in a plain
+double-quoted string.
+
+```
+begin test "inner single quotes inside command substitution"
+  script
+    printf '%s\n' "$(printf '%s' 'inner-sq')"
+  expect
+    stdout "inner-sq"
+    stderr ""
+    exit_code 0
+end test "inner single quotes inside command substitution"
 ```
 
 #### Test: recursive tokenizing finds matching paren
@@ -647,6 +717,24 @@ begin test "backslash escapes special characters in double quotes"
     stderr ""
     exit_code 0
 end test "backslash escapes special characters in double quotes"
+```
+
+#### Test: backslash before dollar in double quotes prevents parameter expansion
+
+Inside double-quotes, a backslash before `$` escapes the dollar sign so it does
+not introduce parameter expansion. The variable `HOME` is set but `"\$HOME"`
+still expands to the literal four-character string `$HOME`.
+
+```
+begin test "backslash before dollar in double quotes prevents parameter expansion"
+  script
+    HOME=/should/not/appear
+    printf '%s\n' "\$HOME"
+  expect
+    stdout "\$HOME"
+    stderr ""
+    exit_code 0
+end test "backslash before dollar in double quotes prevents parameter expansion"
 ```
 
 #### Test: backslash-newline inside double quotes is continuation
@@ -752,6 +840,43 @@ begin test "quoted $@ preserves positional parameter boundaries"
 end test "quoted $@ preserves positional parameter boundaries"
 ```
 
+#### Test: parameter expansion active inside substring pattern in double quotes
+
+For the four substring-processing parameter expansion forms, the enclosing
+double-quotes have no effect on the handling of special characters inside the
+braces, so a `$`-introduced parameter expansion in the pattern word is still
+performed. With `v='abc'` and `p='a'`, `"${v#$p}"` expands to `bc`.
+
+```
+begin test "parameter expansion active inside substring pattern in double quotes"
+  script
+    v='abc'
+    p='a'
+    printf '%s\n' "${v#$p}"
+  expect
+    stdout "bc"
+    stderr ""
+    exit_code 0
+end test "parameter expansion active inside substring pattern in double quotes"
+```
+
+#### Test: double quotes preserve conditionally-special characters literally
+
+Inside double-quotes, the conditionally-special characters `~ = % { } , ^ - !`
+are all preserved literally. Glob/path characters are already covered by a
+separate test; this covers the remaining set.
+
+```
+begin test "double quotes preserve conditionally-special characters literally"
+  script
+    printf '%s\n' "~" "=" "%" "{" "}" "," "^" "-" "!"
+  expect
+    stdout "~\n=\n%\n\{\n\}\n,\n\^\n-\n!"
+    stderr ""
+    exit_code 0
+end test "double quotes preserve conditionally-special characters literally"
+```
+
 #### Test: all four substring processing forms active in double quotes
 
 For the four substring-processing parameter expansion forms (`#`, `##`, `%`,
@@ -803,6 +928,25 @@ begin test "command substitution remains active inside quoted ${...:-word}"
     stderr ""
     exit_code 0
 end test "command substitution remains active inside quoted ${...:-word}"
+```
+
+#### Test: backquote substitution active inside quoted ${...:-word}
+
+The standard says the backquote and dollar-sign follow the same rules inside a
+non-substring `${...}` inside double-quotes as they would anywhere else inside
+double-quotes. A backquote command substitution in the default word therefore
+executes and its output replaces the backquoted region.
+
+```
+begin test "backquote substitution active inside quoted ${...:-word}"
+  script
+    unset foo
+    printf '%s\n' "${foo:-`printf '%s' BT`}"
+  expect
+    stdout "BT"
+    stderr ""
+    exit_code 0
+end test "backquote substitution active inside quoted ${...:-word}"
 ```
 
 #### Test: escaped right brace does not terminate quoted ${...}
@@ -1095,4 +1239,20 @@ begin test "dollar-single-quote escapes are processed before word expansion"
     stderr ""
     exit_code 0
 end test "dollar-single-quote escapes are processed before word expansion"
+```
+
+#### Test: unterminated dollar-single-quote causes shell syntax error
+
+An unmatched `$'...` sequence is not valid shell syntax. The shell should
+reject the script with a diagnostic instead of executing it.
+
+```
+begin test "unterminated dollar-single-quote causes shell syntax error"
+  script
+    printf '%s\n' $'unterminated
+  expect
+    stdout ""
+    stderr "(.|\n)+"
+    exit_code !=0
+end test "unterminated dollar-single-quote causes shell syntax error"
 ```
