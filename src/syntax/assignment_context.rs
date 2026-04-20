@@ -1,9 +1,9 @@
 //! AST-build-time assignment-expansion logic.
 //!
 //! At parse time, `SimpleCommand` construction routes each argv word
-//! through this module when the command name is lexically a declaration
-//! utility (`export`, `readonly`, `local`, `declare`, `typeset`) or a
-//! `command`-prefixed form thereof. `apply_assignment_context_to_argv_word`
+//! through this module when the command name is lexically a POSIX
+//! declaration utility (`export`, `readonly`) or a `command`-prefixed
+//! form thereof. `apply_assignment_context_to_argv_word`
 //! rewrites the word's parts in place to:
 //!
 //! 1. Mark the `NAME=` prefix's `Literal` with `assignment: true`, so the
@@ -21,7 +21,11 @@ use super::byte_class::{is_glob_char, is_name_cont, is_name_start};
 use super::token;
 use super::word_parts::WordPart;
 
-const DECLARATION_UTILITIES: &[&[u8]] = &[b"export", b"readonly", b"local", b"declare", b"typeset"];
+/// POSIX special built-ins that take assignment-word arguments. Kept in
+/// sync with `exec::simple::is_declaration_utility`. Non-POSIX shells
+/// commonly extend this list with `local`, `declare`, and `typeset`;
+/// add them here only if/when the exec side implements them.
+const DECLARATION_UTILITIES: &[&[u8]] = &[b"export", b"readonly"];
 
 pub(super) fn is_declaration_utility(name_word: &Word) -> bool {
     let Some(bytes) = literal_only_bytes(name_word) else {
@@ -180,14 +184,15 @@ mod tests {
     #[test]
     fn is_declaration_utility_matches_canonical_set() {
         assert_no_syscalls(|| {
-            for name in [
-                &b"export"[..],
-                b"readonly",
-                b"local",
-                b"declare",
-                b"typeset",
-            ] {
+            for name in [&b"export"[..], b"readonly"] {
                 assert!(is_declaration_utility(&word(name)));
+            }
+            // Non-POSIX extensions (`local`, `declare`, `typeset`) are
+            // intentionally excluded — we don't implement them on the
+            // exec side yet, so marking their argv as assignments would
+            // desync the two sides.
+            for name in [&b"local"[..], b"declare", b"typeset"] {
+                assert!(!is_declaration_utility(&word(name)));
             }
             assert!(!is_declaration_utility(&word(b"exportx")));
             assert!(!is_declaration_utility(&word(b"Export")));
