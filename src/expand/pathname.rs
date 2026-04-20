@@ -168,7 +168,6 @@ mod tests {
     use crate::expand::core::Context;
     use crate::expand::test_support::{DefaultPathContext, FakeContext};
     use crate::expand::word::{expand_redirect_word, expand_word_text};
-    use crate::syntax::ast::Word;
     use crate::sys::test_support::assert_no_syscalls;
 
     #[test]
@@ -176,27 +175,11 @@ mod tests {
         let mut ctx = FakeContext::new();
         ctx.env.insert(b"WORDS".to_vec(), b"one two".to_vec());
         assert_eq!(
-            expand_word_text(
-                &mut ctx,
-                &Word {
-                    raw: b"$WORDS".as_ref().into(),
-                    parts: Vec::new(),
-                    line: 0
-                },
-            )
-            .expect("expand"),
+            expand_word_text(&mut ctx, &parsed_first_argv_word(b"echo $WORDS\n")).expect("expand"),
             b"one two"
         );
         assert_eq!(
-            expand_word_text(
-                &mut ctx,
-                &Word {
-                    raw: b"*".as_ref().into(),
-                    parts: Vec::new(),
-                    line: 0
-                }
-            )
-            .expect("expand"),
+            expand_word_text(&mut ctx, &parsed_first_argv_word(b"echo '*'\n")).expect("expand"),
             b"*"
         );
     }
@@ -259,16 +242,20 @@ mod tests {
     fn redirect_word_no_pathname_expansion() {
         assert_no_syscalls(|| {
             let mut ctx = FakeContext::new();
-            let result = expand_redirect_word(
-                &mut ctx,
-                &Word {
-                    raw: b"file_*.txt".as_ref().into(),
-                    parts: Vec::new(),
-                    line: 0,
-                },
-            )
-            .expect("redirect word");
+            let result =
+                expand_redirect_word(&mut ctx, &parsed_first_argv_word(b"echo file_*.txt\n"))
+                    .expect("redirect word");
             assert_eq!(result, b"file_*.txt");
         });
+    }
+
+    fn parsed_first_argv_word(source: &[u8]) -> crate::syntax::ast::Word {
+        let prog = crate::syntax::parse(source).expect("parse");
+        let item = &prog.items[0];
+        let cmd = &item.and_or.first.commands[0];
+        match cmd {
+            crate::syntax::ast::Command::Simple(sc) => sc.words[1].clone(),
+            _ => panic!("expected simple command"),
+        }
     }
 }

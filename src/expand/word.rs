@@ -3,14 +3,12 @@ use crate::syntax::ast::Word;
 use crate::syntax::word_parts::WordPart;
 
 use super::core::{Context, ExpandError};
-use super::expand_parts::{ExpandOutput, decompose_ifs_into, expand_parts_into};
-use super::model::{
-    ExpandedWord, Expansion, QuoteState, Segment, flatten_segments, push_segment,
-    push_segment_slice, render_pattern_from_segments,
+use super::expand_parts::{
+    ExpandOutput, decompose_ifs_into, expand_parts_into, expand_parts_into_mode,
 };
-use super::parameter::{expand_dollar, expand_parameter_dollar};
+use super::model::render_pattern_from_segments;
+use super::parameter::expand_parameter_dollar;
 use super::scratch::ExpandScratch;
-use crate::syntax::byte_class::{is_name_cont, is_name_start};
 
 pub(crate) fn expand_words_into<C: Context>(
     ctx: &mut C,
@@ -78,49 +76,70 @@ fn expand_word_with_scratch<C: Context>(
     result
 }
 
+/// Expand an argv word that the parser marked as a declaration-utility
+/// assignment (i.e. `parts[0]` is a `Literal { assignment: true, .. }`
+/// carrying the `NAME=` prefix, followed by the value parts).
+///
+/// The parser has already placed `TildeLiteral` parts at all
+/// assignment-context tilde positions (word-start after `=` and after
+/// each unquoted `:`), so the expander is a pure structural walk.
 pub(crate) fn expand_word_as_declaration_assignment<C: Context>(
     ctx: &mut C,
     word: &Word,
 ) -> Result<Vec<u8>, ExpandError> {
     ctx.set_lineno(word.line);
-    let value_raw = word_assignment_value(&word.raw).unwrap_or(&word.raw);
-    let name = &word.raw[..word.raw.len() - value_raw.len()];
-    let value_word = Word {
-        raw: value_raw.to_vec(),
-        parts: Vec::new(),
-        line: word.line,
+    let Some(WordPart::Literal {
+        start,
+        end,
+        assignment: true,
+        ..
+    }) = word.parts.first()
+    else {
+        // Parser invariant: `word_is_assignment` gated this call, so the
+        // first part is always a `Literal` with `assignment: true`. Fall
+        // back to ordinary word expansion for defensive safety.
+        return expand_word_text(ctx, word);
     };
-    let expanded_value = expand_word_text_assignment(ctx, &value_word, true)?;
-    let mut combined = Vec::with_capacity(name.len() + expanded_value.len());
-    combined.extend_from_slice(name);
-    combined.extend_from_slice(&expanded_value);
-    Ok(combined)
+    let name_bytes = &word.raw[*start..*end];
+    let value_parts = &word.parts[1..];
+    with_scratch(ctx, |ctx, scratch| {
+        let mut output = std::mem::take(&mut scratch.output);
+        output.clear();
+        let result = expand_parts_into_mode(
+            ctx,
+            &word.raw,
+            value_parts,
+            true,
+            true,
+            &mut output,
+            scratch,
+        );
+        let value = match &result {
+            Ok(()) => output.drain_single_vec(),
+            Err(_) => Vec::new(),
+        };
+        scratch.output = output;
+        result.map(|()| {
+            let mut combined = Vec::with_capacity(name_bytes.len() + value.len());
+            combined.extend_from_slice(name_bytes);
+            combined.extend_from_slice(&value);
+            combined
+        })
+    })
 }
 
-pub(crate) fn word_is_assignment(raw: &[u8]) -> bool {
-    word_assignment_value(raw).is_some()
-}
-
-pub(super) fn word_assignment_value(raw: &[u8]) -> Option<&[u8]> {
-    if raw.is_empty() {
-        return None;
-    }
-    let first = raw[0];
-    if !is_name_start(first) {
-        return None;
-    }
-    let mut i = 1;
-    while i < raw.len() {
-        let b = raw[i];
-        if b == b'=' {
-            return Some(&raw[i + 1..]);
-        }
-        if !is_name_cont(b) {
-            return None;
-        }
-        i += 1;
-    }
-    None
+/// True iff `word`'s first part is a `Literal` carrying the parser-set
+/// `assignment: true` flag. The parser decides at AST-build time whether
+/// a given argv word belongs to a declaration-utility call; this check
+/// is a pure flag read.
+pub(crate) fn word_is_assignment(word: &Word) -> bool {
+    matches!(
+        word.parts.first(),
+        Some(WordPart::Literal {
+            assignment: true,
+            ..
+        })
+    )
 }
 
 fn expand_word_into<C: Context>(
@@ -155,6 +174,7 @@ fn expand_word_into<C: Context>(
             end,
             has_glob: false,
             newlines: 0,
+            ..
         },
     ] = &word.parts[..]
         && *end == word.raw.len()
@@ -175,31 +195,24 @@ pub(crate) fn expand_redirect_word<C: Context>(
     word: &Word,
 ) -> Result<Vec<u8>, ExpandError> {
     ctx.set_lineno(word.line);
-
-    if !word.parts.is_empty() {
-        return with_scratch(ctx, |ctx, scratch| {
-            ensure_ifs_cached(ctx, scratch);
-            let mut output = std::mem::take(&mut scratch.output);
-            output.clear();
-            let result =
-                expand_parts_into(ctx, &word.raw, &word.parts, false, &mut output, scratch);
-            let joined = match &result {
-                Ok(()) => {
-                    let mut argv: Vec<Vec<u8>> = Vec::new();
-                    output
-                        .finish_into_no_glob(&mut argv)
-                        .map(|()| bstr::join_bstrings(&argv, b" "))
-                }
-                Err(_) => Ok(Vec::new()),
-            };
-            scratch.output = output;
-            result?;
-            joined
-        });
-    }
-
-    let expanded = expand_raw(ctx, &word.raw)?;
-    Ok(flatten_segments(&expanded.segments))
+    with_scratch(ctx, |ctx, scratch| {
+        ensure_ifs_cached(ctx, scratch);
+        let mut output = std::mem::take(&mut scratch.output);
+        output.clear();
+        let result = expand_parts_into(ctx, &word.raw, &word.parts, false, &mut output, scratch);
+        let joined = match &result {
+            Ok(()) => {
+                let mut argv: Vec<Vec<u8>> = Vec::new();
+                output
+                    .finish_into_no_glob(&mut argv)
+                    .map(|()| bstr::join_bstrings(&argv, b" "))
+            }
+            Err(_) => Ok(Vec::new()),
+        };
+        scratch.output = output;
+        result?;
+        joined
+    })
 }
 
 pub(crate) fn expand_word_text<C: Context>(
@@ -207,22 +220,25 @@ pub(crate) fn expand_word_text<C: Context>(
     word: &Word,
 ) -> Result<Vec<u8>, ExpandError> {
     ctx.set_lineno(word.line);
-
-    if !word.parts.is_empty() {
-        return with_scratch(ctx, |ctx, scratch| {
-            let mut output = std::mem::take(&mut scratch.output);
-            output.clear();
-            let result = expand_parts_into(ctx, &word.raw, &word.parts, true, &mut output, scratch);
-            let value = match &result {
-                Ok(()) => output.drain_single_vec(),
-                Err(_) => Vec::new(),
-            };
-            scratch.output = output;
-            result.map(|()| value)
-        });
-    }
-
-    expand_word_text_assignment(ctx, word, false)
+    with_scratch(ctx, |ctx, scratch| {
+        let mut output = std::mem::take(&mut scratch.output);
+        output.clear();
+        let result = expand_parts_into_mode(
+            ctx,
+            &word.raw,
+            &word.parts,
+            true,
+            true,
+            &mut output,
+            scratch,
+        );
+        let value = match &result {
+            Ok(()) => output.drain_single_vec(),
+            Err(_) => Vec::new(),
+        };
+        scratch.output = output;
+        result.map(|()| value)
+    })
 }
 
 pub(crate) fn expand_word_pattern<C: Context>(
@@ -230,8 +246,23 @@ pub(crate) fn expand_word_pattern<C: Context>(
     word: &Word,
 ) -> Result<Vec<u8>, ExpandError> {
     ctx.set_lineno(word.line);
-    let expanded = expand_raw(ctx, &word.raw)?;
-    Ok(render_pattern_from_segments(&expanded.segments))
+    with_scratch(ctx, |ctx, scratch| {
+        let mut segments = std::mem::take(&mut scratch.pattern_segments);
+        segments.clear();
+        let result = super::expand_parts::build_pattern_segments(
+            ctx,
+            &word.raw,
+            &word.parts,
+            &mut segments,
+            scratch,
+        );
+        let pattern = match &result {
+            Ok(()) => render_pattern_from_segments(&segments),
+            Err(_) => Vec::new(),
+        };
+        scratch.pattern_segments = segments;
+        result.map(|()| pattern)
+    })
 }
 
 pub(crate) fn expand_assignment_value<C: Context>(
@@ -239,122 +270,25 @@ pub(crate) fn expand_assignment_value<C: Context>(
     word: &Word,
 ) -> Result<Vec<u8>, ExpandError> {
     ctx.set_lineno(word.line);
-
-    if !word.parts.is_empty() {
-        return with_scratch(ctx, |ctx, scratch| {
-            let mut output = std::mem::take(&mut scratch.output);
-            output.clear();
-            let result = expand_parts_into(ctx, &word.raw, &word.parts, true, &mut output, scratch);
-            let value = match &result {
-                Ok(()) => output.drain_single_vec(),
-                Err(_) => Vec::new(),
-            };
-            scratch.output = output;
-            result.map(|()| value)
-        });
-    }
-    expand_word_text_assignment(ctx, word, true)
-}
-
-pub(super) fn expand_word_text_assignment<C: Context>(
-    ctx: &mut C,
-    word: &Word,
-    assignment_rhs: bool,
-) -> Result<Vec<u8>, ExpandError> {
-    if !assignment_rhs {
-        let expanded = expand_raw(ctx, &word.raw)?;
-        return Ok(flatten_segments(&expanded.segments));
-    }
-    let raw = &word.raw;
-    let mut result = Vec::new();
-    let mut first = true;
-    for part in split_on_unquoted_colons(raw) {
-        if !first {
-            result.push(b':');
-        }
-        first = false;
-        let expanded = expand_raw(ctx, &part)?;
-        result.extend_from_slice(&flatten_segments(&expanded.segments));
-    }
-    Ok(result)
-}
-
-pub(super) fn split_on_unquoted_colons(raw: &[u8]) -> Vec<Vec<u8>> {
-    let mut parts = Vec::new();
-    let mut current = Vec::new();
-    let mut i = 0;
-    let mut brace_depth = 0usize;
-    let mut paren_depth = 0usize;
-    while i < raw.len() {
-        match raw[i] {
-            b'\'' if brace_depth == 0 && paren_depth == 0 => {
-                current.push(b'\'');
-                i += 1;
-                while i < raw.len() && raw[i] != b'\'' {
-                    current.push(raw[i]);
-                    i += 1;
-                }
-                if i < raw.len() {
-                    current.push(b'\'');
-                    i += 1;
-                }
-            }
-            b'"' if brace_depth == 0 && paren_depth == 0 => {
-                current.push(b'"');
-                i += 1;
-                while i < raw.len() && raw[i] != b'"' {
-                    if raw[i] == b'\\' && i + 1 < raw.len() {
-                        current.push(b'\\');
-                        i += 1;
-                    }
-                    current.push(raw[i]);
-                    i += 1;
-                }
-                if i < raw.len() {
-                    current.push(b'"');
-                    i += 1;
-                }
-            }
-            b'\\' => {
-                current.push(b'\\');
-                i += 1;
-                if i < raw.len() {
-                    current.push(raw[i]);
-                    i += 1;
-                }
-            }
-            b'$' if i + 1 < raw.len() && raw[i + 1] == b'{' => {
-                current.extend_from_slice(b"${");
-                brace_depth += 1;
-                i += 2;
-            }
-            b'}' if brace_depth > 0 => {
-                brace_depth -= 1;
-                current.push(b'}');
-                i += 1;
-            }
-            b'$' if i + 1 < raw.len() && raw[i + 1] == b'(' => {
-                current.extend_from_slice(b"$(");
-                paren_depth += 1;
-                i += 2;
-            }
-            b')' if paren_depth > 0 => {
-                paren_depth -= 1;
-                current.push(b')');
-                i += 1;
-            }
-            b':' if brace_depth == 0 && paren_depth == 0 => {
-                parts.push(std::mem::take(&mut current));
-                i += 1;
-            }
-            _ => {
-                current.push(raw[i]);
-                i += 1;
-            }
-        }
-    }
-    parts.push(current);
-    parts
+    with_scratch(ctx, |ctx, scratch| {
+        let mut output = std::mem::take(&mut scratch.output);
+        output.clear();
+        let result = expand_parts_into_mode(
+            ctx,
+            &word.raw,
+            &word.parts,
+            true,
+            true,
+            &mut output,
+            scratch,
+        );
+        let value = match &result {
+            Ok(()) => output.drain_single_vec(),
+            Err(_) => Vec::new(),
+        };
+        scratch.output = output;
+        result.map(|()| value)
+    })
 }
 
 pub(crate) fn expand_parameter_text<C: Context>(
@@ -385,226 +319,6 @@ pub(super) fn expand_parameter_text_owned<C: Context>(
     Ok(result)
 }
 
-pub(super) fn flatten_expansion(expansion: Expansion) -> Vec<u8> {
-    match expansion {
-        Expansion::One(s) => s,
-        Expansion::Static(s) => s.to_vec(),
-        Expansion::AtFields(fields) => bstr::join_bstrings(&fields, b" "),
-    }
-}
-
-pub(super) fn apply_expansion(
-    segments: &mut Vec<Segment>,
-    expansion: Expansion,
-    quoted: bool,
-    has_at: &mut bool,
-) {
-    let state = if quoted {
-        QuoteState::Quoted
-    } else {
-        QuoteState::Expanded
-    };
-    match expansion {
-        Expansion::One(s) => push_segment(segments, s, state),
-        Expansion::Static(s) => push_segment_slice(segments, s, state),
-        Expansion::AtFields(params) => {
-            *has_at = true;
-            if params.is_empty() {
-                segments.push(Segment::AtEmpty);
-            } else {
-                for (i, param) in params.into_iter().enumerate() {
-                    if i > 0 {
-                        segments.push(Segment::AtBreak);
-                    }
-                    push_segment(segments, param, QuoteState::Quoted);
-                }
-            }
-        }
-    }
-}
-
-pub(super) fn expand_raw<C: Context>(ctx: &mut C, raw: &[u8]) -> Result<ExpandedWord, ExpandError> {
-    let mut index = 0usize;
-    let mut segments = Vec::new();
-    let mut has_at_expansion = false;
-
-    while index < raw.len() {
-        match raw[index] {
-            b'\'' => {
-                index += 1;
-                let start = index;
-                while index < raw.len() && raw[index] != b'\'' {
-                    if raw[index] == b'\n' {
-                        ctx.inc_lineno();
-                    }
-                    index += 1;
-                }
-                if index >= raw.len() {
-                    return Err(ExpandError {
-                        message: b"unterminated single quote".as_ref().into(),
-                    });
-                }
-                push_segment_slice(&mut segments, &raw[start..index], QuoteState::Quoted);
-                index += 1;
-            }
-            b'"' => {
-                index += 1;
-                let mut buffer = Vec::new();
-                while index < raw.len() && raw[index] != b'"' {
-                    match raw[index] {
-                        b'\\' => {
-                            if index + 1 < raw.len() {
-                                let next = raw[index + 1];
-                                if matches!(next, b'$' | b'`' | b'"' | b'\\' | b'\n' | b'}') {
-                                    index += 1;
-                                    if next == b'\n' {
-                                        ctx.inc_lineno();
-                                    } else {
-                                        buffer.push(next);
-                                    }
-                                    index += 1;
-                                } else {
-                                    buffer.push(b'\\');
-                                    index += 1;
-                                }
-                            } else {
-                                buffer.push(b'\\');
-                                index += 1;
-                            }
-                        }
-                        b'$' => {
-                            if !buffer.is_empty() {
-                                push_segment(
-                                    &mut segments,
-                                    std::mem::take(&mut buffer),
-                                    QuoteState::Quoted,
-                                );
-                            }
-                            let (expansion, consumed) = expand_dollar(ctx, &raw[index..], true)?;
-                            apply_expansion(&mut segments, expansion, true, &mut has_at_expansion);
-                            index += consumed;
-                        }
-                        b'`' => {
-                            if !buffer.is_empty() {
-                                push_segment(
-                                    &mut segments,
-                                    std::mem::take(&mut buffer),
-                                    QuoteState::Quoted,
-                                );
-                            }
-                            index += 1;
-                            let command = scan_backtick_command(raw, &mut index, true)?;
-                            let output = ctx.command_substitute_raw(&command)?;
-                            let trimmed = trim_trailing_newlines(&output);
-                            push_segment_slice(&mut segments, trimmed, QuoteState::Quoted);
-                        }
-                        b'\n' => {
-                            ctx.inc_lineno();
-                            buffer.push(b'\n');
-                            index += 1;
-                        }
-                        _ => {
-                            buffer.push(raw[index]);
-                            index += 1;
-                        }
-                    }
-                }
-                if index >= raw.len() {
-                    return Err(ExpandError {
-                        message: b"unterminated double quote".as_ref().into(),
-                    });
-                }
-                if !buffer.is_empty() {
-                    push_segment(&mut segments, buffer, QuoteState::Quoted);
-                }
-                index += 1;
-            }
-            b'\\' => {
-                index += 1;
-                if index < raw.len() {
-                    if raw[index] == b'\n' {
-                        ctx.inc_lineno();
-                    }
-                    push_segment_slice(&mut segments, &raw[index..index + 1], QuoteState::Quoted);
-                    index += 1;
-                }
-            }
-            b'$' => {
-                let dollar_single_quotes = raw.get(index + 1) == Some(&b'\'');
-                let (expansion, consumed) = expand_dollar(ctx, &raw[index..], false)?;
-                apply_expansion(
-                    &mut segments,
-                    expansion,
-                    dollar_single_quotes,
-                    &mut has_at_expansion,
-                );
-                index += consumed;
-            }
-            b'`' => {
-                index += 1;
-                let command = scan_backtick_command(raw, &mut index, false)?;
-                let output = ctx.command_substitute_raw(&command)?;
-                let trimmed = trim_trailing_newlines(&output);
-                push_segment_slice(&mut segments, trimmed, QuoteState::Expanded);
-            }
-            b'~' if index == 0 => {
-                index += 1;
-                let at_start = index;
-                while index < raw.len() && raw[index] != b'/' {
-                    let b = raw[index];
-                    if b == b'\'' || b == b'"' || b == b'\\' || b == b'$' || b == b'`' {
-                        break;
-                    }
-                    index += 1;
-                }
-                let user = &raw[at_start..index];
-                let broke_on_non_login =
-                    index == at_start && index < raw.len() && raw[index] != b'/';
-                let slash_follows = index < raw.len() && raw[index] == b'/';
-                if broke_on_non_login {
-                    push_segment_slice(&mut segments, b"~", QuoteState::Literal);
-                } else if user.is_empty() {
-                    match ctx.env_var(b"HOME") {
-                        Some(home) if !home.is_empty() => {
-                            let mut h = home.into_owned();
-                            if slash_follows && h.ends_with(b"/") {
-                                h.pop();
-                            }
-                            push_segment(&mut segments, h, QuoteState::Quoted);
-                        }
-                        Some(_) => {
-                            segments.push(Segment::Text(Vec::new(), QuoteState::Quoted));
-                        }
-                        None => {
-                            push_segment_slice(&mut segments, b"~", QuoteState::Literal);
-                        }
-                    }
-                } else if let Some(dir) = ctx.home_dir_for_user(user) {
-                    let mut d = dir.into_owned();
-                    if slash_follows && d.ends_with(b"/") {
-                        d.pop();
-                    }
-                    push_segment(&mut segments, d, QuoteState::Quoted);
-                } else {
-                    push_segment_slice(&mut segments, b"~", QuoteState::Literal);
-                    push_segment_slice(&mut segments, user, QuoteState::Literal);
-                }
-            }
-            b'\n' => {
-                ctx.inc_lineno();
-                push_segment_slice(&mut segments, b"\n", QuoteState::Literal);
-                index += 1;
-            }
-            _ => {
-                push_segment_slice(&mut segments, &raw[index..index + 1], QuoteState::Literal);
-                index += 1;
-            }
-        }
-    }
-
-    Ok(ExpandedWord { segments })
-}
-
 pub(super) fn trim_trailing_newlines(s: &[u8]) -> &[u8] {
     let mut end = s.len();
     while end > 0 && s[end - 1] == b'\n' {
@@ -613,158 +327,35 @@ pub(super) fn trim_trailing_newlines(s: &[u8]) -> &[u8] {
     &s[..end]
 }
 
-pub(super) fn scan_backtick_command(
-    source: &[u8],
-    index: &mut usize,
-    in_double_quotes: bool,
-) -> Result<Vec<u8>, ExpandError> {
-    let mut command = Vec::new();
-    while *index < source.len() {
-        let ch = source[*index];
-        if ch == b'`' {
-            *index += 1;
-            return Ok(command);
-        }
-        if ch == b'\\' && *index + 1 < source.len() {
-            let next = source[*index + 1];
-            let special = if in_double_quotes {
-                matches!(next, b'$' | b'`' | b'\\' | b'"' | b'\n')
-            } else {
-                matches!(next, b'$' | b'`' | b'\\')
-            };
-            if special {
-                command.push(next);
-                *index += 2;
-                continue;
-            }
-        }
-        command.push(ch);
-        *index += 1;
-    }
-    Err(ExpandError {
-        message: b"unterminated backquote".as_ref().into(),
-    })
-}
-
 pub(crate) fn expand_here_document<C: Context>(
     ctx: &mut C,
-    text: &[u8],
+    raw: &[u8],
+    parts: &[WordPart],
     body_line: usize,
 ) -> Result<Vec<u8>, ExpandError> {
     ctx.set_lineno(body_line);
-    let mut result = Vec::new();
-    let mut index = 0usize;
-
-    while index < text.len() {
-        match text[index] {
-            b'\\' => {
-                index += 1;
-                if index >= text.len() {
-                    result.push(b'\\');
-                    break;
-                }
-                match text[index] {
-                    b'$' | b'\\' => {
-                        result.push(text[index]);
-                        index += 1;
-                    }
-                    b'\n' => {
-                        ctx.inc_lineno();
-                        index += 1;
-                    }
-                    _ => {
-                        result.push(b'\\');
-                        result.push(text[index]);
-                        index += 1;
-                    }
-                }
-            }
-            b'\n' => {
-                ctx.inc_lineno();
-                result.push(b'\n');
-                index += 1;
-            }
-            b'$' => {
-                let (expansion, consumed) = expand_dollar(ctx, &text[index..], false)?;
-                result.extend_from_slice(&flatten_expansion(expansion));
-                index += consumed;
-            }
-            b'`' => {
-                index += 1;
-                let command = scan_backtick_command(text, &mut index, true)?;
-                let output = ctx.command_substitute_raw(&command)?;
-                result.extend_from_slice(trim_trailing_newlines(&output));
-            }
-            _ => {
-                result.push(text[index]);
-                index += 1;
-            }
-        }
-    }
-
-    Ok(result)
+    with_scratch(ctx, |ctx, scratch| {
+        let mut output = std::mem::take(&mut scratch.output);
+        output.clear();
+        let result = expand_parts_into_mode(ctx, raw, parts, true, true, &mut output, scratch);
+        let value = match &result {
+            Ok(()) => output.drain_single_vec(),
+            Err(_) => Vec::new(),
+        };
+        scratch.output = output;
+        result.map(|()| value)
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::expand::arithmetic::{
-        ArithmeticParser, eval_arithmetic, expand_arithmetic_expression,
-    };
+    use crate::expand::arithmetic::eval_arithmetic;
     use crate::expand::core::Context;
-    use crate::expand::glob::pattern_matches;
-    use crate::expand::model::{QuoteState, Segment, flatten_segments, push_segment};
     use crate::expand::parameter::lookup_param;
     use crate::expand::test_support::FakeContext;
     use crate::syntax::ast::Word;
     use crate::sys::test_support::assert_no_syscalls;
-    #[test]
-    fn helper_paths_cover_remaining_branches() {
-        let ctx = FakeContext::new();
-        assert_eq!(lookup_param(&ctx, b"?").as_deref(), Some(b"0".as_ref()));
-        assert_eq!(
-            lookup_param(&ctx, b"0").as_deref(),
-            Some(b"meiksh".as_ref())
-        );
-        assert_eq!(
-            lookup_param(&ctx, b"X").as_deref(),
-            Some(b"fallback".as_ref())
-        );
-        assert_eq!(lookup_param(&ctx, b"99"), None);
-        assert_eq!(
-            ctx.positional_params(),
-            &[b"alpha".to_vec(), b"beta".to_vec()][..]
-        );
-        assert_eq!(ctx.positional_param(0).as_deref(), Some(b"meiksh".as_ref()));
-
-        let mut segs = Vec::new();
-        push_segment(&mut segs, b"a".to_vec(), QuoteState::Expanded);
-        push_segment(&mut segs, Vec::new(), QuoteState::Expanded);
-        push_segment(&mut segs, b"b".to_vec(), QuoteState::Expanded);
-        push_segment(&mut segs, b"c".to_vec(), QuoteState::Quoted);
-        assert_eq!(
-            segs,
-            vec![
-                Segment::Text(b"ab".to_vec(), QuoteState::Expanded),
-                Segment::Text(b"c".to_vec(), QuoteState::Quoted)
-            ]
-        );
-
-        assert_eq!(flatten_segments(&segs), b"abc".to_vec());
-        assert!(pattern_matches(b"beta", b"b*"));
-        assert!(!pattern_matches(b"beta", b"a*"));
-        let mut ctx2 = FakeContext::new();
-        assert_eq!(eval_arithmetic(&mut ctx2, b"42").expect("direct eval"), 42);
-        assert!(eval_arithmetic(&mut ctx2, b"(1 + 2").is_err());
-
-        let arith_bt =
-            expand_arithmetic_expression(&mut ctx2, b"`printf 5`").expect("backtick in arith");
-        assert_eq!(arith_bt, b"printf 5");
-
-        let mut parser = ArithmeticParser::new(&mut ctx2, b"9");
-        parser.index = 99;
-        assert!(parser.is_eof());
-    }
 
     #[test]
     fn arithmetic_parser_covers_more_operators() {
@@ -785,155 +376,51 @@ mod tests {
             .expect_err("overflow");
         assert_eq!(&*error.message, b"invalid arithmetic operand".as_ref());
     }
+
     #[test]
-    fn backtick_backslash_escapes() {
-        let mut ctx = FakeContext::new();
+    fn lookup_param_covers_name_and_positional() {
+        let ctx = FakeContext::new();
+        assert_eq!(lookup_param(&ctx, b"?").as_deref(), Some(b"0".as_ref()));
         assert_eq!(
-            expand_word_text(
-                &mut ctx,
-                &Word {
-                    raw: b"`echo \\$USER`".as_ref().into(),
-                    parts: Vec::new(),
-                    line: 0
-                },
-            )
-            .expect("escaped dollar"),
-            b"echo $USER"
+            lookup_param(&ctx, b"0").as_deref(),
+            Some(b"meiksh".as_ref())
         );
         assert_eq!(
-            expand_word_text(
-                &mut ctx,
-                &Word {
-                    raw: b"\"`echo \\$USER`\"".as_ref().into(),
-                    parts: Vec::new(),
-                    line: 0
-                },
-            )
-            .expect("escaped dollar dq"),
-            b"echo $USER"
+            lookup_param(&ctx, b"X").as_deref(),
+            Some(b"fallback".as_ref())
         );
+        assert_eq!(lookup_param(&ctx, b"99"), None);
     }
 
     #[test]
     fn here_document_expands_at_sign() {
         let mut ctx = FakeContext::new();
         ctx.positional = vec![b"x".to_vec(), b"y".to_vec()];
-        let result = expand_here_document(&mut ctx, b"$@\n", 0).expect("heredoc at");
+        let body = b"$@\n";
+        let parts = crate::syntax::build_heredoc_parts(body);
+        let result = expand_here_document(&mut ctx, body, &parts, 0).expect("heredoc at");
         assert_eq!(result, b"x y\n");
     }
-    #[test]
-    fn scan_backtick_command_unterminated() {
-        let mut index = 1usize;
-        let err =
-            scan_backtick_command(b"`unterminated", &mut index, false).expect_err("unterminated");
-        assert_eq!(&*err.message, b"unterminated backquote".as_ref());
-    }
-
-    #[test]
-    fn scan_backtick_command_escape_outside_dq() {
-        let mut index = 1usize;
-        let result = scan_backtick_command(b"`echo \\\\ok`", &mut index, false).expect("bt escape");
-        assert_eq!(result, b"echo \\ok");
-    }
-
     #[test]
     fn here_document_with_at_expansion() {
         let mut ctx = FakeContext::new();
         ctx.positional = vec![b"a".to_vec(), b"b".to_vec()];
-        let result = expand_here_document(&mut ctx, b"args: $@\n", 0).expect("heredoc @");
+        let body = b"args: $@\n";
+        let parts = crate::syntax::build_heredoc_parts(body);
+        let result = expand_here_document(&mut ctx, body, &parts, 0).expect("heredoc @");
         assert_eq!(result, b"args: a b\n");
-    }
-
-    #[test]
-    fn scan_backtick_non_special_escape_in_dquote() {
-        let mut index = 1usize;
-        let result =
-            scan_backtick_command(b"`echo \\x`", &mut index, true).expect("non-special escape");
-        assert_eq!(result, b"echo \\x");
-    }
-    #[test]
-    fn tilde_after_colon_in_assignment() {
-        let mut ctx = FakeContext::new();
-        let result = expand_assignment_value(
-            &mut ctx,
-            &Word {
-                raw: b"~/bin:~testuser/lib".as_ref().into(),
-                parts: Vec::new(),
-                line: 0,
-            },
-        )
-        .expect("tilde colon");
-        assert_eq!(result, b"/tmp/home/bin:/home/testuser/lib");
-    }
-
-    #[test]
-    fn split_colons_handles_quotes_and_backslash() {
-        let parts = split_on_unquoted_colons(b"'b:c':d");
-        assert_eq!(parts, vec![b"'b:c'".to_vec(), b"d".to_vec()]);
-
-        let parts = split_on_unquoted_colons(b"\"b:c\":d");
-        assert_eq!(parts, vec![b"\"b:c\"".to_vec(), b"d".to_vec()]);
-
-        let parts = split_on_unquoted_colons(b"a\\:b:c");
-        assert_eq!(parts, vec![b"a\\:b".to_vec(), b"c".to_vec()]);
-
-        let parts = split_on_unquoted_colons(b"\"a\\\"b\":c");
-        assert_eq!(parts, vec![b"\"a\\\"b\"".to_vec(), b"c".to_vec()]);
-
-        let parts = split_on_unquoted_colons(b"${x:-a:b}:c");
-        assert_eq!(parts, vec![b"${x:-a:b}".to_vec(), b"c".to_vec()]);
-
-        let parts = split_on_unquoted_colons(b"$(echo a:b):c");
-        assert_eq!(parts, vec![b"$(echo a:b)".to_vec(), b"c".to_vec()]);
-
-        let parts = split_on_unquoted_colons(b"${a:-${b:-x:y}}:z");
-        assert_eq!(parts, vec![b"${a:-${b:-x:y}}".to_vec(), b"z".to_vec()]);
-    }
-    #[test]
-    fn tilde_colon_assignment_with_quotes() {
-        let mut ctx = FakeContext::new();
-        let result = expand_assignment_value(
-            &mut ctx,
-            &Word {
-                raw: b"~/a:'literal:colon'".as_ref().into(),
-                parts: Vec::new(),
-                line: 0,
-            },
-        )
-        .expect("colon assign with quotes");
-        assert_eq!(result, b"/tmp/home/a:literal:colon");
-    }
-    #[test]
-    fn redirect_word_empty_expansion() {
-        assert_no_syscalls(|| {
-            let mut ctx = FakeContext::new();
-            let result = expand_redirect_word(
-                &mut ctx,
-                &Word {
-                    raw: b"$UNSET_VAR".as_ref().into(),
-                    parts: Vec::new(),
-                    line: 0,
-                },
-            )
-            .expect("redirect word empty");
-            assert_eq!(result, b"");
-        });
     }
 
     #[test]
     fn here_doc_backtick_substitution() {
         assert_no_syscalls(|| {
             let mut ctx = FakeContext::new();
+            let body = b"`echo ok`\n";
+            let parts = crate::syntax::build_heredoc_parts(body);
             let result =
-                expand_here_document(&mut ctx, b"`echo ok`\n", 0).expect("here doc backtick");
+                expand_here_document(&mut ctx, body, &parts, 0).expect("here doc backtick");
             assert_eq!(result, b"echo ok\n");
         });
-    }
-
-    #[test]
-    fn word_is_assignment_rejects_empty_and_non_identifier_prefix() {
-        assert!(!word_is_assignment(b""));
-        assert!(!word_is_assignment(b"a-b=c"));
     }
 
     #[test]
@@ -978,11 +465,16 @@ mod tests {
 
     #[test]
     fn expand_assignment_value_via_parts_with_at() {
+        // In an assignment value context, `$@` is a single-field
+        // expansion: POSIX specifies that its elements are joined with
+        // the first character of IFS (space by default), matching `$*`.
+        // This covers the `single_field` branch of `expand_special_var`
+        // for `ch == b'@'`.
         let mut ctx = FakeContext::new();
         ctx.positional = vec![b"a".to_vec(), b"b".to_vec()];
         let word = parts_word(b"echo $@\n");
         let result = expand_assignment_value(&mut ctx, &word).expect("assign at");
-        assert_eq!(result, b"ab");
+        assert_eq!(result, b"a b");
     }
 
     #[test]
@@ -1021,57 +513,6 @@ mod tests {
         let result = expand_redirect_word(&mut ctx, &word).expect("redir static");
         assert_eq!(result, b"0");
     }
-    #[test]
-    fn tilde_home_empty_raw_path() {
-        let mut ctx = FakeContext::new();
-        ctx.env.insert(b"HOME".to_vec(), b"".to_vec());
-        let result = expand_word_text(
-            &mut ctx,
-            &Word {
-                raw: b"~".as_ref().into(),
-                parts: Vec::new(),
-                line: 0,
-            },
-        )
-        .expect("tilde empty home");
-        assert_eq!(result, b"");
-    }
-    #[test]
-    fn redirect_word_with_expansion_raw_path() {
-        let mut ctx = FakeContext::new();
-        ctx.env.insert(b"F".to_vec(), b"a b".to_vec());
-        let result = expand_redirect_word(
-            &mut ctx,
-            &Word {
-                raw: b"$F".as_ref().into(),
-                parts: Vec::new(),
-                line: 0,
-            },
-        )
-        .expect("redirect fields");
-        assert_eq!(result, b"a b");
-    }
-    #[test]
-    fn expand_assignment_value_raw_path() {
-        let mut ctx = FakeContext::new();
-        ctx.env.insert(b"Y".to_vec(), b"world".to_vec());
-        let result = expand_assignment_value(
-            &mut ctx,
-            &Word {
-                raw: b"hello$Y".as_ref().into(),
-                parts: Vec::new(),
-                line: 0,
-            },
-        )
-        .expect("assign raw");
-        assert_eq!(result, b"helloworld");
-    }
-    #[test]
-    fn flatten_expansion_static_variant() {
-        let result = flatten_expansion(Expansion::Static(b"test"));
-        assert_eq!(result, b"test");
-    }
-
     #[test]
     fn expand_redirect_word_via_parts_multiple_fields() {
         let mut ctx = FakeContext::new();
@@ -1144,165 +585,6 @@ mod tests {
     }
 
     #[test]
-    fn expand_raw_double_quote_escape_variants() {
-        // Inside a double-quoted segment, expand_raw must:
-        //   - collapse `\\<newline>`,
-        //   - keep `\\z` (non-special) verbatim,
-        //   - flush the buffer before `$` and `` ` ``,
-        //   - preserve literal newlines.
-        let mut ctx = FakeContext::new();
-        ctx.env.insert(b"X".to_vec(), b"val".to_vec());
-
-        let cases: &[(&[u8], &[u8])] = &[
-            (b"\"pre\\\nsuf\"", b"presuf"),
-            (b"\"a\\zb\"", b"a\\zb"),
-            (b"\"pre$X-suf\"", b"preval-suf"),
-            (b"\"pre`cmd`suf\"", b"precmdsuf"),
-            (b"\"a\nb\"", b"a\nb"),
-        ];
-        for (input, expected) in cases {
-            let expanded = expand_raw(&mut ctx, input).expect("expand raw double-quote");
-            assert_eq!(
-                flatten_segments(&expanded.segments),
-                *expected,
-                "input={:?}",
-                input,
-            );
-        }
-
-        assert!(expand_raw(&mut ctx, b"\"unterminated").is_err());
-        assert!(expand_raw(&mut ctx, b"'unterminated").is_err());
-    }
-
-    #[test]
-    fn expand_raw_top_level_backslash_and_newline_branches() {
-        // Top-level `\\<newline>` increments lineno (preserved); lone trailing
-        // backslash at EOF is simply dropped; an unquoted literal newline is
-        // kept as a literal segment.
-        let mut ctx = FakeContext::new();
-
-        let with_bs_nl = expand_raw(&mut ctx, b"a\\\nb").expect("backslash newline");
-        assert_eq!(flatten_segments(&with_bs_nl.segments), b"a\nb");
-
-        let trailing_bs = expand_raw(&mut ctx, b"abc\\").expect("trailing backslash");
-        assert_eq!(flatten_segments(&trailing_bs.segments), b"abc");
-
-        let literal_nl = expand_raw(&mut ctx, b"a\nb").expect("literal newline");
-        assert_eq!(flatten_segments(&literal_nl.segments), b"a\nb");
-    }
-
-    #[test]
-    fn expand_raw_tilde_expansion_branches() {
-        // Exercises every branch of expand_raw's `~` handler:
-        //   - `~` alone with HOME set (no trailing slash trim needed),
-        //   - `~/...` with HOME ending in '/' (slash trimmed),
-        //   - `~` with HOME unset → literal,
-        //   - `~` with HOME set to "" → empty quoted segment,
-        //   - `~user` (known) — and with trailing slash trim,
-        //   - `~unknown` → literal `~` + user name,
-        //   - `~'` (tilde followed by break char without slash) → literal `~`.
-        let mut ctx = FakeContext::new();
-
-        ctx.env.insert(b"HOME".to_vec(), b"/h/user".to_vec());
-        let plain = expand_raw(&mut ctx, b"~").expect("plain tilde");
-        assert_eq!(flatten_segments(&plain.segments), b"/h/user");
-
-        ctx.env.insert(b"HOME".to_vec(), b"/h/".to_vec());
-        let trim = expand_raw(&mut ctx, b"~/foo").expect("tilde slash");
-        assert_eq!(flatten_segments(&trim.segments), b"/h/foo");
-
-        ctx.env.remove(b"HOME".as_ref());
-        let unset = expand_raw(&mut ctx, b"~").expect("tilde no home");
-        assert_eq!(flatten_segments(&unset.segments), b"~");
-
-        ctx.env.insert(b"HOME".to_vec(), Vec::new());
-        let empty = expand_raw(&mut ctx, b"~").expect("tilde empty home");
-        assert_eq!(flatten_segments(&empty.segments), b"");
-
-        ctx.env.insert(b"HOME".to_vec(), b"/h".to_vec());
-        let user = expand_raw(&mut ctx, b"~testuser").expect("tilde user");
-        assert_eq!(flatten_segments(&user.segments), b"/home/testuser");
-        let user_slash = expand_raw(&mut ctx, b"~slashuser/x").expect("tilde user slash");
-        // `slashuser` resolves to `/home/slashuser/`; the trailing `/` is
-        // trimmed when a `/` follows in the word.
-        assert_eq!(flatten_segments(&user_slash.segments), b"/home/slashuser/x");
-
-        let unknown = expand_raw(&mut ctx, b"~nobodyhere").expect("tilde unknown user");
-        assert_eq!(flatten_segments(&unknown.segments), b"~nobodyhere");
-
-        let broken = expand_raw(&mut ctx, b"~'abc'").expect("tilde break on quote");
-        assert_eq!(flatten_segments(&broken.segments), b"~abc");
-    }
-
-    #[test]
-    fn expand_raw_bare_dollar_yields_static_dollar() {
-        // `$` with no follow byte (or followed by something that is not a
-        // valid parameter start) must survive `expand_raw` as a literal `$`
-        // via `Expansion::Static(b"$")` routed through `apply_expansion`'s
-        // `Static` arm (word.rs apply_expansion).  The segment must be
-        // produced with `QuoteState::Expanded` (unquoted context), which
-        // `push_segment_slice` records without copying.
-        assert_no_syscalls(|| {
-            let mut ctx = FakeContext::new();
-
-            let bare = expand_raw(&mut ctx, b"$").expect("bare dollar");
-            assert_eq!(flatten_segments(&bare.segments), b"$");
-            assert_eq!(
-                bare.segments.as_slice(),
-                &[Segment::Text(b"$".to_vec(), QuoteState::Expanded)]
-            );
-
-            let trailing = expand_raw(&mut ctx, b"$ ").expect("dollar then space");
-            assert_eq!(flatten_segments(&trailing.segments), b"$ ");
-
-            let quoted_bare = expand_raw(&mut ctx, b"\"$\"").expect("bare dollar quoted");
-            assert_eq!(flatten_segments(&quoted_bare.segments), b"$");
-            assert_eq!(
-                quoted_bare.segments.as_slice(),
-                &[Segment::Text(b"$".to_vec(), QuoteState::Quoted)]
-            );
-        });
-    }
-
-    #[test]
-    fn expand_raw_single_quote_preserves_embedded_newlines() {
-        // A literal newline inside `'...'` is part of the quoted text.  The
-        // inner loop of `expand_raw`'s `'` branch is the only code path that
-        // pushes `\n` through the single-quote state, so this exercises it.
-        // The newline-handling branch also calls `ctx.inc_lineno()` — the
-        // lineno stays observable-externally-zero through `FakeContext`
-        // because we deliberately do not expose line tracking there, so we
-        // only assert on the byte result.
-        assert_no_syscalls(|| {
-            let mut ctx = FakeContext::new();
-            let expanded = expand_raw(&mut ctx, b"'line1\nline2\nline3'").expect("multiline sq");
-            assert_eq!(flatten_segments(&expanded.segments), b"line1\nline2\nline3",);
-            assert_eq!(
-                expanded.segments.as_slice(),
-                &[Segment::Text(
-                    b"line1\nline2\nline3".to_vec(),
-                    QuoteState::Quoted,
-                )],
-            );
-        });
-    }
-
-    #[test]
-    fn expand_raw_double_quote_trailing_backslash_at_eof_errors() {
-        // Raw buffer ending in `"...\\` (no closing quote) exercises the
-        // double-quote backslash branch where `index + 1 >= raw.len()`:
-        // the byte is appended to the internal buffer, `index` advances
-        // past the end of the buffer, and the enclosing loop exits into
-        // the unterminated-quote diagnostic.  We assert on the resulting
-        // error message to distinguish this from other failure modes.
-        assert_no_syscalls(|| {
-            let mut ctx = FakeContext::new();
-            let err = expand_raw(&mut ctx, b"\"ab\\").expect_err("no closing quote");
-            assert_eq!(&*err.message, b"unterminated double quote");
-        });
-    }
-
-    #[test]
     fn expand_words_into_skips_truly_empty_word() {
         // `expand_word_into`'s `word.parts.is_empty() && word.raw.is_empty()`
         // early-return must not push anything (the caller relies on this for
@@ -1324,6 +606,7 @@ mod tests {
                     end: 4,
                     has_glob: false,
                     newlines: 0,
+                    assignment: false,
                 }],
                 line: 7,
             };

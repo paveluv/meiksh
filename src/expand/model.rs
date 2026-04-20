@@ -8,76 +8,19 @@ pub(crate) enum QuoteState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Segment {
     Text(Vec<u8>, QuoteState),
-    AtBreak,
-    AtEmpty,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub(super) enum Expansion {
-    One(Vec<u8>),
-    Static(&'static [u8]),
-    AtFields(Vec<Vec<u8>>),
-}
-
-#[derive(Debug)]
-pub(super) struct ExpandedWord {
-    pub(super) segments: Vec<Segment>,
-}
-
-pub(super) fn push_segment(segments: &mut Vec<Segment>, text: Vec<u8>, state: QuoteState) {
-    if text.is_empty() {
-        return;
-    }
-    if let Some(Segment::Text(last, last_state)) = segments.last_mut() {
-        if *last_state == state {
-            last.extend_from_slice(&text);
-            return;
-        }
-    }
-    segments.push(Segment::Text(text, state));
-}
-
-pub(super) fn push_segment_slice(segments: &mut Vec<Segment>, text: &[u8], state: QuoteState) {
-    if text.is_empty() {
-        return;
-    }
-    if let Some(Segment::Text(last, last_state)) = segments.last_mut() {
-        if *last_state == state {
-            last.extend_from_slice(text);
-            return;
-        }
-    }
-    segments.push(Segment::Text(text.to_vec(), state));
-}
-
-pub(super) fn flatten_segments(segments: &[Segment]) -> Vec<u8> {
-    let mut total = 0usize;
-    for seg in segments {
-        if let Segment::Text(part, _) = seg {
-            total += part.len();
-        }
-    }
-    let mut result = Vec::with_capacity(total);
-    for seg in segments {
-        if let Segment::Text(part, _) = seg {
-            result.extend_from_slice(part);
-        }
-    }
-    result
 }
 
 pub(super) fn render_pattern_from_segments(segments: &[Segment]) -> Vec<u8> {
     let mut pattern = Vec::new();
     for seg in segments {
-        if let Segment::Text(text, state) = seg {
-            if *state == QuoteState::Quoted {
-                for &b in text.iter() {
-                    pattern.push(b'\\');
-                    pattern.push(b);
-                }
-            } else {
-                pattern.extend_from_slice(text);
+        let Segment::Text(text, state) = seg;
+        if *state == QuoteState::Quoted {
+            for &b in text.iter() {
+                pattern.push(b'\\');
+                pattern.push(b);
             }
+        } else {
+            pattern.extend_from_slice(text);
         }
     }
     pattern
@@ -89,8 +32,7 @@ mod tests {
     use crate::expand::glob::{match_bracket, pattern_matches};
     use crate::expand::pathname::{expand_path_segments, expand_pathname};
     use crate::expand::test_support::FakeContext;
-    use crate::expand::word::{expand_here_document, expand_redirect_word, flatten_expansion};
-    use crate::syntax::ast::Word;
+    use crate::expand::word::{expand_here_document, expand_redirect_word};
     use crate::sys::test_support::{assert_no_syscalls, run_trace};
     use crate::trace_entries;
     #[test]
@@ -181,7 +123,6 @@ mod tests {
                 assert_eq!(
                     render_pattern_from_segments(&[
                         Segment::Text(b"x".to_vec(), QuoteState::Literal),
-                        Segment::AtBreak,
                         Segment::Text(b"y".to_vec(), QuoteState::Expanded),
                     ]),
                     b"xy".to_vec()
@@ -192,52 +133,52 @@ mod tests {
 
     #[test]
     fn expands_here_documents_without_field_splitting() {
+        use crate::syntax::build_heredoc_parts;
         let mut ctx = FakeContext::new();
-        let expanded =
-            expand_here_document(&mut ctx, b"hello $USER\n$(printf hi)\n$((1 + 2))\n", 0)
-                .expect("expand heredoc");
+        let body = b"hello $USER\n$(printf hi)\n$((1 + 2))\n";
+        let parts = build_heredoc_parts(body);
+        let expanded = expand_here_document(&mut ctx, body, &parts, 0).expect("expand heredoc");
         assert_eq!(expanded, b"hello meiksh\nprintf hi\n3\n");
 
-        let escaped = expand_here_document(&mut ctx, b"\\$USER\nline\\\ncontinued\n", 0)
-            .expect("expand heredoc");
+        let body = b"\\$USER\nline\\\ncontinued\n";
+        let parts = build_heredoc_parts(body);
+        let escaped = expand_here_document(&mut ctx, body, &parts, 0).expect("expand heredoc");
         assert_eq!(escaped, b"$USER\nlinecontinued\n");
 
-        let trailing = expand_here_document(&mut ctx, b"keep\\", 0).expect("expand heredoc");
+        let body = b"keep\\";
+        let parts = build_heredoc_parts(body);
+        let trailing = expand_here_document(&mut ctx, body, &parts, 0).expect("expand heredoc");
         assert_eq!(trailing, b"keep\\");
 
-        let literal = expand_here_document(&mut ctx, b"\\x", 0).expect("expand heredoc");
+        let body = b"\\x";
+        let parts = build_heredoc_parts(body);
+        let literal = expand_here_document(&mut ctx, body, &parts, 0).expect("expand heredoc");
         assert_eq!(literal, b"\\x");
 
-        let double_backslash = expand_here_document(&mut ctx, b"a\\\\b\n", 0)
+        let body = b"a\\\\b\n";
+        let parts = build_heredoc_parts(body);
+        let double_backslash = expand_here_document(&mut ctx, body, &parts, 0)
             .expect("expand heredoc double backslash");
         assert_eq!(double_backslash, b"a\\b\n");
-    }
-    #[test]
-    fn flatten_expansion_covers_at_fields() {
-        assert_eq!(
-            flatten_expansion(Expansion::One(b"hello".to_vec())),
-            b"hello"
-        );
-        assert_eq!(
-            flatten_expansion(Expansion::AtFields(vec![b"a".to_vec(), b"b".to_vec()])),
-            b"a b"
-        );
     }
     #[test]
     fn redirect_word_with_expanded_field_splitting() {
         assert_no_syscalls(|| {
             let mut ctx = FakeContext::new();
             ctx.env.insert(b"V".to_vec(), b"a b".to_vec());
-            let result = expand_redirect_word(
-                &mut ctx,
-                &Word {
-                    raw: b"$V".as_ref().into(),
-                    parts: Vec::new(),
-                    line: 0,
-                },
-            )
-            .expect("redirect word split");
+            let word = parsed_first_argv_word(b"cat $V\n");
+            let result = expand_redirect_word(&mut ctx, &word).expect("redirect word split");
             assert_eq!(result, b"a b");
         });
+    }
+
+    fn parsed_first_argv_word(source: &[u8]) -> crate::syntax::ast::Word {
+        let prog = crate::syntax::parse(source).expect("parse");
+        let item = &prog.items[0];
+        let cmd = &item.and_or.first.commands[0];
+        match cmd {
+            crate::syntax::ast::Command::Simple(sc) => sc.words[1].clone(),
+            _ => panic!("expected simple command"),
+        }
     }
 }

@@ -1,6 +1,10 @@
 use std::rc::Rc;
 
 use super::ParseError;
+use super::assignment_context::{
+    apply_assignment_context_to_argv_word, build_assignment_value_parts,
+    find_command_decl_util_boundary, is_command_utility, is_declaration_utility,
+};
 use super::token::{Parser, Token};
 use super::word_parts::WordPart;
 
@@ -148,6 +152,11 @@ pub(crate) struct CaseArm {
 pub(crate) struct HereDoc {
     pub(crate) delimiter: Vec<u8>,
     pub(crate) body: Vec<u8>,
+    /// Pre-computed `WordPart` list for `body` when `expand == true`.
+    /// Populated by the parser; consumed by the expander (Phase 7) so no
+    /// runtime byte-scanning of heredoc bodies is needed. Empty when
+    /// `expand == false` (quoted delimiter).
+    pub(crate) body_parts: Vec<crate::syntax::word_parts::WordPart>,
     pub(crate) expand: bool,
     pub(crate) strip_tabs: bool,
     pub(crate) body_line: usize,
@@ -157,6 +166,7 @@ impl PartialEq for HereDoc {
     fn eq(&self, other: &Self) -> bool {
         self.delimiter == other.delimiter
             && self.body == other.body
+            && self.body_parts == other.body_parts
             && self.expand == other.expand
             && self.strip_tabs == other.strip_tabs
     }
@@ -191,12 +201,26 @@ pub(super) fn split_assignment(input: &[u8]) -> Option<(&[u8], &[u8])> {
     Some((name, value))
 }
 
-fn build_assignment_value_parts(
-    _raw: &[u8],
-    _parts: &[WordPart],
-    _eq_plus_one: usize,
-) -> Vec<WordPart> {
-    Vec::new()
+/// Apply parser-driven assignment-context expansion to argv words of a
+/// simple command whose name is a declaration utility (or a `command`-
+/// prefixed form thereof). See [`super::assignment_context`] for
+/// rationale and behavior.
+fn apply_declaration_utility_rewrite(words: &mut [Word]) {
+    let Some(name) = words.first() else {
+        return;
+    };
+    let rewrite_from = if is_declaration_utility(name) {
+        Some(1)
+    } else if is_command_utility(name) {
+        find_command_decl_util_boundary(words)
+    } else {
+        None
+    };
+    if let Some(start) = rewrite_from {
+        for word in &mut words[start..] {
+            apply_assignment_context_to_argv_word(word);
+        }
+    }
 }
 
 impl<'a> Parser<'a> {
@@ -480,6 +504,7 @@ impl<'a> Parser<'a> {
                     end: name.len(),
                     has_glob: false,
                     newlines: 0,
+                    assignment: false,
                 }];
                 self.parse_simple_command_with_first_word(name, parts, line)
                     .map(Command::Simple)
@@ -498,8 +523,7 @@ impl<'a> Parser<'a> {
         let mut redirections = Vec::new();
 
         if let Some((name, value_raw)) = split_assignment(&first_raw) {
-            let value_parts =
-                build_assignment_value_parts(&first_raw, &first_parts, name.len() + 1);
+            let value_parts = build_assignment_value_parts(value_raw);
             assignments.push(Assignment {
                 name: name.to_vec(),
                 value: Word {
@@ -522,6 +546,8 @@ impl<'a> Parser<'a> {
             return Err(self.error(b"syntax error near unexpected token `('"));
         }
 
+        apply_declaration_utility_rewrite(&mut words);
+
         Ok(SimpleCommand {
             assignments,
             words,
@@ -539,6 +565,8 @@ impl<'a> Parser<'a> {
         }
 
         self.simple_command_scan_loop(&mut assignments, &mut words, &mut redirections)?;
+
+        apply_declaration_utility_rewrite(&mut words);
 
         Ok(SimpleCommand {
             assignments,
@@ -576,7 +604,7 @@ impl<'a> Parser<'a> {
             let (raw, parts) = self.take_word();
             if words.is_empty() {
                 if let Some((name, value_raw)) = split_assignment(&raw) {
-                    let value_parts = build_assignment_value_parts(&raw, &parts, name.len() + 1);
+                    let value_parts = build_assignment_value_parts(value_raw);
                     assignments.push(Assignment {
                         name: name.to_vec(),
                         value: Word {
@@ -626,17 +654,25 @@ impl<'a> Parser<'a> {
             body_line,
         } = tok
         {
+            let body_parts = if expand {
+                super::token::build_heredoc_parts(&body)
+            } else {
+                Vec::new()
+            };
+            let target_parts =
+                super::token::build_word_parts_for_slice(&delimiter, 0, delimiter.len(), 0, false);
             return Ok(Some(Redirection {
                 fd,
                 kind: RedirectionKind::HereDoc,
                 target: Word {
                     raw: delimiter.clone(),
-                    parts: Vec::new(),
+                    parts: target_parts,
                     line,
                 },
                 here_doc: Some(HereDoc {
                     delimiter,
                     body,
+                    body_parts,
                     expand,
                     strip_tabs,
                     body_line,
@@ -858,9 +894,23 @@ impl<'a> Parser<'a> {
                     if matches!(self.peek_token()?, Token::Word(_, _)) {
                         self.take_word()
                     } else if let Some(name) = self.peek_token()?.keyword_name() {
+                        // Keyword-as-pattern recovery mirrors the
+                        // keyword-as-command path in `parse_command`: the
+                        // reserved-word byte string is a pure literal, so a
+                        // single `Literal` spanning the full raw faithfully
+                        // represents it and keeps `parts` non-empty
+                        // (required by the expander after the empty-parts
+                        // fallback was retired).
                         let w: Vec<u8> = name.to_vec();
+                        let parts: Vec<WordPart> = vec![WordPart::Literal {
+                            start: 0,
+                            end: w.len(),
+                            has_glob: false,
+                            newlines: 0,
+                            assignment: false,
+                        }];
                         self.advance_token();
-                        (w, Vec::<WordPart>::new())
+                        (w, parts)
                     } else {
                         return Err(self.error(b"expected case pattern"));
                     };
@@ -1756,6 +1806,7 @@ mod tests {
                 here_doc: Some(HereDoc {
                     delimiter: bx(b"EOF"),
                     body: bx(b"test\n"),
+                    body_parts: Vec::new(),
                     expand: true,
                     strip_tabs: false,
                     body_line: 0,

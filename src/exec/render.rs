@@ -1017,6 +1017,7 @@ mod tests {
                 here_doc: Some(HereDoc {
                     delimiter: b"EOF".to_vec().into(),
                     body: b"content\n".to_vec().into(),
+                    body_parts: Vec::new(),
                     expand: false,
                     strip_tabs: true,
                     body_line: 0,
@@ -1037,6 +1038,7 @@ mod tests {
                 here_doc: Some(HereDoc {
                     delimiter: b"END".to_vec().into(),
                     body: b"stuff\n".to_vec().into(),
+                    body_parts: Vec::new(),
                     expand: false,
                     strip_tabs: false,
                     body_line: 0,
@@ -1054,6 +1056,7 @@ mod tests {
             let with_newline = HereDoc {
                 delimiter: b"EOF".to_vec().into(),
                 body: b"hello\n".to_vec().into(),
+                body_parts: Vec::new(),
                 expand: false,
                 strip_tabs: false,
                 body_line: 0,
@@ -1063,6 +1066,7 @@ mod tests {
             let without_newline = HereDoc {
                 delimiter: b"EOF".to_vec().into(),
                 body: b"hello".to_vec().into(),
+                body_parts: Vec::new(),
                 expand: false,
                 strip_tabs: false,
                 body_line: 0,
@@ -1092,6 +1096,7 @@ mod tests {
                         here_doc: Some(HereDoc {
                             delimiter: b"EOF1".to_vec().into(),
                             body: b"first\n".to_vec().into(),
+                            body_parts: Vec::new(),
                             expand: false,
                             strip_tabs: false,
                             body_line: 0,
@@ -1108,6 +1113,7 @@ mod tests {
                         here_doc: Some(HereDoc {
                             delimiter: b"EOF2".to_vec().into(),
                             body: b"second".to_vec().into(),
+                            body_parts: Vec::new(),
                             expand: false,
                             strip_tabs: false,
                             body_line: 0,

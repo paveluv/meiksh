@@ -244,6 +244,26 @@ pub(super) fn expand_parts_into<C: Context>(
     output: &mut ExpandOutput,
     scratch: &mut ExpandScratch,
 ) -> Result<(), ExpandError> {
+    expand_parts_into_mode(ctx, raw, parts, quoted, quoted, output, scratch)
+}
+
+/// Like [`expand_parts_into`] but allows the caller to distinguish
+/// "outer quoted" (propagated to each part's effective quote state) from
+/// "single field mode" (the result will be collapsed to a single byte
+/// vector by the caller). In single-field mode `$@` is joined with the
+/// first character of `IFS` (space by default) instead of producing
+/// separate argv fields; this matches POSIX semantics for `$@` inside
+/// assignments, brace defaults, case patterns, and other single-value
+/// contexts.
+pub(super) fn expand_parts_into_mode<C: Context>(
+    ctx: &mut C,
+    raw: &[u8],
+    parts: &[WordPart],
+    quoted: bool,
+    single_field: bool,
+    output: &mut ExpandOutput,
+    scratch: &mut ExpandScratch,
+) -> Result<(), ExpandError> {
     for part in parts {
         match part {
             WordPart::Literal {
@@ -251,6 +271,7 @@ pub(super) fn expand_parts_into<C: Context>(
                 end,
                 has_glob,
                 newlines,
+                ..
             } => {
                 let bytes = &raw[*start..*end];
                 for _ in 0..*newlines {
@@ -278,7 +299,15 @@ pub(super) fn expand_parts_into<C: Context>(
             }
             WordPart::Expansion { kind, quoted: q } => {
                 let effective_quoted = quoted || *q;
-                expand_kind(ctx, raw, kind, effective_quoted, output, scratch)?;
+                expand_kind(
+                    ctx,
+                    raw,
+                    kind,
+                    effective_quoted,
+                    single_field,
+                    output,
+                    scratch,
+                )?;
             }
         }
     }
@@ -326,6 +355,7 @@ fn expand_kind<C: Context>(
     raw: &[u8],
     kind: &ExpansionKind,
     quoted: bool,
+    single_field: bool,
     output: &mut ExpandOutput,
     scratch: &mut ExpandScratch,
 ) -> Result<(), ExpandError> {
@@ -347,10 +377,20 @@ fn expand_kind<C: Context>(
             output.push_value(name, quoted, &scratch.ifs_chars);
         }
         ExpansionKind::SpecialVar { ch } => {
-            expand_special_var(ctx, *ch, quoted, output, scratch)?;
+            expand_special_var(ctx, *ch, quoted, single_field, output, scratch)?;
         }
         ExpansionKind::Braced { name, op, parts } => {
-            expand_braced(ctx, raw, name, *op, parts, quoted, output, scratch)?;
+            expand_braced(
+                ctx,
+                raw,
+                name,
+                *op,
+                parts,
+                quoted,
+                single_field,
+                output,
+                scratch,
+            )?;
         }
         ExpansionKind::Command { program } => {
             let out = ctx.command_substitute(program)?;
@@ -382,12 +422,26 @@ fn expand_special_var<C: Context>(
     ctx: &mut C,
     ch: u8,
     quoted: bool,
+    single_field: bool,
     output: &mut ExpandOutput,
     scratch: &mut ExpandScratch,
 ) -> Result<(), ExpandError> {
     match ch {
         b'@' => {
-            if quoted {
+            if single_field {
+                // Single-field contexts (assignment values, brace defaults,
+                // case patterns, etc.) collapse `$@` to a single string by
+                // joining its elements with IFS[0]. This matches bash:
+                // `v=$@` is equivalent to `v=$*`.
+                let ifs_cow = ctx.env_var(b"IFS");
+                let sep: &[u8] = match &ifs_cow {
+                    None => b" ",
+                    Some(s) if s.is_empty() => b"",
+                    Some(s) => &s[..crate::sys::locale::first_char_len(s)],
+                };
+                let value = bstr::join_bstrings(ctx.positional_params(), sep);
+                output.push_value(&value, quoted, &scratch.ifs_chars);
+            } else if quoted {
                 output.push_at_fields(ctx.positional_params());
             } else {
                 let joined = Cow::Owned(bstr::join_bstrings(ctx.positional_params(), b" "));
@@ -447,6 +501,7 @@ fn expand_braced<C: Context>(
     op: BracedOp,
     word_parts: &[WordPart],
     quoted: bool,
+    single_field: bool,
     output: &mut ExpandOutput,
     scratch: &mut ExpandScratch,
 ) -> Result<(), ExpandError> {
@@ -484,7 +539,7 @@ fn expand_braced<C: Context>(
                 // nounset side-effect only; default word will be used
             }
             if use_word {
-                expand_braced_word(ctx, raw, word_parts, quoted, output, scratch)?;
+                expand_braced_word(ctx, raw, word_parts, quoted, single_field, output, scratch)?;
             } else {
                 let val = value.unwrap();
                 output.push_value(val.as_bytes(), quoted, &scratch.ifs_chars);
@@ -547,7 +602,7 @@ fn expand_braced<C: Context>(
                 _ => true,
             };
             if use_word {
-                expand_braced_word(ctx, raw, word_parts, quoted, output, scratch)?;
+                expand_braced_word(ctx, raw, word_parts, quoted, single_field, output, scratch)?;
             } else if quoted {
                 output.push_quoted(b"");
             }
@@ -589,10 +644,11 @@ fn expand_braced_word<C: Context>(
     raw: &[u8],
     word_parts: &[WordPart],
     quoted: bool,
+    single_field: bool,
     output: &mut ExpandOutput,
     scratch: &mut ExpandScratch,
 ) -> Result<(), ExpandError> {
-    expand_parts_into(ctx, raw, word_parts, quoted, output, scratch)
+    expand_parts_into_mode(ctx, raw, word_parts, quoted, single_field, output, scratch)
 }
 
 fn expand_braced_word_text<C: Context>(
@@ -607,7 +663,7 @@ fn expand_braced_word_text<C: Context>(
     // capacity.
     let mut temp = std::mem::take(&mut scratch.output_nested);
     temp.clear();
-    let result = expand_parts_into(ctx, raw, word_parts, true, &mut temp, scratch);
+    let result = expand_parts_into_mode(ctx, raw, word_parts, true, true, &mut temp, scratch);
     let text = match &result {
         Ok(()) => temp.drain_single_vec(),
         Err(_) => Vec::new(),
@@ -635,7 +691,7 @@ fn expand_braced_word_pattern<C: Context>(
     result.map(|()| pattern)
 }
 
-fn build_pattern_segments<C: Context>(
+pub(super) fn build_pattern_segments<C: Context>(
     ctx: &mut C,
     raw: &[u8],
     parts: &[WordPart],
@@ -654,7 +710,9 @@ fn build_pattern_segments<C: Context>(
             WordPart::Expansion { kind, quoted } => {
                 let mut temp = std::mem::take(&mut scratch.output_nested);
                 temp.clear();
-                let result = expand_kind(ctx, raw, kind, *quoted, &mut temp, scratch);
+                // Pattern segments are always produced as a single flat
+                // string per expansion, so route through `single_field=true`.
+                let result = expand_kind(ctx, raw, kind, *quoted, true, &mut temp, scratch);
                 let text = match &result {
                     Ok(()) => temp.drain_single_vec(),
                     Err(_) => Vec::new(),
@@ -668,10 +726,68 @@ fn build_pattern_segments<C: Context>(
                 };
                 segments.push(Segment::Text(text, state));
             }
-            WordPart::TildeLiteral { .. } => {}
+            WordPart::TildeLiteral {
+                tilde_pos,
+                user_end,
+                end,
+            } => {
+                let user = &raw[tilde_pos + 1..*user_end];
+                let slash_follows = *user_end < *end && raw[*user_end] == b'/';
+                expand_tilde_into_segments(ctx, user, slash_follows, segments);
+                if *user_end < *end {
+                    segments.push(Segment::Text(
+                        raw[*user_end..*end].to_vec(),
+                        QuoteState::Literal,
+                    ));
+                }
+            }
         }
     }
     Ok(())
+}
+
+/// Pattern-segment equivalent of `expand_tilde`. Mirrors the argv-side
+/// tilde logic exactly but appends to a `Segment` list instead of an
+/// `ExpandOutput`: an expanded home directory is added as `Quoted`
+/// (so its bytes are matched literally by the pattern matcher), and the
+/// unresolved fallback (`~user` with no such user) is added as
+/// `Literal`. Any `~` that collapsed to an empty home directory pushes
+/// an empty quoted segment so the surrounding pattern structure stays
+/// intact.
+fn expand_tilde_into_segments<C: Context>(
+    ctx: &mut C,
+    user: &[u8],
+    slash_follows: bool,
+    segments: &mut Vec<Segment>,
+) {
+    if user.is_empty() {
+        match ctx.env_var(b"HOME") {
+            Some(home) if !home.is_empty() => {
+                let h = if slash_follows && home.ends_with(b"/") {
+                    &home[..home.len() - 1]
+                } else {
+                    &home
+                };
+                segments.push(Segment::Text(h.to_vec(), QuoteState::Quoted));
+            }
+            Some(_) => {
+                segments.push(Segment::Text(Vec::new(), QuoteState::Quoted));
+            }
+            None => {
+                segments.push(Segment::Text(b"~".to_vec(), QuoteState::Literal));
+            }
+        }
+    } else if let Some(dir) = ctx.home_dir_for_user(user) {
+        let d = if slash_follows && dir.ends_with(b"/") {
+            &dir[..dir.len() - 1]
+        } else {
+            &dir
+        };
+        segments.push(Segment::Text(d.to_vec(), QuoteState::Quoted));
+    } else {
+        segments.push(Segment::Text(b"~".to_vec(), QuoteState::Literal));
+        segments.push(Segment::Text(user.to_vec(), QuoteState::Literal));
+    }
 }
 
 fn expand_arithmetic<C: Context>(
@@ -716,7 +832,9 @@ fn build_arithmetic_expr_text<C: Context>(
             WordPart::Expansion { kind, .. } => {
                 let mut temp = std::mem::take(&mut scratch.output_nested);
                 temp.clear();
-                let result = expand_kind(ctx, raw, kind, true, &mut temp, scratch);
+                // Arithmetic expression bytes are a single string, so
+                // route through `single_field=true`.
+                let result = expand_kind(ctx, raw, kind, true, true, &mut temp, scratch);
                 if result.is_ok() {
                     // Append the flat expansion directly into `expr_text`
                     // without materializing an intermediate `Vec<u8>`.

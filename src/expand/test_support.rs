@@ -3,7 +3,6 @@ use std::rc::Rc;
 
 use crate::bstr;
 use crate::expand::core::{Context, ExpandError};
-use crate::expand::model::Expansion;
 use crate::hash::ShellMap;
 use crate::syntax::ast::Program;
 
@@ -208,14 +207,5 @@ impl Context for DefaultPathContext {
     fn inc_lineno(&mut self) {}
     fn lineno(&self) -> usize {
         0
-    }
-}
-
-pub(super) fn expect_one(result: Result<(Expansion, usize), ExpandError>) -> (Vec<u8>, usize) {
-    let (expansion, consumed) = result.expect("expansion");
-    match expansion {
-        Expansion::One(s) => (s, consumed),
-        Expansion::Static(s) => (s.to_vec(), consumed),
-        Expansion::AtFields(_) => panic!("expected One/Static, got AtFields"),
     }
 }
