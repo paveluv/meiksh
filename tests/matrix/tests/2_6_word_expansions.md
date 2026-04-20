@@ -398,6 +398,175 @@ begin test "tilde with null HOME produces empty field not zero fields"
 end test "tilde with null HOME produces empty field not zero fields"
 ```
 
+#### Test: assignment with quoted tilde at start stays literal
+
+A tilde-prefix must begin with an **unquoted** `<tilde>`. If the leading
+`<tilde>` of an assignment value is enclosed in double-quotes, it is not a
+tilde-prefix and shall not be replaced.
+
+```
+begin test "assignment with quoted tilde at start stays literal"
+  script
+    H=$HOME
+    HOME=/tilde_quoted_start
+    p="~"/foo
+    echo "$p"
+    HOME=$H
+  expect
+    stdout "~/foo"
+    stderr ""
+    exit_code 0
+end test "assignment with quoted tilde at start stays literal"
+```
+
+#### Test: assignment with escaped tilde at start stays literal
+
+A tilde preceded by a `<backslash>` is quoted and therefore not an unquoted
+tilde-prefix; it shall remain a literal `~` after quote removal.
+
+```
+begin test "assignment with escaped tilde at start stays literal"
+  script
+    H=$HOME
+    HOME=/tilde_escape_start
+    p=\~/foo
+    echo "$p"
+    HOME=$H
+  expect
+    stdout "~/foo"
+    stderr ""
+    exit_code 0
+end test "assignment with escaped tilde at start stays literal"
+```
+
+#### Test: assignment tilde after escaped colon stays literal
+
+In an assignment value a tilde-prefix is introduced only after an **unquoted**
+`<colon>`. A colon preceded by `<backslash>` is quoted, so the following
+`<tilde>` is not a tilde-prefix and shall remain literal.
+
+```
+begin test "assignment tilde after escaped colon stays literal"
+  script
+    H=$HOME
+    HOME=/tilde_escaped_colon
+    p=a\:~
+    echo "$p"
+    HOME=$H
+  expect
+    stdout "a:~"
+    stderr ""
+    exit_code 0
+end test "assignment tilde after escaped colon stays literal"
+```
+
+#### Test: assignment tilde after quoted colon stays literal
+
+A colon inside a quoted string is not an unquoted `<colon>`, so the following
+`<tilde>` — also inside the same quoted string — is not an unquoted tilde and
+shall not be expanded.
+
+```
+begin test "assignment tilde after quoted colon stays literal"
+  script
+    H=$HOME
+    HOME=/tilde_quoted_colon
+    p="a:~"
+    echo "$p"
+    HOME=$H
+  expect
+    stdout "a:~"
+    stderr ""
+    exit_code 0
+end test "assignment tilde after quoted colon stays literal"
+```
+
+#### Test: assignment tilde in middle of value stays literal
+
+Tilde-prefix positions in an assignment value are limited to the very
+beginning of the word (after the `<equals-sign>`) and to positions following
+an unquoted `<colon>`. A `<tilde>` appearing anywhere else is not a
+tilde-prefix and shall remain literal.
+
+```
+begin test "assignment tilde in middle of value stays literal"
+  script
+    H=$HOME
+    HOME=/tilde_mid_value
+    p=a~b
+    echo "$p"
+    HOME=$H
+  expect
+    stdout "a~b"
+    stderr ""
+    exit_code 0
+end test "assignment tilde in middle of value stays literal"
+```
+
+#### Test: assignment tilde after second equals stays literal
+
+Only the first `<equals-sign>` separates the assignment name from its value.
+A `<tilde>` following a second, literal `<equals-sign>` inside the value is
+not in a tilde-prefix position and shall remain literal.
+
+```
+begin test "assignment tilde after second equals stays literal"
+  script
+    H=$HOME
+    HOME=/tilde_second_eq
+    p=foo=~
+    echo "$p"
+    HOME=$H
+  expect
+    stdout "foo=~"
+    stderr ""
+    exit_code 0
+end test "assignment tilde after second equals stays literal"
+```
+
+#### Test: assignment with three colon-separated tilde-prefixes all expand
+
+Every tilde-prefix in an assignment word — the leading one and each one after
+an unquoted `<colon>` — shall be expanded independently; the colons themselves
+remain in the result unchanged.
+
+```
+begin test "assignment with three colon-separated tilde-prefixes all expand"
+  script
+    H=$HOME
+    HOME=/triple_tilde
+    p=~/a:~/b:~/c
+    echo "$p"
+    HOME=$H
+  expect
+    stdout "/triple_tilde/a:/triple_tilde/b:/triple_tilde/c"
+    stderr ""
+    exit_code 0
+end test "assignment with three colon-separated tilde-prefixes all expand"
+```
+
+#### Test: assignment tilde with login name after colon expands
+
+After an unquoted `<colon>` in an assignment value, a tilde-prefix with a
+portable login name (here the conventional `root`) shall be replaced by the
+initial working directory associated with that login name. Both occurrences
+shall yield the same absolute pathname.
+
+```
+begin test "assignment tilde with login name after colon expands"
+  script
+    A=~root:/tmp:~root
+    first=${A%%:*}
+    third=${A##*:}
+    case "$first" in /*) ;; *) echo "first_not_absolute"; exit 1;; esac
+    [ "$first" = "$third" ] && echo ok
+  expect
+    stdout "ok"
+    stderr ""
+    exit_code 0
+end test "assignment tilde with login name after colon expands"
+```
+
 ## 2.6.2 Parameter Expansion
 
 The format for parameter expansion is as follows:
