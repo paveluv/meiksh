@@ -535,6 +535,181 @@ begin test "assignment-looking word after regular command is an argument"
 end test "assignment-looking word after regular command is an argument"
 ```
 
+#### Test: nested command prefix preserves declaration utility recognition
+
+The standard allows an implementation to recognise declaration utilities by
+lexical analysis of the command name. A `command` prefix does not change the
+name that is ultimately executed; consecutive `command` prefixes followed by a
+declaration utility shall still cause assignment-context expansion of
+`name=word` operands.
+
+```
+begin test "nested command prefix preserves declaration utility recognition"
+  script
+    H=$HOME
+    HOME=/nested_command_tilde
+    command command export NV=~
+    printf '%s\n' "$NV"
+    HOME=$H
+  expect
+    stdout "/nested_command_tilde"
+    stderr ""
+    exit_code 0
+end test "nested command prefix preserves declaration utility recognition"
+```
+
+#### Test: non-declaration utility does not expand leading tilde in assignment-shaped argument
+
+For command names that are not declaration utilities, subsequent words are
+subject only to regular expansion. A leading `<tilde>` in regular expansion
+applies only at the very beginning of a word; in an `NAME=~` argument the
+word begins with `N`, so the `<tilde>` is not a tilde-prefix and shall remain
+literal.
+
+```
+begin test "non-declaration utility does not expand leading tilde in assignment-shaped argument"
+  script
+    H=$HOME
+    HOME=/regular_cmd_tilde
+    printf '%s\n' VAR=~
+    HOME=$H
+  expect
+    stdout "VAR=~"
+    stderr ""
+    exit_code 0
+end test "non-declaration utility does not expand leading tilde in assignment-shaped argument"
+```
+
+#### Test: non-declaration utility does not expand colon-separated tildes in assignment-shaped argument
+
+Tilde expansion after an unquoted `<colon>` is specific to the assignment
+context. When the command name is not a declaration utility, the argument is
+subject only to regular expansion, so tildes following colons in an
+assignment-shaped argument shall remain literal.
+
+```
+begin test "non-declaration utility does not expand colon-separated tildes in assignment-shaped argument"
+  script
+    H=$HOME
+    HOME=/regular_cmd_colon_tilde
+    printf '%s\n' VAR=~/a:~/b
+    HOME=$H
+  expect
+    stdout "VAR=~/a:~/b"
+    stderr ""
+    exit_code 0
+end test "non-declaration utility does not expand colon-separated tildes in assignment-shaped argument"
+```
+
+#### Test: declaration utility with quoted tilde keeps tilde literal
+
+Assignment-context tilde expansion applies only to unquoted tilde-prefixes.
+When the tilde in a declaration-utility assignment value is enclosed in
+double-quotes, it shall not be treated as a tilde-prefix and shall remain
+literal after quote removal.
+
+```
+begin test "declaration utility with quoted tilde keeps tilde literal"
+  script
+    H=$HOME
+    HOME=/decl_quoted_tilde
+    command export DQ="~"
+    printf '%s\n' "$DQ"
+    HOME=$H
+  expect
+    stdout "~"
+    stderr ""
+    exit_code 0
+end test "declaration utility with quoted tilde keeps tilde literal"
+```
+
+#### Test: declaration utility with escaped tilde keeps tilde literal
+
+A `<backslash>`-escaped tilde in a declaration-utility assignment value is
+quoted and therefore not an unquoted tilde-prefix. After quote removal the
+value shall contain a literal `~`.
+
+```
+begin test "declaration utility with escaped tilde keeps tilde literal"
+  script
+    H=$HOME
+    HOME=/decl_escaped_tilde
+    command export DE=\~
+    printf '%s\n' "$DE"
+    HOME=$H
+  expect
+    stdout "~"
+    stderr ""
+    exit_code 0
+end test "declaration utility with escaped tilde keeps tilde literal"
+```
+
+#### Test: declaration utility tilde after escaped colon stays literal
+
+In an assignment word the tilde-prefix introduced after a `<colon>` requires
+the colon to be unquoted. A `<backslash>`-escaped colon is quoted; the
+following tilde in a declaration-utility assignment value shall therefore
+remain literal.
+
+```
+begin test "declaration utility tilde after escaped colon stays literal"
+  script
+    H=$HOME
+    HOME=/decl_escaped_colon
+    command export DEC=a\:~
+    printf '%s\n' "$DEC"
+    HOME=$H
+  expect
+    stdout "a:~"
+    stderr ""
+    exit_code 0
+end test "declaration utility tilde after escaped colon stays literal"
+```
+
+#### Test: declaration utility tilde after second equals stays literal
+
+Only the first `<equals-sign>` of an assignment-shaped operand delimits its
+name from its value. A `<tilde>` that follows a second literal `<equals-sign>`
+inside the value is not in a tilde-prefix position and shall remain literal
+in a declaration utility's assignment context.
+
+```
+begin test "declaration utility tilde after second equals stays literal"
+  script
+    H=$HOME
+    HOME=/decl_second_eq
+    command export DS=foo=~
+    printf '%s\n' "$DS"
+    HOME=$H
+  expect
+    stdout "foo=~"
+    stderr ""
+    exit_code 0
+end test "declaration utility tilde after second equals stays literal"
+```
+
+#### Test: declaration utility expands tilde with login name after colon
+
+Assignment-context tilde expansion shall apply to each unquoted tilde-prefix
+— leading and after each unquoted `<colon>`. A tilde-prefix with a portable
+login name (the conventional `root`) shall be replaced by the initial
+working directory associated with that login.
+
+```
+begin test "declaration utility expands tilde with login name after colon"
+  script
+    command export DLN=~root:/tmp:~root
+    first=${DLN%%:*}
+    third=${DLN##*:}
+    case "$first" in /*) ;; *) echo "first_not_absolute"; exit 1;; esac
+    [ "$first" = "$third" ] && echo ok
+  expect
+    stdout "ok"
+    stderr ""
+    exit_code 0
+end test "declaration utility expands tilde with login name after colon"
+```
+
 ## 2.9.1.2 Variable Assignments
 
 Variable assignments shall be performed as follows:
