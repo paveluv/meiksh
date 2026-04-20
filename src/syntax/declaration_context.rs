@@ -21,10 +21,15 @@ use super::byte_class::{is_glob_char, is_name_cont, is_name_start};
 use super::token;
 use super::word_parts::WordPart;
 
-/// POSIX special built-ins that take assignment-word arguments. Kept in
-/// sync with `exec::simple::is_declaration_utility`. Non-POSIX shells
-/// commonly extend this list with `local`, `declare`, and `typeset`;
-/// add them here only if/when the exec side implements them.
+/// POSIX special built-ins that take assignment-word arguments. This
+/// is the single source of truth for the declaration-utility set;
+/// both the argv-rewrite (this module) and the
+/// `SimpleCommand::declaration_context` flag (set by
+/// `apply_declaration_utility_rewrite` in `super::ast`) derive from
+/// it. The executor reads only the flag and never re-walks the argv.
+/// Non-POSIX shells commonly extend the set with `local`, `declare`,
+/// and `typeset`; add them here only if/when the exec side implements
+/// them.
 const DECLARATION_UTILITIES: &[&[u8]] = &[b"export", b"readonly"];
 
 pub(super) fn is_declaration_utility(name_word: &Word) -> bool {
@@ -257,6 +262,44 @@ mod tests {
             // "$var" is an Expansion, not a plain Literal.
             let sc = first_cmd(b"command $var A=1\n");
             assert_eq!(find_command_decl_util_boundary(&sc.words), None);
+        });
+    }
+
+    #[test]
+    fn declaration_context_flag_matches_utility_shape() {
+        assert_no_syscalls(|| {
+            for src in [
+                &b"export A=1\n"[..],
+                b"readonly A=1\n",
+                b"command export A=1\n",
+                b"command command readonly A=1\n",
+            ] {
+                assert!(
+                    first_cmd(src).declaration_context,
+                    "expected declaration_context for {}",
+                    String::from_utf8_lossy(src)
+                );
+            }
+            // Negative cases: a non-declaration command name, a bare
+            // `command`, `command --` (POSIX-unspecified), a non-
+            // declaration target after `command`, a real leading
+            // assignment, and any option flags between `command` and
+            // the target — the parser is conservative and only rewrites
+            // when the lexical shape is unambiguous.
+            for src in [
+                &b"echo A=1\n"[..],
+                b"command\n",
+                b"command -- export A=1\n",
+                b"command echo hi\n",
+                b"command -v export A=1\n",
+                b"A=1 echo hi\n",
+            ] {
+                assert!(
+                    !first_cmd(src).declaration_context,
+                    "expected no declaration_context for {}",
+                    String::from_utf8_lossy(src)
+                );
+            }
         });
     }
 

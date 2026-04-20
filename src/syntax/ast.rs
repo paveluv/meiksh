@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use super::ParseError;
-use super::assignment_context::{
+use super::declaration_context::{
     apply_assignment_context_to_argv_word, build_assignment_value_parts,
     find_command_decl_util_boundary, is_command_utility, is_declaration_utility,
 };
@@ -71,6 +71,14 @@ pub(crate) struct SimpleCommand {
     pub(crate) assignments: Vec<Assignment>,
     pub(crate) words: Vec<Word>,
     pub(crate) redirections: Vec<Redirection>,
+    /// Set by the parser iff the command is a POSIX declaration
+    /// utility invocation (`export`, `readonly`, or a `command`-
+    /// prefixed form). Tells the executor to use the
+    /// declaration-utility argv expansion path without re-walking the
+    /// word list. Kept in sync with
+    /// `apply_declaration_utility_rewrite` in this module, which is
+    /// the single point that sets it.
+    pub(crate) declaration_context: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -203,11 +211,15 @@ pub(super) fn split_assignment(input: &[u8]) -> Option<(&[u8], &[u8])> {
 
 /// Apply parser-driven assignment-context expansion to argv words of a
 /// simple command whose name is a declaration utility (or a `command`-
-/// prefixed form thereof). See [`super::assignment_context`] for
+/// prefixed form thereof). See [`super::declaration_context`] for
 /// rationale and behavior.
-fn apply_declaration_utility_rewrite(words: &mut [Word]) {
+///
+/// Returns `true` iff the command was recognized as a declaration
+/// utility call, so the caller can record the flag on
+/// [`SimpleCommand::declaration_context`].
+fn apply_declaration_utility_rewrite(words: &mut [Word]) -> bool {
     let Some(name) = words.first() else {
-        return;
+        return false;
     };
     let rewrite_from = if is_declaration_utility(name) {
         Some(1)
@@ -216,11 +228,13 @@ fn apply_declaration_utility_rewrite(words: &mut [Word]) {
     } else {
         None
     };
-    if let Some(start) = rewrite_from {
-        for word in &mut words[start..] {
-            apply_assignment_context_to_argv_word(word);
-        }
+    let Some(start) = rewrite_from else {
+        return false;
+    };
+    for word in &mut words[start..] {
+        apply_assignment_context_to_argv_word(word);
     }
+    true
 }
 
 impl<'a> Parser<'a> {
@@ -546,12 +560,13 @@ impl<'a> Parser<'a> {
             return Err(self.error(b"syntax error near unexpected token `('"));
         }
 
-        apply_declaration_utility_rewrite(&mut words);
+        let declaration_context = apply_declaration_utility_rewrite(&mut words);
 
         Ok(SimpleCommand {
             assignments,
             words,
             redirections,
+            declaration_context,
         })
     }
 
@@ -566,12 +581,13 @@ impl<'a> Parser<'a> {
 
         self.simple_command_scan_loop(&mut assignments, &mut words, &mut redirections)?;
 
-        apply_declaration_utility_rewrite(&mut words);
+        let declaration_context = apply_declaration_utility_rewrite(&mut words);
 
         Ok(SimpleCommand {
             assignments,
             words,
             redirections,
+            declaration_context,
         })
     }
 
@@ -1717,6 +1733,7 @@ mod tests {
                 },
                 here_doc: None,
             }],
+            ..SimpleCommand::default()
         });
         let s = simple.clone();
         assert!(matches!(&s, Command::Simple(sc) if &*sc.words[0].raw == b"echo"));

@@ -1,6 +1,6 @@
-mod assignment_context;
 pub(crate) mod ast;
 pub(crate) mod byte_class;
+mod declaration_context;
 mod token;
 pub(crate) mod word_parts;
 

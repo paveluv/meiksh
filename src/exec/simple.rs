@@ -315,26 +315,6 @@ pub(super) fn execute_simple(
     }
 }
 
-pub(super) fn is_declaration_utility(name: &[u8]) -> bool {
-    name == b"export" || name == b"readonly"
-}
-
-pub(super) fn find_declaration_context(words: &[crate::syntax::ast::Word]) -> bool {
-    let mut i = 0;
-    while i < words.len() {
-        let raw: &[u8] = &words[i].raw;
-        if raw == b"command" {
-            i += 1;
-            while i < words.len() && words[i].raw.starts_with(b"-") {
-                i += 1;
-            }
-            continue;
-        }
-        return is_declaration_utility(raw);
-    }
-    false
-}
-
 pub(super) fn expand_simple(
     shell: &mut Shell,
     simple: &SimpleCommand,
@@ -346,8 +326,7 @@ pub(super) fn expand_simple(
         assignments.push((assignment.name.to_vec(), value));
     }
 
-    let declaration_ctx = find_declaration_context(&simple.words);
-    let argv = if declaration_ctx {
+    let argv = if simple.declaration_context {
         expand_words_declaration(shell, &simple.words)?
     } else {
         let mut argv = Vec::with_capacity(simple.words.len());
@@ -765,42 +744,6 @@ mod tests {
     }
 
     #[test]
-    fn is_declaration_utility_matches_export_and_readonly() {
-        assert_no_syscalls(|| {
-            assert!(is_declaration_utility(b"export"));
-            assert!(is_declaration_utility(b"readonly"));
-            assert!(!is_declaration_utility(b"echo"));
-            assert!(!is_declaration_utility(b"command"));
-            assert!(!is_declaration_utility(b""));
-        });
-    }
-
-    #[test]
-    fn find_declaration_context_with_command_prefix() {
-        assert_no_syscalls(|| {
-            let words = |strs: &[&[u8]]| -> Vec<Word> {
-                strs.iter()
-                    .map(|s| Word {
-                        raw: s.to_vec().into(),
-                        parts: Vec::new(),
-                        line: 0,
-                    })
-                    .collect()
-            };
-
-            assert!(find_declaration_context(&words(&[b"export"])));
-            assert!(find_declaration_context(&words(&[b"readonly"])));
-            assert!(find_declaration_context(&words(&[b"command", b"export"])));
-            assert!(find_declaration_context(&words(&[
-                b"command", b"-v", b"export"
-            ])));
-            assert!(!find_declaration_context(&words(&[b"echo"])));
-            assert!(!find_declaration_context(&words(&[b"command"])));
-            assert!(!find_declaration_context(&words(&[])));
-        });
-    }
-
-    #[test]
     fn has_command_substitution_dollar_paren_in_assignments() {
         assert_no_syscalls(|| {
             let cmd = SimpleCommand {
@@ -812,8 +755,7 @@ mod tests {
                         line: 0,
                     },
                 }],
-                words: vec![],
-                redirections: vec![],
+                ..SimpleCommand::default()
             };
             assert!(has_command_substitution(&cmd));
 
@@ -826,8 +768,7 @@ mod tests {
                         line: 0,
                     },
                 }],
-                words: vec![],
-                redirections: vec![],
+                ..SimpleCommand::default()
             };
             assert!(has_command_substitution(&cmd_backtick_assign));
 
@@ -855,7 +796,7 @@ mod tests {
                     parts: Vec::new(),
                     line: 0,
                 }],
-                redirections: vec![],
+                ..SimpleCommand::default()
             };
             assert!(!has_command_substitution(&cmd_none));
         });
