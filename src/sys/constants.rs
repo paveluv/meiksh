@@ -7,6 +7,10 @@ pub(crate) const F_SETFD: c_int = libc::F_SETFD;
 pub(crate) const F_DUPFD_CLOEXEC: c_int = libc::F_DUPFD_CLOEXEC;
 pub(crate) const O_NONBLOCK: c_int = libc::O_NONBLOCK;
 
+pub(crate) const SEEK_CUR: c_int = libc::SEEK_CUR;
+#[cfg(test)]
+pub(crate) const ESPIPE: c_int = libc::ESPIPE;
+
 pub(crate) const STDIN_FILENO: c_int = libc::STDIN_FILENO;
 pub(crate) const STDOUT_FILENO: c_int = libc::STDOUT_FILENO;
 pub(crate) const STDERR_FILENO: c_int = libc::STDERR_FILENO;

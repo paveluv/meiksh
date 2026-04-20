@@ -1,11 +1,37 @@
 use libc::c_int;
+use std::cell::Cell;
 
-use super::constants::{F_DUPFD_CLOEXEC, F_GETFL, F_SETFL, O_NONBLOCK, S_IFIFO, S_IFMT};
+use super::constants::{
+    F_DUPFD_CLOEXEC, F_GETFL, F_SETFL, O_NONBLOCK, S_IFCHR, S_IFIFO, S_IFMT, SEEK_CUR,
+};
 use super::error::{SysError, SysResult};
 use super::interface::{self, last_error};
 use super::tty::is_interactive_fd;
 #[cfg(test)]
 use super::types::FdReader;
+
+thread_local! {
+    /// One-entry "passthrough" cache for [`ensure_blocking_read_fd`].
+    /// When the last successful probe confirmed that `fd` needed no
+    /// blocking-flag change, a subsequent call with the same `fd`
+    /// short-circuits without issuing any syscall. Invalidated
+    /// whenever the kernel could plausibly reassign the fd number to
+    /// a different kernel file (see `invalidate_passthrough_fd`).
+    static PASSTHROUGH_FD: Cell<c_int> = const { Cell::new(-1) };
+}
+
+fn invalidate_passthrough_fd(fd: c_int) {
+    PASSTHROUGH_FD.with(|c| {
+        if c.get() == fd {
+            c.set(-1);
+        }
+    });
+}
+
+#[cfg(test)]
+pub(crate) fn reset_passthrough_fd_cache_for_test() {
+    PASSTHROUGH_FD.with(|c| c.set(-1));
+}
 
 pub(crate) fn create_pipe() -> SysResult<(c_int, c_int)> {
     let mut fds = [0; 2];
@@ -18,6 +44,10 @@ pub(crate) fn create_pipe() -> SysResult<(c_int, c_int)> {
 }
 
 pub(crate) fn duplicate_fd(oldfd: c_int, newfd: c_int) -> SysResult<()> {
+    // `dup2` closes `newfd` (if open) and makes it refer to whatever
+    // `oldfd` points at, so any cached "passthrough" state for
+    // `newfd` is now stale.
+    invalidate_passthrough_fd(newfd);
     let result = interface::dup2(oldfd, newfd);
     if result >= 0 {
         Ok(())
@@ -36,6 +66,9 @@ pub(crate) fn duplicate_fd_to_new(fd: c_int) -> SysResult<c_int> {
 }
 
 pub(crate) fn close_fd(fd: c_int) -> SysResult<()> {
+    // A closed fd can be reused by the kernel for a different file,
+    // so any cached "passthrough" verdict is no longer trustworthy.
+    invalidate_passthrough_fd(fd);
     let result = interface::close(fd);
     if result == 0 {
         Ok(())
@@ -71,18 +104,36 @@ fn set_fd_status_flags(fd: c_int, flags: c_int) -> SysResult<()> {
     }
 }
 
-fn fifo_like_fd(fd: c_int) -> bool {
+/// Clears `O_NONBLOCK` on `fd` if it names a FIFO or terminal. Regular
+/// files, block devices, sockets and other non-tty character devices
+/// already block on `read()`, so probing them any further would just
+/// burn syscalls. Hot path for `while read … ; do … ; done < file`:
+/// every iteration reaches this function, so a one-entry thread-local
+/// cache ([`PASSTHROUGH_FD`]) skips even the single `fstat` on repeat
+/// calls with the same fd. The cache is invalidated whenever `close`
+/// or `dup2` could make the fd point at a different kernel file.
+pub(crate) fn ensure_blocking_read_fd(fd: c_int) -> SysResult<()> {
+    if PASSTHROUGH_FD.with(|c| c.get()) == fd {
+        return Ok(());
+    }
+    // One fstat replaces the pre-existing `isatty + fstat` pair for
+    // the common redirected-regular-file case. `isatty` is only
+    // needed when the kernel reports a character device, since other
+    // char devices (e.g. `/dev/null`) block on `read` without any
+    // flag tweak.
     let mut buf = std::mem::MaybeUninit::<libc::stat>::zeroed();
-    let result = interface::fstat(fd, buf.as_mut_ptr());
-    if result != 0 {
-        return false;
+    let fstat_result = interface::fstat(fd, buf.as_mut_ptr());
+    if fstat_result != 0 {
+        // Preserve prior behaviour: an `fstat` failure is not fatal —
+        // the fd might still work for `read`, and if it doesn't, the
+        // read itself will surface the error.
+        return Ok(());
     }
     let buf = unsafe { buf.assume_init() };
-    (buf.st_mode & S_IFMT) == S_IFIFO
-}
-
-pub(crate) fn ensure_blocking_read_fd(fd: c_int) -> SysResult<()> {
-    if !is_interactive_fd(fd) && !fifo_like_fd(fd) {
+    let mode = buf.st_mode & S_IFMT;
+    let needs_probe = mode == S_IFIFO || (mode == S_IFCHR && is_interactive_fd(fd));
+    if !needs_probe {
+        PASSTHROUGH_FD.with(|c| c.set(fd));
         return Ok(());
     }
     let flags = fd_status_flags(fd)?;
@@ -96,6 +147,36 @@ pub(crate) fn read_fd(fd: c_int, buf: &mut [u8]) -> SysResult<usize> {
     let result = interface::read(fd, buf);
     if result >= 0 {
         Ok(result as usize)
+    } else {
+        Err(last_error())
+    }
+}
+
+/// Returns the current read/write offset of `fd` (as per `lseek(fd, 0,
+/// SEEK_CUR)`). On pipes, FIFOs, sockets and terminals the kernel
+/// surfaces `ESPIPE`; callers use that to detect a non-seekable fd and
+/// fall back to unbuffered I/O.
+pub(crate) fn fd_seek_cur(fd: c_int) -> SysResult<libc::off_t> {
+    let result = interface::lseek(fd, 0, SEEK_CUR);
+    if result >= 0 {
+        Ok(result)
+    } else {
+        Err(last_error())
+    }
+}
+
+/// Moves the read/write offset of `fd` backwards by `bytes`, relative
+/// to the current position. Used to "un-read" buffered bytes past a
+/// delimiter so that subsequent commands observe the same post-delimiter
+/// fd position that the byte-at-a-time path would leave behind.
+pub(crate) fn fd_seek_rewind(fd: c_int, bytes: usize) -> SysResult<()> {
+    if bytes == 0 {
+        return Ok(());
+    }
+    let delta = -(bytes as libc::off_t);
+    let result = interface::lseek(fd, delta, SEEK_CUR);
+    if result >= 0 {
+        Ok(())
     } else {
         Err(last_error())
     }
@@ -222,6 +303,7 @@ mod tests {
     fn ensure_blocking_read_fd_clears_nonblocking_for_tty() {
         run_trace(
             trace_entries![
+                fstat(fd(STDIN_FILENO), _) -> stat_char,
                 isatty(fd(STDIN_FILENO)) -> int(1),
                 fcntl(fd(STDIN_FILENO), int(F_GETFL), int(0)) -> int((O_NONBLOCK | 0o2)),
                 fcntl(fd(STDIN_FILENO), int(F_SETFL), int(0o2)) -> int(0),
@@ -236,7 +318,6 @@ mod tests {
     fn ensure_blocking_read_fd_clears_nonblocking_for_fifo() {
         run_trace(
             trace_entries![
-                isatty(fd(42)) -> int(0),
                 fstat(fd(42), _) -> stat_fifo,
                 fcntl(fd(42), int(F_GETFL), int(0)) -> int((O_NONBLOCK | 0o2)),
                 fcntl(fd(42), int(F_SETFL), int(0o2)) -> int(0),
@@ -251,6 +332,7 @@ mod tests {
     fn ensure_blocking_read_fd_surfaces_fcntl_errors() {
         run_trace(
             trace_entries![
+                fstat(fd(STDIN_FILENO), _) -> stat_char,
                 isatty(fd(STDIN_FILENO)) -> int(1),
                 fcntl(fd(STDIN_FILENO), int(F_GETFL), int(0)) -> err(libc::EIO),
             ],
@@ -264,11 +346,40 @@ mod tests {
     fn fifo_like_fd_fstat_error() {
         run_trace(
             trace_entries![
-                isatty(fd(99)) -> int(0),
                 fstat(fd(99), _) -> err(libc::EBADF),
             ],
             || {
                 ensure_blocking_read_fd(99).expect("regular fd no-op");
+            },
+        );
+    }
+
+    #[test]
+    fn ensure_blocking_read_fd_caches_passthrough() {
+        run_trace(
+            trace_entries![
+                fstat(fd(99), _) -> stat_file(libc::S_IFREG),
+            ],
+            || {
+                ensure_blocking_read_fd(99).expect("regular fd first call");
+                ensure_blocking_read_fd(99).expect("regular fd cached call");
+                ensure_blocking_read_fd(99).expect("regular fd cached call");
+            },
+        );
+    }
+
+    #[test]
+    fn ensure_blocking_read_fd_cache_invalidates_on_close() {
+        run_trace(
+            trace_entries![
+                fstat(fd(99), _) -> stat_file(libc::S_IFREG),
+                close(fd(99)) -> 0,
+                fstat(fd(99), _) -> stat_file(libc::S_IFREG),
+            ],
+            || {
+                ensure_blocking_read_fd(99).expect("first probe");
+                close_fd(99).expect("close");
+                ensure_blocking_read_fd(99).expect("second probe after close");
             },
         );
     }

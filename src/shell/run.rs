@@ -1336,7 +1336,6 @@ mod tests {
     fn run_standard_input_retries_read_on_eintr() {
         run_trace(
             trace_entries![
-                isatty(fd(sys::constants::STDIN_FILENO)) -> 0,
                 fstat(fd(sys::constants::STDIN_FILENO), any) -> stat_file(0o644),
                 read(fd(sys::constants::STDIN_FILENO), _) -> interrupt(sys::constants::SIGINT),
                 read(fd(sys::constants::STDIN_FILENO), _) -> bytes(b":"),
@@ -1353,7 +1352,6 @@ mod tests {
 
     fn stdin_blocking_trace() -> Vec<crate::sys::test_support::TraceEntry> {
         trace_entries![
-            isatty(fd(sys::constants::STDIN_FILENO)) -> 0,
             fstat(fd(sys::constants::STDIN_FILENO), any) -> stat_file(0o644),
         ]
     }
