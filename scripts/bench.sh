@@ -92,7 +92,7 @@ _fn_many_args() {
 
 bench_arith_int() {
   i=0
-  while [ $i -lt 1800000 ]; do
+  while [ $i -lt 3600000 ]; do
     a=$(( i + 137 ))
     b=$(( a * 7 ))
     c=$(( b - 42 ))
@@ -110,7 +110,7 @@ bench_arith_int() {
 
 bench_arith_wide() {
   i=0
-  while [ $i -lt 1500000 ]; do
+  while [ $i -lt 2900000 ]; do
     a=$(( i << 20 ))
     b=$(( a >> 3 ))
     c=$(( a & 0xFFFFF ))
@@ -128,7 +128,7 @@ bench_arith_wide() {
 
 bench_var_assign() {
   i=0
-  while [ $i -lt 2500000 ]; do
+  while [ $i -lt 4200000 ]; do
     v1=foo
     v2=bar
     v3=baz
@@ -144,7 +144,7 @@ bench_var_assign() {
 
 bench_builtin_dispatch() {
   i=0
-  while [ $i -lt 3300000 ]; do
+  while [ $i -lt 6600000 ]; do
     :
     true
     false || :
@@ -157,7 +157,7 @@ bench_builtin_dispatch() {
 
 bench_func_call() {
   i=0
-  while [ $i -lt 1600000 ]; do
+  while [ $i -lt 2300000 ]; do
     _fn_noop
     _fn_noop
     _fn_many_args $i 1 2 3 4
@@ -169,7 +169,7 @@ bench_func_call() {
 
 bench_control_flow() {
   i=0
-  while [ $i -lt 1400000 ]; do
+  while [ $i -lt 2300000 ]; do
     r=0
     if [ $i -gt 0 ]; then
       if [ $i -lt 1000000000 ]; then
@@ -223,7 +223,7 @@ bench_deep_parse() {
   [ -n "$r" ] && : || :
   '
   i=0
-  while [ $i -lt 550000 ]; do
+  while [ $i -lt 700000 ]; do
     eval "$_src"
     i=$(( i + 1 ))
   done
@@ -231,7 +231,7 @@ bench_deep_parse() {
 
 bench_trap_set_unset() {
   i=0
-  while [ $i -lt 2700000 ]; do
+  while [ $i -lt 3900000 ]; do
     trap ':' USR1
     trap ':' USR2
     trap - USR1
@@ -264,7 +264,7 @@ bench_param_trim_utf8() {
   short='café.ünîcôdé.δοκιμή.テスト.tar.gz'
   longp='café-δοκιμή-テスト-тест/chemin/vers/dossier/ファイル.tar.gz'
   i=0
-  while [ $i -lt 650000 ]; do
+  while [ $i -lt 540000 ]; do
     a=${short%.*}
     b=${short%%.*}
     c=${short#*.}
@@ -285,7 +285,7 @@ bench_param_class_bracket() {
   v2='hello-world-42'
   v3='δοκιμή123'
   i=0
-  while [ $i -lt 1800000 ]; do
+  while [ $i -lt 2600000 ]; do
     a=${v1#[[:alpha:]]}
     b=${v1##[[:alpha:]]*}
     c=${v1%[0-9]}
@@ -304,7 +304,7 @@ bench_param_length() {
   utf8='café-δοκιμή-テスト-тест-ünîcôdé'
   empty=''
   i=0
-  while [ $i -lt 3300000 ]; do
+  while [ $i -lt 4500000 ]; do
     a=${#ascii}
     b=${#utf8}
     c=${#empty}
@@ -321,7 +321,7 @@ bench_field_split() {
   mixed='one,two;three four;five,six;seven'
   utf8list='café bravo δοκιμή テスト тест'
   i=0
-  while [ $i -lt 1300000 ]; do
+  while [ $i -lt 1900000 ]; do
     _old=$IFS
     IFS=:
     set -- $colon
@@ -343,7 +343,7 @@ bench_field_split() {
 
 bench_case_utf8_patterns() {
   i=0
-  while [ $i -lt 3300000 ]; do
+  while [ $i -lt 3800000 ]; do
     case $(( i % 5 )) in
       0) v=café ;;
       1) v=δοκιμή ;;
@@ -384,7 +384,7 @@ bench_glob_class_setup() {
 
 bench_glob_class() {
   i=0
-  while [ $i -lt 7000 ]; do
+  while [ $i -lt 5000 ]; do
     set -- "$BENCH_DIR/glob"/*.txt         ; c1=$#
     set -- "$BENCH_DIR/glob"/*.dat         ; c2=$#
     set -- "$BENCH_DIR/glob"/*_[0-9].txt   ; c3=$#
@@ -397,7 +397,7 @@ bench_glob_class() {
 
 bench_fs_create_delete() {
   i=0
-  while [ $i -lt 7000 ]; do
+  while [ $i -lt 5000 ]; do
     mkdir "$BENCH_DIR/fs_$i"
     _j=0
     while [ $_j -lt 20 ]; do
@@ -422,7 +422,7 @@ bench_fs_read_loop_setup() {
 bench_fs_read_loop() {
   _f="$BENCH_DIR/read_loop.txt"
   i=0
-  while [ $i -lt 2200 ]; do
+  while [ $i -lt 1800 ]; do
     _count=0
     while IFS= read -r _line; do
       _count=$(( _count + 1 ))
@@ -436,7 +436,7 @@ bench_io_write_append() {
   _f="$BENCH_DIR/io_append.txt"
   : > "$_f"
   i=0
-  while [ $i -lt 3300000 ]; do
+  while [ $i -lt 3700000 ]; do
     echo "line $i foo bar baz quux alpha bravo charlie delta" >> "$_f"
     i=$(( i + 1 ))
   done
@@ -447,7 +447,7 @@ bench_io_heredoc() {
   : > "$_f"
   _count=42
   i=0
-  while [ $i -lt 15000 ]; do
+  while [ $i -lt 11000 ]; do
     cat >> "$_f" <<HEREDOC_END
 Line $i: the quick brown fox jumps over the lazy dog
 Expansion: arith=$(( i * 2 + 1 )) count=$_count
@@ -461,7 +461,7 @@ bench_io_fd_redir() {
   _f="$BENCH_DIR/io_fd.txt"
   : > "$_f"
   i=0
-  while [ $i -lt 2000000 ]; do
+  while [ $i -lt 2500000 ]; do
     echo "fd line $i" 3>"$_f" >&3
     i=$(( i + 1 ))
   done
@@ -469,7 +469,7 @@ bench_io_fd_redir() {
 
 bench_subshell_parens() {
   i=0
-  while [ $i -lt 19000 ]; do
+  while [ $i -lt 15000 ]; do
     ( _x=$i; : "$_x" )
     ( _y=$(( i + 1 )); : "$_y" )
     i=$(( i + 1 ))
@@ -478,7 +478,7 @@ bench_subshell_parens() {
 
 bench_cmd_sub_short() {
   i=0
-  while [ $i -lt 17000 ]; do
+  while [ $i -lt 14000 ]; do
     a=$(echo small)
     b=$(printf '%d' $i)
     : "$a" "$b"
@@ -499,7 +499,7 @@ bench_cmd_sub_long_setup() {
 bench_cmd_sub_long() {
   _f="$BENCH_DIR/cmd_sub_long.txt"
   i=0
-  while [ $i -lt 9000 ]; do
+  while [ $i -lt 7500 ]; do
     x=$(cat "$_f")
     : "$x"
     i=$(( i + 1 ))
@@ -508,7 +508,7 @@ bench_cmd_sub_long() {
 
 bench_pipeline() {
   i=0
-  while [ $i -lt 6000 ]; do
+  while [ $i -lt 4500 ]; do
     echo "data $i" | cat > /dev/null
     echo "data $i" | cat | cat | cat > /dev/null
     i=$(( i + 1 ))
