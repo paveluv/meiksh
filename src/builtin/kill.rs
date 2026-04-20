@@ -81,6 +81,7 @@ pub(super) fn kill(shell: &mut Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutcome
                 let pid = job
                     .pgid
                     .unwrap_or_else(|| job.children.first().map(|c| c.pid).unwrap_or(0));
+                let job_stopped = matches!(job.state, crate::shell::jobs::JobState::Stopped(_));
                 if pid != 0 {
                     if sys::process::send_signal(-pid, signal).is_err() {
                         let msg = ByteWriter::new()
@@ -90,10 +91,40 @@ pub(super) fn kill(shell: &mut Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutcome
                             .finish();
                         shell.diagnostic(1, &msg);
                         status = 1;
-                    } else if signal == sys::constants::SIGCONT && resolved_id.is_some() {
-                        let id = resolved_id.unwrap();
-                        if let Some(j) = shell.jobs.iter_mut().find(|j| j.id == id) {
-                            j.state = crate::shell::jobs::JobState::Running;
+                    } else {
+                        // POSIX `kill` delivers the requested signal, but a
+                        // process stopped via SIGTSTP/SIGSTOP will not act on a
+                        // non-stop signal (SIGTERM/SIGHUP/SIGINT/SIGQUIT/...)
+                        // until it is continued — the kernel holds the signal
+                        // pending. Real-world shells (bash, dash, ksh, zsh)
+                        // therefore auto-send SIGCONT after any non-stop
+                        // signal when the target job is stopped, so scripts
+                        // like `kill %1; wait` terminate promptly instead of
+                        // hanging forever. Mirror that behaviour here.
+                        let user_sent_cont = signal == sys::constants::SIGCONT;
+                        let is_stop_signal = matches!(
+                            signal,
+                            s if s == sys::constants::SIGSTOP
+                                || s == sys::constants::SIGTSTP
+                                || s == sys::constants::SIGTTIN
+                                || s == sys::constants::SIGTTOU
+                        );
+                        let auto_cont = job_stopped && !user_sent_cont && !is_stop_signal;
+                        if auto_cont {
+                            // Best-effort: ignore failure. If the process is
+                            // already gone (SIGKILL above), SIGCONT will
+                            // simply fail with ESRCH.
+                            let _ = sys::process::send_signal(-pid, sys::constants::SIGCONT);
+                        }
+                        // State flips to Running iff a SIGCONT was actually
+                        // delivered — either the user's own SIGCONT, or the
+                        // auto-follow-up above. A user-requested stop signal
+                        // against an already-stopped job leaves state as-is.
+                        if (user_sent_cont || auto_cont) && resolved_id.is_some() {
+                            let id = resolved_id.unwrap();
+                            if let Some(j) = shell.jobs.iter_mut().find(|j| j.id == id) {
+                                j.state = crate::shell::jobs::JobState::Running;
+                            }
                         }
                     }
                 }
@@ -489,6 +520,83 @@ mod tests {
                 let outcome =
                     invoke(&mut shell, &[b"kill".to_vec(), b"%1".to_vec()]).expect("kill %1 fail");
                 assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+            },
+        );
+    }
+
+    #[test]
+    fn kill_job_stopped_target_auto_sends_sigcont() {
+        // When the user sends SIGTERM (or any non-stop signal) to a stopped
+        // job, the kernel holds the signal pending; we must follow up with
+        // SIGCONT so the target actually acts on the signal. This matches
+        // bash/dash/ksh/zsh behaviour and keeps `kill %1; wait` from hanging.
+        run_trace(
+            trace_entries![
+                kill(int(-400i64), int(sys::constants::SIGTERM as i64)) -> 0,
+                kill(int(-400i64), int(sys::constants::SIGCONT as i64)) -> 0,
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.jobs.push(crate::shell::jobs::Job {
+                    id: 1,
+                    command: b"sleep"[..].into(),
+                    pgid: Some(400),
+                    last_pid: Some(400),
+                    last_status: None,
+                    children: vec![sys::types::ChildHandle {
+                        pid: 400,
+                        stdout_fd: None,
+                    }],
+                    state: crate::shell::jobs::JobState::Stopped(sys::constants::SIGTSTP),
+                    saved_termios: None,
+                });
+                let outcome = invoke(&mut shell, &[b"kill".to_vec(), b"%1".to_vec()])
+                    .expect("kill %1 on stopped job");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+                // Job state flips to Running so `wait`/`fg`/`bg` do not see
+                // stale "Stopped" bookkeeping.
+                assert_eq!(shell.jobs[0].state, crate::shell::jobs::JobState::Running);
+            },
+        );
+    }
+
+    #[test]
+    fn kill_job_stopped_target_stop_signal_does_not_auto_cont() {
+        // Re-stopping an already-stopped job (SIGSTOP/SIGTSTP/SIGTTIN/SIGTTOU)
+        // must not be followed by SIGCONT — that would defeat the user's
+        // intent and leave the job running.
+        run_trace(
+            trace_entries![
+                kill(int(-410i64), int(sys::constants::SIGSTOP as i64)) -> 0,
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.jobs.push(crate::shell::jobs::Job {
+                    id: 1,
+                    command: b"sleep"[..].into(),
+                    pgid: Some(410),
+                    last_pid: Some(410),
+                    last_status: None,
+                    children: vec![sys::types::ChildHandle {
+                        pid: 410,
+                        stdout_fd: None,
+                    }],
+                    state: crate::shell::jobs::JobState::Stopped(sys::constants::SIGTSTP),
+                    saved_termios: None,
+                });
+                let outcome = invoke(
+                    &mut shell,
+                    &[b"kill".to_vec(), b"-STOP".to_vec(), b"%1".to_vec()],
+                )
+                .expect("kill -STOP %1");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+                // State remains Stopped (we only have the `kill` trace; no
+                // SIGCONT follow-up, and no state flip because user asked
+                // for a stop signal).
+                assert!(matches!(
+                    shell.jobs[0].state,
+                    crate::shell::jobs::JobState::Stopped(_)
+                ));
             },
         );
     }
