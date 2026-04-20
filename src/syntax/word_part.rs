@@ -1,5 +1,7 @@
 use std::rc::Rc;
 
+use crate::shell::vars::CachedVarBinding;
+
 use super::ast::Program;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -40,6 +42,11 @@ pub(crate) enum ExpansionKind {
     SimpleVar {
         start: usize,
         end: usize,
+        /// Lazily-populated cache of the `VarTable` slot that
+        /// `raw[start..end]` resolves to at execution time. Filled
+        /// on the first expansion and reused on all subsequent ones
+        /// inside the same shell, avoiding the `ShellMap` lookup.
+        cache: CachedVarBinding,
     },
     Positional {
         index: u8,
@@ -71,6 +78,9 @@ pub(crate) enum BracedName {
     Var {
         start: usize,
         end: usize,
+        /// Lazily-populated cache of the `VarTable` slot for the
+        /// variable name. See [`ExpansionKind::SimpleVar::cache`].
+        cache: CachedVarBinding,
     },
     Positional {
         start: usize,
@@ -87,7 +97,7 @@ pub(crate) enum BracedName {
 impl BracedName {
     pub(crate) fn name_range(&self) -> (usize, usize) {
         match self {
-            BracedName::Var { start, end }
+            BracedName::Var { start, end, .. }
             | BracedName::Positional { start, end, .. }
             | BracedName::Special { start, end, .. } => (*start, *end),
         }

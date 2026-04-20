@@ -11,7 +11,19 @@ use super::state::Shell;
 
 impl Context for Shell {
     fn env_var(&self, name: &[u8]) -> Option<Cow<'_, [u8]>> {
-        self.env().get(name).map(|v| Cow::Borrowed(v.as_slice()))
+        self.var_value(name).map(Cow::Borrowed)
+    }
+
+    fn env_var_cached(
+        &self,
+        cache: &crate::shell::vars::CachedVarBinding,
+        name: &[u8],
+    ) -> Option<Cow<'_, [u8]>> {
+        let table = self.vars();
+        cache
+            .resolve_read(table, name)
+            .and_then(|e| e.value.as_deref())
+            .map(Cow::Borrowed)
     }
 
     fn special_param(&self, name: u8) -> Option<Cow<'_, [u8]>> {
@@ -108,7 +120,7 @@ impl Context for Shell {
         self.lineno
     }
 
-    fn expand_scratch_mut(&mut self) -> &mut crate::expand::scratch::ExpandScratch {
+    fn expand_scratch_slot_mut(&mut self) -> &mut Option<crate::expand::scratch::ExpandScratch> {
         &mut self.expand_scratch
     }
 

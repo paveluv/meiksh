@@ -85,12 +85,15 @@ impl Shell {
             .take()
             .unwrap_or_else(|| shell_name_from_args(&args).into());
         let raw_env = sys::env::env_vars();
-        let mut env: ShellMap<Vec<u8>, Vec<u8>> = ShellMap::default();
-        let mut exported = BTreeSet::new();
+        let mut vars = crate::shell::vars::VarTable::default();
         for (key, value) in raw_env {
             if crate::syntax::is_name(&key) {
-                exported.insert(key.clone());
-                env.insert(key, value);
+                let slot = vars.ensure_slot(&key) as usize;
+                vars.slots[slot] = Some(crate::shell::vars::EnvEntry {
+                    value: Some(value),
+                    exported: true,
+                    readonly: false,
+                });
             }
         }
         let interactive = options.force_interactive
@@ -102,25 +105,24 @@ impl Shell {
             .iter()
             .map(|&cond| (cond, TrapAction::Ignore))
             .collect();
-        env.insert(b"IFS".to_vec(), b" \t\n".to_vec());
-        env.insert(
-            b"PPID".to_vec(),
+        Self::set_initial_var(&mut vars, b"IFS", b" \t\n".to_vec());
+        Self::set_initial_var(
+            &mut vars,
+            b"PPID",
             bstr::i64_to_bytes(sys::process::parent_pid() as i64),
         );
-        env.insert(b"OPTIND".to_vec(), b"1".to_vec());
-        if !env.contains_key(b"MAILCHECK".as_slice()) {
-            env.insert(b"MAILCHECK".to_vec(), b"600".to_vec());
+        Self::set_initial_var(&mut vars, b"OPTIND", b"1".to_vec());
+        if !vars.contains_name(b"MAILCHECK") {
+            Self::set_initial_var(&mut vars, b"MAILCHECK", b"600".to_vec());
         }
-        Self::init_pwd(&mut env);
+        Self::init_pwd(&mut vars);
         let positional = std::mem::take(&mut options.positional);
         Ok(Self {
             positional,
             options,
             shell_name,
             shared: Rc::new(SharedEnv {
-                env,
-                exported,
-                readonly: BTreeSet::new(),
+                vars,
                 aliases: ShellMap::default(),
                 functions: ShellMap::default(),
                 path_cache: ShellMap::default(),
@@ -148,21 +150,31 @@ impl Shell {
             pid: sys::process::current_pid(),
             lineno: 0,
             mail_last_check: 0,
-            expand_scratch: crate::expand::scratch::ExpandScratch::new(),
+            expand_scratch: Some(crate::expand::scratch::ExpandScratch::new()),
             exec_scratch_pool: crate::exec::scratch::ExecScratchPool::new(),
             bytes_pool: crate::exec::scratch::BytesPool::new(),
         })
     }
 
-    fn init_pwd(env: &mut ShellMap<Vec<u8>, Vec<u8>>) {
+    fn set_initial_var(vars: &mut crate::shell::vars::VarTable, name: &[u8], value: Vec<u8>) {
+        let slot = vars.ensure_slot(name) as usize;
+        match &mut vars.slots[slot] {
+            Some(entry) => entry.value = Some(value),
+            None => vars.slots[slot] = Some(crate::shell::vars::EnvEntry::new(value)),
+        }
+    }
+
+    fn init_pwd(vars: &mut crate::shell::vars::VarTable) {
         let Ok(cwd) = sys::fs::get_cwd() else { return };
-        let valid = env.get(b"PWD".as_slice()).is_some_and(|p| {
-            p.starts_with(b"/")
-                && !p.split(|&b| b == b'/').any(|c| c == b"." || c == b"..")
-                && p == &cwd
+        let valid = vars.lookup(b"PWD").is_some_and(|e| {
+            e.value.as_deref().is_some_and(|p| {
+                p.starts_with(b"/")
+                    && !p.split(|&b| b == b'/').any(|c| c == b"." || c == b"..")
+                    && p == cwd.as_slice()
+            })
         });
         if !valid {
-            env.insert(b"PWD".to_vec(), cwd);
+            Self::set_initial_var(vars, b"PWD", cwd);
         }
     }
 
@@ -192,9 +204,7 @@ impl Shell {
             options,
             shell_name,
             shared: Rc::new(SharedEnv {
-                env: ShellMap::default(),
-                exported: BTreeSet::new(),
-                readonly: BTreeSet::new(),
+                vars: crate::shell::vars::VarTable::default(),
                 aliases: ShellMap::default(),
                 functions: ShellMap::default(),
                 path_cache: ShellMap::default(),
@@ -221,7 +231,7 @@ impl Shell {
             pid: sys::process::current_pid(),
             lineno: 0,
             mail_last_check: 0,
-            expand_scratch: crate::expand::scratch::ExpandScratch::new(),
+            expand_scratch: Some(crate::expand::scratch::ExpandScratch::new()),
             exec_scratch_pool: crate::exec::scratch::ExecScratchPool::new(),
             bytes_pool: crate::exec::scratch::BytesPool::new(),
         })

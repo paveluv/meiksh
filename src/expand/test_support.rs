@@ -11,7 +11,7 @@ pub(super) struct FakeContext {
     pub(super) positional: Vec<Vec<u8>>,
     pub(super) pathname_expansion_enabled: bool,
     pub(super) nounset_enabled: bool,
-    pub(super) scratch: crate::expand::scratch::ExpandScratch,
+    pub(super) scratch: Option<crate::expand::scratch::ExpandScratch>,
     pub(super) bytes_pool: crate::exec::scratch::BytesPool,
 }
 
@@ -30,7 +30,7 @@ impl FakeContext {
             positional: vec![b"alpha".to_vec(), b"beta".to_vec()],
             pathname_expansion_enabled: true,
             nounset_enabled: false,
-            scratch: crate::expand::scratch::ExpandScratch::new(),
+            scratch: Some(crate::expand::scratch::ExpandScratch::new()),
             bytes_pool: crate::exec::scratch::BytesPool::new(),
         }
     }
@@ -66,8 +66,10 @@ impl Context for FakeContext {
     }
 
     fn set_var(&mut self, name: &[u8], value: &[u8]) -> Result<(), ExpandError> {
-        if name == b"IFS" {
-            self.scratch.invalidate_ifs();
+        if name == b"IFS"
+            && let Some(s) = self.scratch.as_mut()
+        {
+            s.invalidate_ifs();
         }
         self.env.insert(name.to_vec(), value.to_vec());
         Ok(())
@@ -111,13 +113,15 @@ impl Context for FakeContext {
         }
     }
 
-    fn expand_scratch_mut(&mut self) -> &mut crate::expand::scratch::ExpandScratch {
+    fn expand_scratch_slot_mut(&mut self) -> &mut Option<crate::expand::scratch::ExpandScratch> {
         // Test-only: many unit tests mutate `ctx.env` directly (bypassing
         // `set_var`) and expect the very next expansion to see the new IFS.
         // Production uses proper `set_var`, which calls `invalidate_ifs` for
         // us. Here we conservatively invalidate on every access so the
         // behavioural tests stay independent of cache state.
-        self.scratch.invalidate_ifs();
+        if let Some(s) = self.scratch.as_mut() {
+            s.invalidate_ifs();
+        }
         &mut self.scratch
     }
 
@@ -135,7 +139,7 @@ impl Context for FakeContext {
 pub(super) struct DefaultPathContext {
     pub(super) env: ShellMap<Vec<u8>, Vec<u8>>,
     pub(super) nounset_enabled: bool,
-    pub(super) scratch: crate::expand::scratch::ExpandScratch,
+    pub(super) scratch: Option<crate::expand::scratch::ExpandScratch>,
     pub(super) bytes_pool: crate::exec::scratch::BytesPool,
 }
 
@@ -146,7 +150,7 @@ impl DefaultPathContext {
         Self {
             env,
             nounset_enabled: false,
-            scratch: crate::expand::scratch::ExpandScratch::new(),
+            scratch: Some(crate::expand::scratch::ExpandScratch::new()),
             bytes_pool: crate::exec::scratch::BytesPool::new(),
         }
     }
@@ -203,7 +207,7 @@ impl Context for DefaultPathContext {
         None
     }
 
-    fn expand_scratch_mut(&mut self) -> &mut crate::expand::scratch::ExpandScratch {
+    fn expand_scratch_slot_mut(&mut self) -> &mut Option<crate::expand::scratch::ExpandScratch> {
         &mut self.scratch
     }
 

@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 use std::rc::Rc;
 
+use crate::shell::vars::CachedVarBinding;
 use crate::syntax::ast::Program;
 
 use super::scratch::ExpandScratch;
@@ -12,6 +13,19 @@ pub(crate) struct ExpandError {
 
 pub(crate) trait Context {
     fn env_var(&self, name: &[u8]) -> Option<Cow<'_, [u8]>>;
+
+    /// Cached variant of [`Context::env_var`] for AST nodes that
+    /// reference a static, parse-time-known name. Implementations
+    /// that maintain a slot-indexed variable table (e.g. the real
+    /// [`Shell`](crate::shell::state::Shell)) may use `cache` to
+    /// skip the name hash on every call after the first. The default
+    /// implementation ignores the cache and falls back to
+    /// [`Context::env_var`].
+    #[inline]
+    fn env_var_cached(&self, cache: &CachedVarBinding, name: &[u8]) -> Option<Cow<'_, [u8]>> {
+        let _ = cache;
+        self.env_var(name)
+    }
     fn special_param(&self, name: u8) -> Option<Cow<'_, [u8]>>;
     /// Integer-valued fast path for the numeric special parameters
     /// (`$?`, `$$`, `$!`, `$#`). When `Some(v)` is returned, the caller
@@ -45,11 +59,20 @@ pub(crate) trait Context {
     fn set_lineno(&mut self, line: usize);
     fn inc_lineno(&mut self);
     fn lineno(&self) -> usize;
-    /// Borrow the shared `ExpandScratch` for this context. All
-    /// participating contexts must own a long-lived scratch; callers take
-    /// it out via `std::mem::take` so that borrow checking does not
-    /// conflict with further `&mut self` calls into the context.
-    fn expand_scratch_mut(&mut self) -> &mut ExpandScratch;
+    /// Borrow the shared `ExpandScratch` slot for this context. The
+    /// slot is the top-of-pool `Option<ExpandScratch>`: callers (notably
+    /// [`crate::expand::word::with_scratch`]) `.take()` the scratch to
+    /// obtain ownership without contending with other `&mut self` calls
+    /// into the context, run their body, then put the (possibly grown)
+    /// scratch back. A `None` seen at the slot means the scratch is
+    /// currently checked out by an outer expansion frame — nested
+    /// callers fall back to constructing a fresh [`ExpandScratch`] so
+    /// they never panic on re-entry.
+    ///
+    /// Wrapping the scratch in `Option` skips the `Default::default()`
+    /// placeholder + `drop_in_place` that the older `std::mem::take`
+    /// discipline paid on every word expansion.
+    fn expand_scratch_slot_mut(&mut self) -> &mut Option<ExpandScratch>;
     /// Borrow the shared [`BytesPool`](crate::exec::scratch::BytesPool)
     /// that the hot literal fast path pulls argv buffers from, and
     /// that `execute_simple` recycles argv / assignment buffers back

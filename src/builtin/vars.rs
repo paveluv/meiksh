@@ -101,17 +101,19 @@ pub(super) fn parse_declaration_listing_flag(
 }
 
 pub(super) fn exported_lines(shell: &Shell) -> Vec<Vec<u8>> {
-    shell
-        .exported()
-        .iter()
+    let mut names: Vec<&[u8]> = shell.vars().iter_exported().map(|(name, _)| name).collect();
+    names.sort();
+    names
+        .into_iter()
         .map(|name| declaration_line(b"export", name, shell.get_var(name)))
         .collect()
 }
 
 pub(super) fn readonly_lines(shell: &Shell) -> Vec<Vec<u8>> {
-    shell
-        .readonly()
-        .iter()
+    let mut names: Vec<&[u8]> = shell.vars().iter_readonly().map(|(name, _)| name).collect();
+    names.sort();
+    names
+        .into_iter()
         .map(|name| declaration_line(b"readonly", name, shell.get_var(name)))
         .collect()
 }
@@ -186,7 +188,7 @@ mod tests {
             let mut shell = test_shell();
             invoke(&mut shell, &[b"export".to_vec(), b"NAME=value".to_vec()]).expect("export");
             assert_eq!(shell.get_var(b"NAME"), Some(b"value" as &[u8]));
-            assert!(shell.exported().contains(b"NAME" as &[u8]));
+            assert!(shell.is_exported(b"NAME"));
         });
     }
 
@@ -198,7 +200,7 @@ mod tests {
 
             invoke(&mut shell, &[b"unset".to_vec(), b"NAME".to_vec()]).expect("unset");
             assert_eq!(shell.get_var(b"NAME"), None);
-            assert!(!shell.exported().contains(b"NAME" as &[u8]));
+            assert!(!shell.is_exported(b"NAME"));
         });
     }
 
@@ -211,7 +213,7 @@ mod tests {
                 &[b"readonly".to_vec(), b"LOCKED=value".to_vec()],
             )
             .expect("readonly");
-            assert!(shell.readonly().contains(b"LOCKED" as &[u8]));
+            assert!(shell.is_readonly(b"LOCKED"));
         });
     }
 
@@ -223,9 +225,7 @@ mod tests {
         // a tilde byte that had been preserved via quoting or escape.
         assert_no_syscalls(|| {
             let mut shell = test_shell();
-            shell
-                .env_mut()
-                .insert(b"HOME".to_vec(), b"/home/user".to_vec());
+            shell.env_set_raw(b"HOME".to_vec(), b"/home/user".to_vec());
             invoke(&mut shell, &[b"export".to_vec(), b"FOO=~/bin".to_vec()]).expect("export tilde");
             assert_eq!(shell.get_var(b"FOO"), Some(b"~/bin" as &[u8]));
         });
@@ -235,9 +235,7 @@ mod tests {
     fn readonly_preserves_literal_tilde_in_value() {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
-            shell
-                .env_mut()
-                .insert(b"HOME".to_vec(), b"/home/user".to_vec());
+            shell.env_set_raw(b"HOME".to_vec(), b"/home/user".to_vec());
             invoke(&mut shell, &[b"readonly".to_vec(), b"FOO=~/bin".to_vec()])
                 .expect("readonly tilde");
             assert_eq!(shell.get_var(b"FOO"), Some(b"~/bin" as &[u8]));

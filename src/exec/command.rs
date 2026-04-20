@@ -402,7 +402,7 @@ mod tests {
             shell
                 .env_mut()
                 .insert(b"PATH".to_vec(), b"/usr/bin:/bin".to_vec());
-            shell.exported_mut().insert(b"PATH".to_vec());
+            shell.mark_exported(b"PATH");
 
             let if_program =
                 parse_test("if true; then VALUE=yes; else VALUE=no; fi").expect("parse");
@@ -626,7 +626,7 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                shell.readonly_mut().insert(b"item".to_vec());
+                shell.mark_readonly(b"item");
                 let err = shell
                     .execute_string(b"for item in a b; do :; done")
                     .expect_err("readonly loop var");

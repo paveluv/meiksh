@@ -30,14 +30,27 @@ pub(super) fn check_errexit(shell: &mut Shell, status: i32) {
 pub(super) fn execute_list_item(shell: &mut Shell, item: &ListItem) -> Result<i32, ShellError> {
     shell.lineno = item.line;
     let line = item.line as u64;
-    let env = shell.env_mut();
-    if let Some(existing) = env.get_mut(b"LINENO".as_slice()) {
-        existing.clear();
-        crate::bstr::push_u64(existing, line);
-    } else {
-        let mut lineno_val = Vec::new();
-        crate::bstr::push_u64(&mut lineno_val, line);
-        env.insert(b"LINENO".to_vec(), lineno_val);
+    {
+        let vars = shell.vars_mut();
+        let slot = vars.ensure_slot(b"LINENO") as usize;
+        match &mut vars.slots[slot] {
+            Some(entry) => match &mut entry.value {
+                Some(buf) => {
+                    buf.clear();
+                    crate::bstr::push_u64(buf, line);
+                }
+                slot @ None => {
+                    let mut lineno_val = Vec::new();
+                    crate::bstr::push_u64(&mut lineno_val, line);
+                    *slot = Some(lineno_val);
+                }
+            },
+            None => {
+                let mut lineno_val = Vec::new();
+                crate::bstr::push_u64(&mut lineno_val, line);
+                vars.slots[slot] = Some(crate::shell::vars::EnvEntry::new(lineno_val));
+            }
+        }
     }
     if item.asynchronous {
         let stdin_override = if !shell.options.monitor {

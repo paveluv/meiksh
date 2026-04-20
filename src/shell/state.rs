@@ -10,6 +10,7 @@ use crate::sys;
 use super::jobs::Job;
 use super::options::ShellOptions;
 use super::traps::{TrapAction, TrapCondition};
+use super::vars::{EnvEntry, VarTable};
 
 pub(crate) enum FlowSignal {
     Continue(i32),
@@ -44,9 +45,11 @@ impl FunctionSlot {
 
 #[derive(Clone)]
 pub(crate) struct SharedEnv {
-    pub(crate) env: ShellMap<Vec<u8>, Vec<u8>>,
-    pub(crate) exported: BTreeSet<Vec<u8>>,
-    pub(crate) readonly: BTreeSet<Vec<u8>>,
+    /// Variable storage. Replaces the three legacy structures
+    /// (separate env map + exported / readonly `BTreeSet`s); every
+    /// variable's value and flags live together in a single
+    /// [`EnvEntry`] looked up by dense slot index.
+    pub(crate) vars: VarTable,
     pub(crate) aliases: ShellMap<Box<[u8]>, Box<[u8]>>,
     pub(crate) functions: ShellMap<Vec<u8>, Rc<FunctionSlot>>,
     pub(crate) path_cache: ShellMap<Box<[u8]>, Vec<u8>>,
@@ -86,7 +89,15 @@ pub(crate) struct Shell {
     /// via `invalidate_ifs` on `IFS` mutation and (optionally) at subshell
     /// fork boundaries. Clone produces a semantically-equivalent but
     /// capacity-wise empty scratch; buffers will regrow on first use.
-    pub(crate) expand_scratch: ExpandScratch,
+    ///
+    /// Stored as `Option<ExpandScratch>` so that the `with_scratch`
+    /// pool discipline can `.take()` ownership without allocating /
+    /// dropping a `Default`-constructed placeholder on every word
+    /// expansion. The slot is `Some` at steady state and briefly
+    /// `None` while an outer `with_scratch` body is running; nested
+    /// re-entrant frames observe `None` and construct a fresh
+    /// scratch locally.
+    pub(crate) expand_scratch: Option<ExpandScratch>,
     /// Free-list of per-`execute_simple` scratch buffers holding the
     /// expanded argv / assignments / redirections outer `Vec`s.
     /// See [`ExecScratchPool`] for the re-entrancy contract.
@@ -99,24 +110,112 @@ pub(crate) struct Shell {
 }
 
 impl Shell {
-    pub(crate) fn env(&self) -> &ShellMap<Vec<u8>, Vec<u8>> {
-        &self.shared.env
+    /// Shared variable table (all set/unset/flag state).
+    #[inline]
+    pub(crate) fn vars(&self) -> &VarTable {
+        &self.shared.vars
     }
-    pub(crate) fn env_mut(&mut self) -> &mut ShellMap<Vec<u8>, Vec<u8>> {
-        &mut Rc::make_mut(&mut self.shared).env
+
+    /// Mutable variable table. Goes through `Rc::make_mut`, so it is
+    /// copy-on-write against any outstanding shared clone (e.g. a
+    /// subshell fork that has not diverged yet).
+    #[inline]
+    pub(crate) fn vars_mut(&mut self) -> &mut VarTable {
+        &mut Rc::make_mut(&mut self.shared).vars
     }
-    pub(crate) fn exported(&self) -> &BTreeSet<Vec<u8>> {
-        &self.shared.exported
+
+    /// Returns the value bytes for `name`, or `None` if the variable
+    /// is currently unset (whether or not a flag-only entry exists).
+    #[inline]
+    pub(crate) fn var_value(&self, name: &[u8]) -> Option<&[u8]> {
+        self.vars().lookup(name).and_then(|e| e.value.as_deref())
     }
-    pub(crate) fn exported_mut(&mut self) -> &mut BTreeSet<Vec<u8>> {
-        &mut Rc::make_mut(&mut self.shared).exported
+
+    /// True iff `name` is currently set and exported.
+    #[inline]
+    pub(crate) fn is_exported(&self, name: &[u8]) -> bool {
+        self.vars().is_exported(name)
     }
-    pub(crate) fn readonly(&self) -> &BTreeSet<Vec<u8>> {
-        &self.shared.readonly
+
+    /// True iff `name` is currently marked readonly.
+    #[inline]
+    pub(crate) fn is_readonly(&self, name: &[u8]) -> bool {
+        self.vars().is_readonly(name)
     }
-    pub(crate) fn readonly_mut(&mut self) -> &mut BTreeSet<Vec<u8>> {
-        &mut Rc::make_mut(&mut self.shared).readonly
+
+    /// Insert or overwrite `name` with `value`, preserving existing
+    /// flags. Test-support hook used by callers that previously poked
+    /// `env_mut().insert(...)` directly.
+    pub(crate) fn env_set_raw(&mut self, name: Vec<u8>, value: Vec<u8>) {
+        let vars = self.vars_mut();
+        let slot = vars.ensure_slot(&name) as usize;
+        match &mut vars.slots[slot] {
+            Some(entry) => entry.value = Some(value),
+            None => vars.slots[slot] = Some(EnvEntry::new(value)),
+        }
     }
+
+    /// Remove the value bound to `name`, preserving the flag state
+    /// (matching the legacy `env_mut().remove` + separate flag-set
+    /// semantics). The slot itself is kept in the name table so any
+    /// cached AST handle continues to resolve to it.
+    pub(crate) fn env_remove_raw(&mut self, name: &[u8]) -> Option<Vec<u8>> {
+        let vars = self.vars_mut();
+        let slot = vars.slot_of(name)?;
+        let entry = vars.slots[slot as usize].take()?;
+        entry.value
+    }
+
+    /// Mark `name` as exported. If the variable has no entry yet,
+    /// a flag-only entry is created (no value assigned) so that
+    /// subsequent `export -p` output matches POSIX: `export NAME`
+    /// rather than `export NAME=''`.
+    pub(crate) fn mark_exported(&mut self, name: &[u8]) {
+        let vars = self.vars_mut();
+        let slot = vars.ensure_slot(name) as usize;
+        match &mut vars.slots[slot] {
+            Some(entry) => entry.exported = true,
+            None => {
+                vars.slots[slot] = Some(EnvEntry {
+                    value: None,
+                    exported: true,
+                    readonly: false,
+                });
+            }
+        }
+    }
+
+    /// Remove the exported flag from `name`, if any. No-op if the
+    /// variable is not set.
+    pub(crate) fn unmark_exported(&mut self, name: &[u8]) {
+        let vars = self.vars_mut();
+        if let Some(slot) = vars.slot_of(name)
+            && let Some(entry) = vars.slots[slot as usize].as_mut()
+        {
+            entry.exported = false;
+        }
+    }
+
+    /// Legacy compat accessor exposing a map-like view over the
+    /// variable table. Returns a thin adapter with `get`, `insert`,
+    /// `remove`, `iter`, and `get_mut`, matching the previous
+    /// `ShellMap<Vec<u8>, Vec<u8>>` surface used by a large test
+    /// population and a handful of call sites that mutate individual
+    /// variable entries without touching flag state. Non-test paths
+    /// should prefer the direct `set_var` / `var_value` APIs.
+    #[inline]
+    pub(crate) fn env(&self) -> EnvView<'_> {
+        EnvView { table: self.vars() }
+    }
+
+    /// Mutable variant of [`Shell::env`].
+    #[inline]
+    pub(crate) fn env_mut(&mut self) -> EnvViewMut<'_> {
+        EnvViewMut {
+            table: self.vars_mut(),
+        }
+    }
+
     pub(crate) fn aliases(&self) -> &ShellMap<Box<[u8]>, Box<[u8]>> {
         &self.shared.aliases
     }
@@ -215,6 +314,60 @@ impl Shell {
     }
 }
 
+/// Read-only map-like view of the variable table. Preserves the
+/// `ShellMap<Vec<u8>, Vec<u8>>` iteration surface (`iter`) that
+/// existed before the `VarTable` refactor, so callers that only
+/// enumerate set-variable pairs do not need to be rewritten.
+pub(crate) struct EnvView<'a> {
+    table: &'a VarTable,
+}
+
+impl<'a> EnvView<'a> {
+    pub(crate) fn iter(&self) -> impl Iterator<Item = (&[u8], &[u8])> {
+        self.table
+            .iter()
+            .filter_map(|(n, e)| e.value.as_deref().map(|v| (n, v)))
+    }
+}
+
+/// Mutable map-like view of the variable table. Provides the legacy
+/// `insert` / `remove` mutators without touching flag bits. Flag
+/// changes must go through [`Shell::mark_exported`] /
+/// [`Shell::mark_readonly`].
+pub(crate) struct EnvViewMut<'a> {
+    table: &'a mut VarTable,
+}
+
+impl<'a> EnvViewMut<'a> {
+    #[inline]
+    pub(crate) fn insert(&mut self, name: Vec<u8>, value: Vec<u8>) -> Option<Vec<u8>> {
+        let slot = self.table.ensure_slot(&name) as usize;
+        let prev = self.table.slots[slot]
+            .take()
+            .map(|e| (e.value, e.exported, e.readonly));
+        match prev {
+            Some((old_value, exported, readonly)) => {
+                self.table.slots[slot] = Some(EnvEntry {
+                    value: Some(value),
+                    exported,
+                    readonly,
+                });
+                old_value
+            }
+            None => {
+                self.table.slots[slot] = Some(EnvEntry::new(value));
+                None
+            }
+        }
+    }
+
+    #[inline]
+    pub(crate) fn remove(&mut self, name: &[u8]) -> Option<Vec<u8>> {
+        let slot = self.table.slot_of(name)?;
+        self.table.slots[slot as usize].take().and_then(|e| e.value)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -236,6 +389,7 @@ mod tests {
             assert!(matches!(flow, FlowSignal::Continue(0)));
             assert_eq!(shell.get_var(b"ASSIGN"), Some(b"2".as_slice()));
             assert_eq!(shell.get_var(b"FLOW"), Some(b"1".as_slice()));
+            assert!(shell.is_exported(b"FLOW"));
 
             let flow = shell
                 .run_builtin(&[b"exit".to_vec(), b"9".to_vec()], &[])

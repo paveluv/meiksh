@@ -1544,6 +1544,7 @@ impl<'a> Parser<'a> {
                                 kind: ExpansionKind::SimpleVar {
                                     start: name_start,
                                     end: name_end,
+                                    cache: crate::shell::vars::CachedVarBinding::default(),
                                 },
                                 quoted: false,
                             });
@@ -1694,6 +1695,7 @@ fn classify_dollar_from_slice(slice: &[u8], _quoted: bool, base: usize) -> (Expa
                         name: BracedName::Var {
                             start: base + 2,
                             end: base + 2,
+                            cache: crate::shell::vars::CachedVarBinding::default(),
                         },
                         op: BracedOp::None,
                         parts: Vec::new(),
@@ -1726,10 +1728,17 @@ fn classify_dollar_from_slice(slice: &[u8], _quoted: bool, base: usize) -> (Expa
             let (op, word_rel_start) = classify_braced_op(slice, rel_name_end);
             if op == BracedOp::None
                 && word_rel_start >= brace_end
-                && matches!(braced_name, BracedName::Var { start, end } if start != end)
+                && matches!(braced_name, BracedName::Var { start, end, .. } if start != end)
             {
                 let (start, end) = braced_name.name_range();
-                return (ExpansionKind::SimpleVar { start, end }, consumed);
+                return (
+                    ExpansionKind::SimpleVar {
+                        start,
+                        end,
+                        cache: crate::shell::vars::CachedVarBinding::default(),
+                    },
+                    consumed,
+                );
             }
             let word_parts = if word_rel_start < brace_end {
                 build_word_parts_for_slice(slice, word_rel_start, brace_end, base, false)
@@ -1793,6 +1802,7 @@ fn classify_dollar_from_slice(slice: &[u8], _quoted: bool, base: usize) -> (Expa
                 ExpansionKind::SimpleVar {
                     start: base + 1,
                     end: base + i,
+                    cache: crate::shell::vars::CachedVarBinding::default(),
                 },
                 i,
             )
@@ -1802,20 +1812,25 @@ fn classify_dollar_from_slice(slice: &[u8], _quoted: bool, base: usize) -> (Expa
 }
 
 fn classify_braced_name(name_bytes: &[u8], start: usize, end: usize) -> BracedName {
+    let make_var = || BracedName::Var {
+        start,
+        end,
+        cache: crate::shell::vars::CachedVarBinding::default(),
+    };
     if name_bytes.is_empty() {
-        return BracedName::Var { start, end };
+        return make_var();
     }
     let b0 = name_bytes[0];
     if is_digit(b0) {
         if let Some(index) = parse_u32_digits(name_bytes) {
             return BracedName::Positional { start, end, index };
         }
-        return BracedName::Var { start, end };
+        return make_var();
     }
     if is_special_param(b0) && name_bytes.len() == 1 {
         return BracedName::Special { start, end, ch: b0 };
     }
-    BracedName::Var { start, end }
+    make_var()
 }
 
 fn parse_u32_digits(b: &[u8]) -> Option<u32> {
@@ -2604,7 +2619,11 @@ mod tests {
         let (kind, consumed) = classify_dollar_from_slice(b"$abc", false, 0);
         assert!(matches!(
             kind,
-            ExpansionKind::SimpleVar { start: 1, end: 4 }
+            ExpansionKind::SimpleVar {
+                start: 1,
+                end: 4,
+                ..
+            }
         ));
         assert_eq!(consumed, 4);
     }
@@ -2643,7 +2662,14 @@ mod tests {
     #[test]
     fn classify_braced_name_empty() {
         let n = classify_braced_name(b"", 0, 0);
-        assert!(matches!(n, BracedName::Var { start: 0, end: 0 }));
+        assert!(matches!(
+            n,
+            BracedName::Var {
+                start: 0,
+                end: 0,
+                ..
+            }
+        ));
     }
 
     #[test]

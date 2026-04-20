@@ -443,14 +443,14 @@ mod tests {
             assert!(render_loop(&loop_command).starts_with(b"while "));
 
             let simple = SimpleCommand {
-                assignments: vec![Assignment {
-                    name: b"X".to_vec().into(),
-                    value: Word {
-                        raw: b"1".to_vec().into(),
+                assignments: vec![Assignment::new(
+                    b"X".to_vec(),
+                    Word {
+                        raw: b"1".to_vec(),
                         parts: Vec::new(),
                         line: 0,
                     },
-                }],
+                )],
                 words: vec![Word {
                     raw: b"echo".to_vec().into(),
                     parts: Vec::new(),
@@ -472,22 +472,22 @@ mod tests {
 
             let multi_assign = SimpleCommand {
                 assignments: vec![
-                    Assignment {
-                        name: b"A".to_vec().into(),
-                        value: Word {
-                            raw: b"1".to_vec().into(),
+                    Assignment::new(
+                        b"A".to_vec(),
+                        Word {
+                            raw: b"1".to_vec(),
                             parts: Vec::new(),
                             line: 0,
                         },
-                    },
-                    Assignment {
-                        name: b"B".to_vec().into(),
-                        value: Word {
-                            raw: b"2".to_vec().into(),
+                    ),
+                    Assignment::new(
+                        b"B".to_vec(),
+                        Word {
+                            raw: b"2".to_vec(),
                             parts: Vec::new(),
                             line: 0,
                         },
-                    },
+                    ),
                 ],
                 ..SimpleCommand::default()
             };

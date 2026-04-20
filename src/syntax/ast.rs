@@ -145,6 +145,21 @@ impl Eq for SimpleCommand {}
 pub(crate) struct Assignment {
     pub(crate) name: Vec<u8>,
     pub(crate) value: Word,
+    /// Lazily-populated cache of the `VarTable` slot for `name`.
+    /// First assignment resolves the slot (allocating one if the
+    /// name has never been seen); subsequent executions store through
+    /// the cached slot without re-hashing `name`.
+    pub(crate) name_slot: crate::shell::vars::CachedVarBinding,
+}
+
+impl Assignment {
+    pub(crate) fn new(name: Vec<u8>, value: Word) -> Self {
+        Self {
+            name,
+            value,
+            name_slot: crate::shell::vars::CachedVarBinding::default(),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -598,14 +613,14 @@ impl<'a> Parser<'a> {
 
         if let Some((name, value_raw)) = split_assignment(&first_raw) {
             let value_parts = build_assignment_value_parts(value_raw);
-            assignments.push(Assignment {
-                name: name.to_vec(),
-                value: Word {
+            assignments.push(Assignment::new(
+                name.to_vec(),
+                Word {
                     raw: value_raw.to_vec(),
                     parts: value_parts,
                     line: first_line,
                 },
-            });
+            ));
         } else {
             words.push(Word {
                 raw: first_raw,
@@ -685,14 +700,14 @@ impl<'a> Parser<'a> {
             if words.is_empty() {
                 if let Some((name, value_raw)) = split_assignment(&raw) {
                     let value_parts = build_assignment_value_parts(value_raw);
-                    assignments.push(Assignment {
-                        name: name.to_vec(),
-                        value: Word {
+                    assignments.push(Assignment::new(
+                        name.to_vec(),
+                        Word {
                             raw: value_raw.to_vec(),
                             parts: value_parts,
                             line,
                         },
-                    });
+                    ));
                     continue;
                 }
             }
@@ -1774,14 +1789,14 @@ mod tests {
     #[test]
     fn clone_covers_all_command_variants() {
         let simple = Command::Simple(SimpleCommand {
-            assignments: vec![Assignment {
-                name: bx(b"X"),
-                value: Word {
+            assignments: vec![Assignment::new(
+                bx(b"X"),
+                Word {
                     raw: bx(b"1"),
                     parts: Vec::new(),
                     line: 0,
                 },
-            }],
+            )],
             words: vec![Word {
                 raw: bx(b"echo"),
                 parts: Vec::new(),

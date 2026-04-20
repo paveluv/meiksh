@@ -574,12 +574,38 @@ pub(super) fn lookup_param<'a, C: Context>(ctx: &'a C, name: &[u8]) -> Option<Co
             .and_then(|n| if n >= 0 { Some(n as usize) } else { None })
             .and_then(|index| ctx.positional_param(index));
     }
-    if name.len() == 1 {
-        if let Some(value) = ctx.special_param(name[0]) {
-            return Some(value);
-        }
+    if name.len() == 1
+        && let Some(value) = ctx.special_param(name[0])
+    {
+        return Some(value);
     }
     ctx.env_var(name)
+}
+
+/// Variant of [`lookup_param`] that routes the plain `$NAME` env
+/// lookup through a parse-time-stable [`CachedVarBinding`] so that
+/// after the first expansion, the lookup bypasses the
+/// `ShellMap<Vec<u8>, u32>` hash probe. The special-parameter and
+/// positional-parameter fast paths are identical to `lookup_param`.
+pub(super) fn lookup_param_cached<'a, C: Context>(
+    ctx: &'a C,
+    cache: &crate::shell::vars::CachedVarBinding,
+    name: &[u8],
+) -> Option<Cow<'a, [u8]>> {
+    if name == b"0" {
+        return Some(Cow::Borrowed(ctx.shell_name()));
+    }
+    if !name.is_empty() && name.iter().all(|&b| is_digit(b)) {
+        return bstr::parse_i64(name)
+            .and_then(|n| if n >= 0 { Some(n as usize) } else { None })
+            .and_then(|index| ctx.positional_param(index));
+    }
+    if name.len() == 1
+        && let Some(value) = ctx.special_param(name[0])
+    {
+        return Some(value);
+    }
+    ctx.env_var_cached(cache, name)
 }
 
 pub(super) fn require_set_parameter<'a, C: Context>(
