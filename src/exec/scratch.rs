@@ -133,22 +133,45 @@ impl ExecScratch {
         self.redirections.clear();
     }
 
+    /// True when every inner buffer list is empty. Used by
+    /// [`Shell::recycle_exec_scratch`] to skip the per-buffer drain
+    /// loop for the common post-`execute_simple` case where
+    /// `execute_simple` has already moved every `Vec<u8>` out of the
+    /// scratch (e.g. a zero-arg function call whose argv was
+    /// transferred into `shell.positional`).
+    #[inline]
+    pub(crate) fn is_empty(&self) -> bool {
+        self.argv.is_empty() && self.assignments.is_empty() && self.redirections.is_empty()
+    }
+
     /// Clear, returning the inner `Vec<u8>` buffers to `bytes_pool`
     /// so they can be reused by the next expansion rather than
     /// dropped. The outer `Vec` capacities are still preserved on
     /// `self`.
+    ///
+    /// Hot: called once per `execute_simple` return. `#[inline]` so
+    /// LLVM can fold the per-vec drain loops into the caller and
+    /// elide the call boundary when the vecs are statically known to
+    /// be empty / short.
+    #[inline]
     pub(crate) fn clear_into_pool(&mut self, bytes_pool: &mut BytesPool) {
-        for v in self.argv.drain(..) {
-            bytes_pool.recycle(v);
+        if !self.argv.is_empty() {
+            for v in self.argv.drain(..) {
+                bytes_pool.recycle(v);
+            }
         }
-        for (name, value) in self.assignments.drain(..) {
-            bytes_pool.recycle(name);
-            bytes_pool.recycle(value);
+        if !self.assignments.is_empty() {
+            for (name, value) in self.assignments.drain(..) {
+                bytes_pool.recycle(name);
+                bytes_pool.recycle(value);
+            }
         }
-        for redir in self.redirections.drain(..) {
-            bytes_pool.recycle(redir.target);
-            if let Some(body) = redir.here_doc_body {
-                bytes_pool.recycle(body);
+        if !self.redirections.is_empty() {
+            for redir in self.redirections.drain(..) {
+                bytes_pool.recycle(redir.target);
+                if let Some(body) = redir.here_doc_body {
+                    bytes_pool.recycle(body);
+                }
             }
         }
     }
@@ -187,6 +210,7 @@ impl ExecScratchPool {
     }
 
     /// Pop a scratch from the free-list, or create a fresh one.
+    #[inline]
     pub(crate) fn take(&mut self) -> ExecScratch {
         self.free.pop().unwrap_or_default()
     }
@@ -195,6 +219,7 @@ impl ExecScratchPool {
     /// to `MAX_POOLED` entries. Callers are responsible for clearing
     /// the scratch first (typically via `ExecScratch::clear_into_pool`
     /// so inner buffers are recycled rather than dropped).
+    #[inline]
     pub(crate) fn push_cleared(&mut self, s: ExecScratch) {
         debug_assert!(
             s.argv.is_empty() && s.assignments.is_empty() && s.redirections.is_empty(),

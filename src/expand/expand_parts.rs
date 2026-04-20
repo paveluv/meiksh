@@ -132,6 +132,44 @@ impl ExpandOutput {
         result
     }
 
+    /// Pool-aware drain. Semantically equivalent to [`drain_single_vec`]
+    /// but:
+    ///
+    /// * Returns the expanded bytes in a buffer obtained from `pool` (or
+    ///   swaps the caller in the existing `self.current` if `fields` is
+    ///   empty, which is the zero-copy arith/assignment fast path).
+    /// * Recycles any intermediate `FieldEntry.text` and the old
+    ///   `self.current` back into `pool` so they can serve the next
+    ///   expansion.
+    /// * Leaves `self.current` holding a freshly popped pool buffer, so
+    ///   the next `extend_from_slice` / `push` into the `ExpandOutput`
+    ///   does not hit `Vec::reserve`'s first-grow malloc.
+    ///
+    /// The hot-path invariant for a single-field expansion (`$((…))`,
+    /// `a=…`, quoted parameter substitution in a single_field=true
+    /// context) is a single `std::mem::replace` and zero allocator
+    /// calls once the shell has warmed up.
+    pub(super) fn drain_single_vec_pooled(
+        &mut self,
+        pool: &mut crate::exec::scratch::BytesPool,
+    ) -> Vec<u8> {
+        if self.fields.is_empty() {
+            return std::mem::replace(&mut self.current, pool.take());
+        }
+        let total: usize =
+            self.fields.iter().map(|f| f.text.len()).sum::<usize>() + self.current.len();
+        let mut result = pool.take();
+        result.reserve(total);
+        for entry in self.fields.drain(..) {
+            result.extend_from_slice(&entry.text);
+            pool.recycle(entry.text);
+        }
+        let old_current = std::mem::replace(&mut self.current, pool.take());
+        result.extend_from_slice(&old_current);
+        pool.recycle(old_current);
+        result
+    }
+
     pub(super) fn clear(&mut self) {
         self.fields.clear();
         self.current.clear();

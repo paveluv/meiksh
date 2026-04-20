@@ -126,14 +126,21 @@ pub(crate) fn expand_word_as_declaration_assignment<C: Context>(
             scratch,
         );
         let value = match &result {
-            Ok(()) => output.drain_single_vec(),
+            Ok(()) => output.drain_single_vec_pooled(ctx.bytes_pool_mut()),
             Err(_) => Vec::new(),
         };
         scratch.output = output;
         result.map(|()| {
-            let mut combined = Vec::with_capacity(name_bytes.len() + value.len());
+            // Declaration-utility assignment words like `export FOO=bar`
+            // produce a concatenated `NAME=value` for the child exec;
+            // the combined buffer is one allocation per word. Recycle
+            // the `value` buffer we borrowed from the pool so it can
+            // serve the next expansion.
+            let mut combined = ctx.bytes_pool_mut().take();
+            combined.reserve(name_bytes.len() + value.len());
             combined.extend_from_slice(name_bytes);
             combined.extend_from_slice(&value);
+            ctx.bytes_pool_mut().recycle(value);
             combined
         })
     })
@@ -200,6 +207,15 @@ fn expand_word_into<C: Context>(
         return Ok(());
     }
 
+    // Slow path: make sure `output.current` has a real backing
+    // allocation before any `extend_from_slice` / `push` fires. The
+    // `push_current_field` path inside field-splitting routinely leaves
+    // `self.current` as `Vec::new()` (cap = 0) after a drain; refilling
+    // from the pool here keeps the first byte-level push off the
+    // first-grow allocator path.
+    if output.current.capacity() == 0 {
+        output.current = ctx.bytes_pool_mut().take();
+    }
     output.clear();
     super::expand_parts::expand_parts_into(ctx, &word.raw, &word.parts, false, output, scratch)?;
     output.finish_into(ctx, argv)
@@ -248,7 +264,7 @@ pub(crate) fn expand_word_text<C: Context>(
             scratch,
         );
         let value = match &result {
-            Ok(()) => output.drain_single_vec(),
+            Ok(()) => output.drain_single_vec_pooled(ctx.bytes_pool_mut()),
             Err(_) => Vec::new(),
         };
         scratch.output = output;
@@ -297,8 +313,17 @@ pub(crate) fn expand_assignment_value<C: Context>(
             &mut output,
             scratch,
         );
+        // Pool-aware drain: for the arith / assignment / here-doc hot
+        // paths `fields` is empty, so this is a single `mem::replace`
+        // that swaps a pre-sized buffer from the pool into
+        // `output.current` and hands the previously accumulated bytes
+        // to the caller. The caller stashes the returned `Vec<u8>` in
+        // an `ExecScratch::assignments` entry or in the env map; either
+        // way it eventually flows back into `BytesPool` via
+        // `ExecScratch::clear_into_pool`, completing the zero-malloc
+        // loop.
         let value = match &result {
-            Ok(()) => output.drain_single_vec(),
+            Ok(()) => output.drain_single_vec_pooled(ctx.bytes_pool_mut()),
             Err(_) => Vec::new(),
         };
         scratch.output = output;
@@ -354,7 +379,7 @@ pub(crate) fn expand_here_document<C: Context>(
         output.clear();
         let result = expand_parts_into_mode(ctx, raw, parts, true, true, &mut output, scratch);
         let value = match &result {
-            Ok(()) => output.drain_single_vec(),
+            Ok(()) => output.drain_single_vec_pooled(ctx.bytes_pool_mut()),
             Err(_) => Vec::new(),
         };
         scratch.output = output;
