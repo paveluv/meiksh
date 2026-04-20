@@ -29,12 +29,15 @@ pub(super) fn check_errexit(shell: &mut Shell, status: i32) {
 
 pub(super) fn execute_list_item(shell: &mut Shell, item: &ListItem) -> Result<i32, ShellError> {
     shell.lineno = item.line;
-    let lineno_val = crate::bstr::u64_to_bytes(item.line as u64);
-    if let Some(existing) = shell.env_mut().get_mut(b"LINENO".as_slice()) {
+    let line = item.line as u64;
+    let env = shell.env_mut();
+    if let Some(existing) = env.get_mut(b"LINENO".as_slice()) {
         existing.clear();
-        existing.extend_from_slice(&lineno_val);
+        crate::bstr::push_u64(existing, line);
     } else {
-        shell.env_mut().insert(b"LINENO".to_vec(), lineno_val);
+        let mut lineno_val = Vec::new();
+        crate::bstr::push_u64(&mut lineno_val, line);
+        env.insert(b"LINENO".to_vec(), lineno_val);
     }
     if item.asynchronous {
         let stdin_override = if !shell.options.monitor {

@@ -47,10 +47,21 @@ where
 /// calls because IFS is read on every simple command but rarely mutated;
 /// [`ExpandScratch::invalidate_ifs`] is called from `set_var` / `unset_var`
 /// whenever `IFS` is touched.
+///
+/// Split into a trivial inlineable fast path (cached) and an outlined
+/// slow path (cache miss) so the hot case is a single branch at the
+/// call site.
+#[inline]
 fn ensure_ifs_cached<C: Context>(ctx: &C, scratch: &mut ExpandScratch) {
     if scratch.ifs_valid {
         return;
     }
+    ensure_ifs_cached_cold(ctx, scratch);
+}
+
+#[cold]
+#[inline(never)]
+fn ensure_ifs_cached_cold<C: Context>(ctx: &C, scratch: &mut ExpandScratch) {
     scratch.ifs_bytes.clear();
     match ctx.env_var(b"IFS") {
         Some(c) => scratch.ifs_bytes.extend_from_slice(&c),
@@ -167,7 +178,9 @@ fn expand_word_into<C: Context>(
     // word with no glob metacharacters and no embedded newlines is
     // the overwhelmingly common case for tokens like `[`, `-gt`,
     // `0`, `case`, `then`. Bypass ExpandOutput entirely and push the
-    // single owned byte vector directly into argv.
+    // single owned byte vector directly into argv. The buffer is
+    // pulled from the shared `BytesPool` so a warmed-up shell avoids
+    // a heap allocation per literal word.
     if let [
         WordPart::Literal {
             start: 0,
@@ -180,7 +193,9 @@ fn expand_word_into<C: Context>(
         && *end == word.raw.len()
     {
         if !word.raw.is_empty() {
-            argv.push(word.raw.to_vec());
+            let mut buf = ctx.bytes_pool_mut().take();
+            buf.extend_from_slice(&word.raw);
+            argv.push(buf);
         }
         return Ok(());
     }

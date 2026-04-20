@@ -1,3 +1,4 @@
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use super::ParseError;
@@ -7,6 +8,8 @@ use super::declaration_context::{
 };
 use super::token::{Parser, Token};
 use super::word_part::WordPart;
+use crate::builtin::BuiltinEntry;
+use crate::shell::state::FunctionSlot;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Program {
@@ -66,7 +69,7 @@ pub(crate) enum Command {
     Redirected(Box<Command>, Vec<Redirection>),
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Debug, Default)]
 pub(crate) struct SimpleCommand {
     pub(crate) assignments: Vec<Assignment>,
     pub(crate) words: Vec<Word>,
@@ -79,7 +82,64 @@ pub(crate) struct SimpleCommand {
     /// `apply_declaration_utility_rewrite` in this module, which is
     /// the single point that sets it.
     pub(crate) declaration_context: bool,
+    /// Cached `argv[0]` classification. `Copy` payload so a bare
+    /// `Cell::get` gives us the current hint without borrow ceremony.
+    pub(crate) argv0_memo: Cell<Argv0Memo>,
+    /// Cached function slot for `argv[0]` when the word is a literal
+    /// name. Non-`Copy` (holds an `Rc`), so `RefCell` is the right
+    /// primitive for interior-mutable reads/writes on the hot path.
+    pub(crate) argv0_slot: RefCell<Option<Rc<FunctionSlot>>>,
 }
+
+/// Per-`SimpleCommand` cached classification of `argv[0]`. The cache is
+/// derived state and is invalidated/refreshed on the execution hot
+/// path, not at AST build time.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) enum Argv0Memo {
+    /// No classification has run yet.
+    #[default]
+    Uncached,
+    /// `argv[0]` is *not* a single literal word part, so we cannot
+    /// cache anything about it. Force the slow path every time.
+    NotLiteral,
+    /// `argv[0]` is a literal whose name resolves to a special
+    /// builtin. Special builtins are never shadowed by functions or
+    /// regular builtins, so this hint is stable as long as the AST is.
+    LiteralSpecial(&'static BuiltinEntry),
+    /// `argv[0]` is a literal whose name resolves to a regular
+    /// builtin. Runtime still probes the functions map first (a
+    /// function can shadow a regular builtin).
+    LiteralRegular(&'static BuiltinEntry),
+    /// `argv[0]` is a literal that is not any known builtin. Runtime
+    /// probes the functions map, then falls through to an external
+    /// command search.
+    LiteralNoBuiltin,
+}
+
+impl Clone for SimpleCommand {
+    fn clone(&self) -> Self {
+        Self {
+            assignments: self.assignments.clone(),
+            words: self.words.clone(),
+            redirections: self.redirections.clone(),
+            declaration_context: self.declaration_context,
+            // Memo is derived state; do not propagate a potentially-
+            // stale cache to the clone.
+            argv0_memo: Cell::new(Argv0Memo::Uncached),
+            argv0_slot: RefCell::new(None),
+        }
+    }
+}
+
+impl PartialEq for SimpleCommand {
+    fn eq(&self, other: &Self) -> bool {
+        self.assignments == other.assignments
+            && self.words == other.words
+            && self.redirections == other.redirections
+            && self.declaration_context == other.declaration_context
+    }
+}
+impl Eq for SimpleCommand {}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Assignment {
@@ -567,6 +627,8 @@ impl<'a> Parser<'a> {
             words,
             redirections,
             declaration_context,
+            argv0_memo: Cell::new(Argv0Memo::Uncached),
+            argv0_slot: RefCell::new(None),
         })
     }
 
@@ -588,6 +650,8 @@ impl<'a> Parser<'a> {
             words,
             redirections,
             declaration_context,
+            argv0_memo: Cell::new(Argv0Memo::Uncached),
+            argv0_slot: RefCell::new(None),
         })
     }
 

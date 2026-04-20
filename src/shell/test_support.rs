@@ -58,6 +58,8 @@ pub fn test_shell() -> Shell {
         lineno: 0,
         mail_last_check: 0,
         expand_scratch: crate::expand::scratch::ExpandScratch::new(),
+        exec_scratch_pool: crate::exec::scratch::ExecScratchPool::new(),
+        bytes_pool: crate::exec::scratch::BytesPool::new(),
     }
 }
 

@@ -5,19 +5,23 @@ use crate::builtin;
 use crate::expand::word;
 use crate::shell::error::{ShellError, VarError};
 use crate::shell::state::{FlowSignal, PendingControl, Shell};
-use crate::syntax::ast::{RedirectionKind, SimpleCommand};
+use crate::syntax::ast::{Argv0Memo, Command, RedirectionKind, SimpleCommand};
+use crate::syntax::word_part::WordPart;
 use crate::sys;
 
 use super::and_or::ProcessGroupPlan;
 use super::command::execute_command;
 use super::pipeline::wait_for_external_child;
+#[cfg(test)]
+use super::process::ExpandedSimpleCommand;
 use super::process::{
-    ExpandedRedirection, ExpandedSimpleCommand, PreparedProcess, ProcessRedirection,
-    exec_prepared_in_current_process, join_boxed_bytes, resolve_command_path, spawn_prepared,
+    ExpandedRedirection, PreparedProcess, ProcessRedirection, exec_prepared_in_current_process,
+    join_boxed_bytes, resolve_command_path, spawn_prepared,
 };
 use super::redirection::{
     apply_shell_redirection, apply_shell_redirections, default_fd_for_redirection,
 };
+use super::scratch::ExecScratch;
 
 pub(super) fn var_error_bytes(e: &VarError) -> Vec<u8> {
     match e {
@@ -60,10 +64,14 @@ pub(super) fn apply_prefix_assignments(
 
 pub(super) fn restore_vars(shell: &mut Shell, saved: Vec<SavedVar>) {
     let mut path_changed = false;
+    let mut ifs_changed = false;
     for entry in saved {
         let name: Vec<u8> = entry.name.into();
         if name == b"PATH" {
             path_changed = true;
+        }
+        if name == b"IFS" {
+            ifs_changed = true;
         }
         match entry.value {
             Some(v) => {
@@ -82,6 +90,9 @@ pub(super) fn restore_vars(shell: &mut Shell, saved: Vec<SavedVar>) {
     if path_changed {
         shell.path_cache_mut().clear();
     }
+    if ifs_changed {
+        shell.expand_scratch.invalidate_ifs();
+    }
 }
 
 pub(super) enum BuiltinResult {
@@ -89,12 +100,21 @@ pub(super) enum BuiltinResult {
     UtilityError(i32),
 }
 
-pub(super) fn run_builtin_flow(
+fn run_builtin_flow_entry(
     shell: &mut Shell,
+    entry: &builtin::BuiltinEntry,
     argv: &[Vec<u8>],
     assignments: &[(Vec<u8>, Vec<u8>)],
 ) -> Result<BuiltinResult, ShellError> {
-    match shell.run_builtin(argv, assignments)? {
+    let signal = shell.run_builtin_entry(entry, argv, assignments)?;
+    flow_signal_to_result(shell, signal)
+}
+
+fn flow_signal_to_result(
+    shell: &mut Shell,
+    signal: FlowSignal,
+) -> Result<BuiltinResult, ShellError> {
+    match signal {
         FlowSignal::Continue(status) => Ok(BuiltinResult::Status(status)),
         FlowSignal::UtilityError(status) => Ok(BuiltinResult::UtilityError(status)),
         FlowSignal::Exit(status) => {
@@ -104,19 +124,140 @@ pub(super) fn run_builtin_flow(
     }
 }
 
+/// What `argv[0]` resolved to after consulting the AST memo, the
+/// functions map, and the static builtin table. Computed once per
+/// `execute_simple` call.
+pub(super) enum Argv0Classification {
+    Function(Rc<Command>),
+    SpecialBuiltin(&'static builtin::BuiltinEntry),
+    RegularBuiltin(&'static builtin::BuiltinEntry),
+    External,
+}
+
+/// True iff `argv[0]` is a single fully-literal word part that expands
+/// to exactly its raw bytes. Only literal `argv[0]`s are memoizable -
+/// anything involving expansion could change between executions.
+fn argv0_is_literal(simple: &SimpleCommand) -> bool {
+    let Some(first) = simple.words.first() else {
+        return false;
+    };
+    matches!(
+        first.parts.as_slice(),
+        [WordPart::Literal {
+            start: 0,
+            end,
+            has_glob: false,
+            newlines: 0,
+            ..
+        }] if *end == first.raw.len(),
+    )
+}
+
+/// Look up a function body through the per-`SimpleCommand` slot cache,
+/// refreshing the cached `Rc<FunctionSlot>` on miss. Returns `None` if
+/// no function with that name exists.
+fn probe_function_memoized(
+    shell: &Shell,
+    simple: &SimpleCommand,
+    name: &[u8],
+) -> Option<Rc<Command>> {
+    if let Some(slot) = simple.argv0_slot.borrow().as_ref() {
+        if let Some(body) = slot.body.borrow().as_ref().map(Rc::clone) {
+            return Some(body);
+        }
+    }
+    match shell.lookup_function_slot(name) {
+        Some(slot) => {
+            let body = slot.body.borrow().as_ref().map(Rc::clone);
+            *simple.argv0_slot.borrow_mut() = Some(slot);
+            body
+        }
+        None => {
+            if simple.argv0_slot.borrow().is_some() {
+                *simple.argv0_slot.borrow_mut() = None;
+            }
+            None
+        }
+    }
+}
+
+pub(super) fn classify_argv0(
+    shell: &Shell,
+    simple: &SimpleCommand,
+    argv0: &[u8],
+) -> Argv0Classification {
+    if matches!(simple.argv0_memo.get(), Argv0Memo::Uncached) {
+        let new_memo = if !argv0_is_literal(simple) {
+            Argv0Memo::NotLiteral
+        } else {
+            match builtin::lookup(argv0) {
+                Some(entry) if matches!(entry.kind, builtin::BuiltinKind::Special) => {
+                    Argv0Memo::LiteralSpecial(entry)
+                }
+                Some(entry) => Argv0Memo::LiteralRegular(entry),
+                None => Argv0Memo::LiteralNoBuiltin,
+            }
+        };
+        simple.argv0_memo.set(new_memo);
+    }
+
+    match simple.argv0_memo.get() {
+        Argv0Memo::Uncached => unreachable!("memo was just primed"),
+        Argv0Memo::NotLiteral => match builtin::lookup(argv0) {
+            Some(entry) if matches!(entry.kind, builtin::BuiltinKind::Special) => {
+                Argv0Classification::SpecialBuiltin(entry)
+            }
+            Some(entry) => {
+                if let Some(body) = shell.lookup_function(argv0) {
+                    Argv0Classification::Function(body)
+                } else {
+                    Argv0Classification::RegularBuiltin(entry)
+                }
+            }
+            None => {
+                if let Some(body) = shell.lookup_function(argv0) {
+                    Argv0Classification::Function(body)
+                } else {
+                    Argv0Classification::External
+                }
+            }
+        },
+        Argv0Memo::LiteralSpecial(entry) => Argv0Classification::SpecialBuiltin(entry),
+        Argv0Memo::LiteralRegular(entry) => {
+            if let Some(body) = probe_function_memoized(shell, simple, argv0) {
+                Argv0Classification::Function(body)
+            } else {
+                Argv0Classification::RegularBuiltin(entry)
+            }
+        }
+        Argv0Memo::LiteralNoBuiltin => {
+            if let Some(body) = probe_function_memoized(shell, simple, argv0) {
+                Argv0Classification::Function(body)
+            } else {
+                Argv0Classification::External
+            }
+        }
+    }
+}
+
+#[cfg(test)]
 pub(super) fn write_xtrace(shell: &mut Shell, expanded: &ExpandedSimpleCommand) {
+    write_xtrace_parts(shell, &expanded.assignments, &expanded.argv);
+}
+
+fn write_xtrace_parts(shell: &mut Shell, assignments: &[(Vec<u8>, Vec<u8>)], argv: &[Vec<u8>]) {
     if !shell.options.xtrace {
         return;
     }
     let ps4_raw = shell.get_var(b"PS4").unwrap_or(b"+ ").to_vec();
     let mut line = word::expand_parameter_text(shell, &ps4_raw).unwrap_or_else(|_| b"+ ".to_vec());
-    for (name, value) in &expanded.assignments {
+    for (name, value) in assignments {
         line.extend_from_slice(name);
         line.push(b'=');
         line.extend_from_slice(value);
         line.push(b' ');
     }
-    for (i, word) in expanded.argv.iter().enumerate() {
+    for (i, word) in argv.iter().enumerate() {
         if i > 0 {
             line.push(b' ');
         }
@@ -155,33 +296,39 @@ pub(super) fn execute_simple(
     simple: &SimpleCommand,
     allow_exec_in_place: bool,
 ) -> Result<i32, ShellError> {
-    let expanded = expand_simple(shell, simple)?;
+    let mut scratch = shell.take_exec_scratch();
+    let result = execute_simple_with_scratch(shell, simple, allow_exec_in_place, &mut scratch);
+    shell.recycle_exec_scratch(scratch);
+    result
+}
+
+fn execute_simple_with_scratch(
+    shell: &mut Shell,
+    simple: &SimpleCommand,
+    allow_exec_in_place: bool,
+    scratch: &mut ExecScratch,
+) -> Result<i32, ShellError> {
+    expand_simple_in_place(shell, simple, scratch)?;
 
     if let Some(first_word) = simple.words.first() {
         shell.lineno = first_word.line;
     }
 
-    if !expanded.argv.is_empty() || !expanded.assignments.is_empty() {
-        write_xtrace(shell, &expanded);
+    if !scratch.argv.is_empty() || !scratch.assignments.is_empty() {
+        write_xtrace_parts(shell, &scratch.assignments, &scratch.argv);
     }
 
-    let ExpandedSimpleCommand {
-        assignments,
-        argv,
-        redirections,
-    } = expanded;
-
-    if argv.is_empty() {
+    if scratch.argv.is_empty() {
         let cmd_sub_status = if has_command_substitution(simple) {
             shell.last_status
         } else {
             0
         };
-        let guard = match apply_shell_redirections(&redirections, shell.options.noclobber) {
+        let guard = match apply_shell_redirections(&scratch.redirections, shell.options.noclobber) {
             Ok(g) => g,
             Err(error) => return Ok(shell.diagnostic_syserr(1, &error).exit_status()),
         };
-        for (name, value) in &assignments {
+        for (name, value) in &scratch.assignments {
             shell.set_var(name, value).map_err(|e| {
                 let msg = var_error_bytes(&e);
                 shell.diagnostic(1, &msg)
@@ -191,24 +338,33 @@ pub(super) fn execute_simple(
         return Ok(cmd_sub_status);
     }
 
-    let is_special_builtin = builtin::is_special_builtin(&argv[0]);
-    let is_exec_no_cmd =
-        is_special_builtin && argv[0] == b"exec" && !argv.iter().skip(1).any(|a| a == b"--");
+    let classification = classify_argv0(shell, simple, &scratch.argv[0]);
+
+    let is_exec_no_cmd = matches!(
+        classification,
+        Argv0Classification::SpecialBuiltin(entry)
+            if entry.name == b"exec" && !scratch.argv.iter().skip(1).any(|a| a == b"--")
+    );
 
     if is_exec_no_cmd {
-        for redir in &redirections {
+        let Argv0Classification::SpecialBuiltin(entry) = classification else {
+            unreachable!("is_exec_no_cmd implies SpecialBuiltin")
+        };
+        for redir in &scratch.redirections {
             shell.lineno = redir.line;
             apply_shell_redirection(redir, shell.options.noclobber)
                 .map_err(|e| shell.diagnostic_syserr(1, &e))?;
         }
-        return match run_builtin_flow(shell, &argv, &assignments) {
+        return match run_builtin_flow_entry(shell, entry, &scratch.argv, &scratch.assignments) {
             Ok(BuiltinResult::Status(status) | BuiltinResult::UtilityError(status)) => Ok(status),
             Err(error) => Err(error),
         };
-    } else if is_special_builtin {
-        let _guard = apply_shell_redirections(&redirections, shell.options.noclobber)
+    }
+
+    if let Argv0Classification::SpecialBuiltin(entry) = classification {
+        let _guard = apply_shell_redirections(&scratch.redirections, shell.options.noclobber)
             .map_err(|e| shell.diagnostic_syserr(1, &e))?;
-        let result = run_builtin_flow(shell, &argv, &assignments);
+        let result = run_builtin_flow_entry(shell, entry, &scratch.argv, &scratch.assignments);
         drop(_guard);
         return match result {
             Ok(BuiltinResult::UtilityError(status)) if !shell.interactive => {
@@ -219,25 +375,31 @@ pub(super) fn execute_simple(
         };
     }
 
-    if let Some(function) = shell.functions().get(&argv[0]).map(Rc::clone) {
-        let guard = match apply_shell_redirections(&redirections, shell.options.noclobber) {
+    if let Argv0Classification::Function(function) = classification {
+        let guard = match apply_shell_redirections(&scratch.redirections, shell.options.noclobber) {
             Ok(g) => g,
             Err(error) => return Ok(shell.diagnostic_syserr(1, &error).exit_status()),
         };
-        let saved_vars = save_vars(shell, &assignments);
-        if let Err(e) = apply_prefix_assignments(shell, &assignments) {
+        let saved_vars = save_vars(shell, &scratch.assignments);
+        if let Err(e) = apply_prefix_assignments(shell, &scratch.assignments) {
             restore_vars(shell, saved_vars);
             drop(guard);
             return Err(e);
         }
-        let saved = std::mem::replace(&mut shell.positional, argv[1..].to_vec());
+        // Move argv out of scratch into shell.positional, preserving
+        // the outer Vec capacity. On return we swap it back so the
+        // pool reclaims the capacity for the next simple command.
+        let mut argv = std::mem::take(&mut scratch.argv);
+        argv.remove(0);
+        let saved = std::mem::replace(&mut shell.positional, argv);
         shell.function_depth += 1;
         let status = execute_command(shell, &function);
         shell.function_depth = shell.function_depth.saturating_sub(1);
-        shell.positional = saved;
+        let used_argv = std::mem::replace(&mut shell.positional, saved);
+        scratch.argv = used_argv;
         restore_vars(shell, saved_vars);
         drop(guard);
-        match status {
+        return match status {
             Ok(status) => match shell.pending_control {
                 Some(PendingControl::Return(return_status)) => {
                     shell.pending_control = None;
@@ -246,15 +408,20 @@ pub(super) fn execute_simple(
                 _ => Ok(status),
             },
             Err(error) => Err(error),
-        }
-    } else if builtin::is_builtin(&argv[0]) {
-        let saved_vars = save_vars(shell, &assignments);
-        let assign_result = apply_prefix_assignments(shell, &assignments);
+        };
+    }
+
+    if let Argv0Classification::RegularBuiltin(entry) = classification {
+        let saved_vars = save_vars(shell, &scratch.assignments);
+        let assign_result = apply_prefix_assignments(shell, &scratch.assignments);
         let result = match assign_result {
             Ok(()) => {
-                let r = match apply_shell_redirections(&redirections, shell.options.noclobber) {
+                let r = match apply_shell_redirections(
+                    &scratch.redirections,
+                    shell.options.noclobber,
+                ) {
                     Ok(guard) => {
-                        let r = run_builtin_flow(shell, &argv, &[]);
+                        let r = run_builtin_flow_entry(shell, entry, &scratch.argv, &[]);
                         drop(guard);
                         r
                     }
@@ -268,18 +435,28 @@ pub(super) fn execute_simple(
                 Err(error)
             }
         };
-        match result {
+        return match result {
             Ok(BuiltinResult::Status(status) | BuiltinResult::UtilityError(status)) => Ok(status),
             Err(error) => Ok(error.exit_status()),
-        }
-    } else {
-        for (name, _value) in &assignments {
+        };
+    }
+
+    // External command. We consume the scratch Vecs (move them into
+    // `build_process_from_expanded`); scratch will retain only empty
+    // Vecs. This is a cold path relative to builtins and functions,
+    // so losing outer-Vec capacity here doesn't materially hurt hot
+    // benchmarks.
+    {
+        for (name, _value) in &scratch.assignments {
             if shell.readonly().contains(name) {
                 let mut msg = name.clone();
                 msg.extend_from_slice(b": readonly variable");
                 return Err(shell.diagnostic(1, &msg));
             }
         }
+        let argv = std::mem::take(&mut scratch.argv);
+        let assignments = std::mem::take(&mut scratch.assignments);
+        let redirections = std::mem::take(&mut scratch.redirections);
         let command_name = argv[0].clone();
         let prepared = build_process_from_expanded(shell, argv, assignments, redirections)
             .expect("argv is non-empty");
@@ -315,26 +492,31 @@ pub(super) fn execute_simple(
     }
 }
 
-pub(super) fn expand_simple(
+/// Populate `scratch` with the expansion of `simple`. The scratch's
+/// outer `Vec`s are reused (their capacities preserved); any leftover
+/// inner `Vec<u8>`s are dropped by `clear()` before repopulation.
+pub(super) fn expand_simple_in_place(
     shell: &mut Shell,
     simple: &SimpleCommand,
-) -> Result<ExpandedSimpleCommand, ShellError> {
-    let mut assignments = Vec::with_capacity(simple.assignments.len());
+    scratch: &mut ExecScratch,
+) -> Result<(), ShellError> {
+    scratch.clear();
+    scratch.assignments.reserve(simple.assignments.len());
     for assignment in &simple.assignments {
         let value = word::expand_assignment_value(shell, &assignment.value)
             .map_err(|e| shell.expand_to_err(e))?;
-        assignments.push((assignment.name.to_vec(), value));
+        scratch.assignments.push((assignment.name.to_vec(), value));
     }
 
-    let argv = if simple.declaration_context {
-        expand_words_declaration(shell, &simple.words)?
+    scratch.argv.reserve(simple.words.len());
+    if simple.declaration_context {
+        expand_words_declaration_into(shell, &simple.words, &mut scratch.argv)?;
     } else {
-        let mut argv = Vec::with_capacity(simple.words.len());
-        word::expand_words_into(shell, &simple.words, &mut argv)
+        word::expand_words_into(shell, &simple.words, &mut scratch.argv)
             .map_err(|e| shell.expand_to_err(e))?;
-        argv
-    };
-    let mut redirections = Vec::with_capacity(simple.redirections.len());
+    }
+
+    scratch.redirections.reserve(simple.redirections.len());
     for redirection in &simple.redirections {
         let fd = redirection
             .fd
@@ -372,7 +554,7 @@ pub(super) fn expand_simple(
             }
             (target, None)
         };
-        redirections.push(ExpandedRedirection {
+        scratch.redirections.push(ExpandedRedirection {
             fd,
             kind: redirection.kind,
             target,
@@ -381,26 +563,51 @@ pub(super) fn expand_simple(
         });
     }
 
-    Ok(ExpandedSimpleCommand {
-        assignments,
-        argv,
-        redirections,
-    })
+    Ok(())
+}
+
+/// Allocating wrapper around [`expand_simple_in_place`] retained for
+/// tests and the (now-deprecated) path in `src/exec/redirection.rs`
+/// that still returns an owned [`ExpandedSimpleCommand`].
+#[cfg(test)]
+pub(super) fn expand_simple(
+    shell: &mut Shell,
+    simple: &SimpleCommand,
+) -> Result<ExpandedSimpleCommand, ShellError> {
+    let mut scratch = shell.take_exec_scratch();
+    let result = expand_simple_in_place(shell, simple, &mut scratch);
+    match result {
+        Ok(()) => {
+            let argv = std::mem::take(&mut scratch.argv);
+            let assignments = std::mem::take(&mut scratch.assignments);
+            let redirections = std::mem::take(&mut scratch.redirections);
+            shell.recycle_exec_scratch(scratch);
+            Ok(ExpandedSimpleCommand {
+                assignments,
+                argv,
+                redirections,
+            })
+        }
+        Err(error) => {
+            shell.recycle_exec_scratch(scratch);
+            Err(error)
+        }
+    }
 }
 
 pub(super) fn parse_i32_bytes(s: &[u8]) -> Option<i32> {
     crate::bstr::parse_i64(s).and_then(|v| i32::try_from(v).ok())
 }
 
-pub(super) fn expand_words_declaration(
+pub(super) fn expand_words_declaration_into(
     shell: &mut Shell,
     words: &[crate::syntax::ast::Word],
-) -> Result<Vec<Vec<u8>>, ShellError> {
-    let mut result = Vec::with_capacity(words.len());
+    result: &mut Vec<Vec<u8>>,
+) -> Result<(), ShellError> {
     let mut found_cmd = false;
     for word in words {
         if !found_cmd {
-            word::expand_words_into(shell, std::slice::from_ref(word), &mut result)
+            word::expand_words_into(shell, std::slice::from_ref(word), result)
                 .map_err(|e| shell.expand_to_err(e))?;
             if result
                 .last()
@@ -414,11 +621,11 @@ pub(super) fn expand_words_declaration(
                     .map_err(|e| shell.expand_to_err(e))?,
             );
         } else {
-            word::expand_words_into(shell, std::slice::from_ref(word), &mut result)
+            word::expand_words_into(shell, std::slice::from_ref(word), result)
                 .map_err(|e| shell.expand_to_err(e))?;
         }
     }
-    Ok(result)
+    Ok(())
 }
 
 pub(super) fn expand_redirections(
@@ -555,6 +762,28 @@ mod tests {
             assert!(shell.exported().contains(&b"FOO".to_vec()));
             assert_eq!(shell.get_var(b"BAR"), None);
             assert!(!shell.exported().contains(&b"BAR".to_vec()));
+        });
+    }
+
+    #[test]
+    fn restore_vars_with_ifs_invalidates_cache() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            shell.env_mut().insert(b"IFS".to_vec(), b" ".to_vec());
+            // Prime the IFS cache via a first expansion.
+            let _ = shell.execute_string(b"x=1").expect("prime");
+            assert!(shell.expand_scratch.ifs_valid);
+            let assignments = vec![(b"IFS".to_vec(), b":".to_vec())];
+            let saved = save_vars(&shell, &assignments);
+            shell.set_var(b"IFS", b":").unwrap();
+            assert!(!shell.expand_scratch.ifs_valid);
+            shell.expand_scratch.ifs_valid = true;
+            // The crucial case: restore via the env_mut path must
+            // still mark the cache stale so the next expansion re-reads
+            // the live IFS.
+            restore_vars(&mut shell, saved);
+            assert!(!shell.expand_scratch.ifs_valid);
+            assert_eq!(shell.get_var(b"IFS"), Some(b" " as &[u8]));
         });
     }
 

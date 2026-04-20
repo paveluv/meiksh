@@ -12,6 +12,7 @@ pub(super) struct FakeContext {
     pub(super) pathname_expansion_enabled: bool,
     pub(super) nounset_enabled: bool,
     pub(super) scratch: crate::expand::scratch::ExpandScratch,
+    pub(super) bytes_pool: crate::exec::scratch::BytesPool,
 }
 
 impl FakeContext {
@@ -30,6 +31,7 @@ impl FakeContext {
             pathname_expansion_enabled: true,
             nounset_enabled: false,
             scratch: crate::expand::scratch::ExpandScratch::new(),
+            bytes_pool: crate::exec::scratch::BytesPool::new(),
         }
     }
 }
@@ -119,6 +121,10 @@ impl Context for FakeContext {
         &mut self.scratch
     }
 
+    fn bytes_pool_mut(&mut self) -> &mut crate::exec::scratch::BytesPool {
+        &mut self.bytes_pool
+    }
+
     fn set_lineno(&mut self, _line: usize) {}
     fn inc_lineno(&mut self) {}
     fn lineno(&self) -> usize {
@@ -130,6 +136,7 @@ pub(super) struct DefaultPathContext {
     pub(super) env: ShellMap<Vec<u8>, Vec<u8>>,
     pub(super) nounset_enabled: bool,
     pub(super) scratch: crate::expand::scratch::ExpandScratch,
+    pub(super) bytes_pool: crate::exec::scratch::BytesPool,
 }
 
 impl DefaultPathContext {
@@ -140,6 +147,7 @@ impl DefaultPathContext {
             env,
             nounset_enabled: false,
             scratch: crate::expand::scratch::ExpandScratch::new(),
+            bytes_pool: crate::exec::scratch::BytesPool::new(),
         }
     }
 }
@@ -197,6 +205,10 @@ impl Context for DefaultPathContext {
 
     fn expand_scratch_mut(&mut self) -> &mut crate::expand::scratch::ExpandScratch {
         &mut self.scratch
+    }
+
+    fn bytes_pool_mut(&mut self) -> &mut crate::exec::scratch::BytesPool {
+        &mut self.bytes_pool
     }
 
     fn pathname_expansion_enabled(&self) -> bool {

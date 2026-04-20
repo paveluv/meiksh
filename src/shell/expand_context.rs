@@ -22,6 +22,12 @@ impl Context for Shell {
                 .last_background
                 .map(|pid| Cow::Owned(bstr::i64_to_bytes(pid as i64))),
             b'#' => Some(Cow::Owned(bstr::u64_to_bytes(self.positional.len() as u64))),
+            // NB: the hot path for `$?`, `$$`, `$!`, `$#` goes through
+            // `special_param_int` below, which formats into a stack
+            // buffer and never hits this allocating arm. The Cow-owning
+            // arms above remain for the slow paths (pattern matches,
+            // parameter ops with defaults/alternates, tests that still
+            // call `special_param` directly).
             b'-' => Some(Cow::Owned(self.active_option_flags())),
             b'*' | b'@' => Some(Cow::Owned(bstr::join_bstrings(&self.positional, b" "))),
             b'0' => Some(Cow::Borrowed(&self.shell_name)),
@@ -31,6 +37,17 @@ impl Context for Shell {
                     .get(index.saturating_sub(1))
                     .map(|v| Cow::Borrowed(v.as_slice()))
             }
+            _ => None,
+        }
+    }
+
+    #[inline]
+    fn special_param_int(&self, name: u8) -> Option<i64> {
+        match name {
+            b'?' => Some(self.last_status as i64),
+            b'$' => Some(self.pid as i64),
+            b'!' => self.last_background.map(|pid| pid as i64),
+            b'#' => Some(self.positional.len() as i64),
             _ => None,
         }
     }
@@ -94,6 +111,10 @@ impl Context for Shell {
     fn expand_scratch_mut(&mut self) -> &mut crate::expand::scratch::ExpandScratch {
         &mut self.expand_scratch
     }
+
+    fn bytes_pool_mut(&mut self) -> &mut crate::exec::scratch::BytesPool {
+        &mut self.bytes_pool
+    }
 }
 
 #[cfg(test)]
@@ -154,6 +175,23 @@ mod tests {
             );
             assert_eq!(Context::special_param(&shell, b'9'), None);
             assert_eq!(Context::special_param(&shell, b'x'), None);
+
+            // Integer fast path: these bypass the Cow::Owned allocation
+            // in `special_param` and instead let the caller format into
+            // a stack buffer. The values must stay consistent with the
+            // slow path above.
+            assert_eq!(Context::special_param_int(&shell, b'?'), Some(17));
+            assert_eq!(Context::special_param_int(&shell, b'$'), Some(12345));
+            assert_eq!(Context::special_param_int(&shell, b'#'), Some(2));
+            assert_eq!(Context::special_param_int(&shell, b'!'), Some(42));
+            assert_eq!(Context::special_param_int(&shell, b'0'), None);
+            assert_eq!(Context::special_param_int(&shell, b'@'), None);
+
+            // `$!` becomes unset when there is no background job; the
+            // caller must fall through to the slow path so that
+            // `nounset` can raise "parameter not set".
+            shell.last_background = None;
+            assert_eq!(Context::special_param_int(&shell, b'!'), None);
         });
     }
 

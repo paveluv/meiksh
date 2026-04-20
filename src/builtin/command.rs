@@ -700,8 +700,8 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                shell.functions_mut().insert(
-                    b"myfunc"[..].into(),
+                shell.define_function(
+                    b"myfunc".to_vec(),
                     std::rc::Rc::new(crate::syntax::ast::Command::Simple(Default::default())),
                 );
                 let outcome = invoke(
@@ -786,8 +786,8 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                shell.functions_mut().insert(
-                    b"myfunc"[..].into(),
+                shell.define_function(
+                    b"myfunc".to_vec(),
                     std::rc::Rc::new(crate::syntax::ast::Command::Simple(Default::default())),
                 );
                 let outcome = invoke(
@@ -980,8 +980,8 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                shell.functions_mut().insert(
-                    b"myfunc"[..].into(),
+                shell.define_function(
+                    b"myfunc".to_vec(),
                     std::rc::Rc::new(crate::syntax::ast::Command::Simple(Default::default())),
                 );
                 let outcome = invoke(&mut shell, &[b"type".to_vec(), b"myfunc".to_vec()])
@@ -1289,8 +1289,8 @@ mod tests {
     fn describe_command_function() {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
-            shell.functions_mut().insert(
-                b"myfunc"[..].into(),
+            shell.define_function(
+                b"myfunc".to_vec(),
                 std::rc::Rc::new(crate::syntax::ast::Command::Simple(Default::default())),
             );
             let desc = describe_command(&shell, b"myfunc", false);

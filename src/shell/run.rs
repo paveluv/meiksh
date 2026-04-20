@@ -149,6 +149,8 @@ impl Shell {
             lineno: 0,
             mail_last_check: 0,
             expand_scratch: crate::expand::scratch::ExpandScratch::new(),
+            exec_scratch_pool: crate::exec::scratch::ExecScratchPool::new(),
+            bytes_pool: crate::exec::scratch::BytesPool::new(),
         })
     }
 
@@ -220,6 +222,8 @@ impl Shell {
             lineno: 0,
             mail_last_check: 0,
             expand_scratch: crate::expand::scratch::ExpandScratch::new(),
+            exec_scratch_pool: crate::exec::scratch::ExecScratchPool::new(),
+            bytes_pool: crate::exec::scratch::BytesPool::new(),
         })
     }
 
@@ -520,18 +524,52 @@ impl Shell {
 }
 
 impl Shell {
+    /// Name-lookup-based builtin runner. Retained for tests that
+    /// exercise the full dispatch path end-to-end; production callers
+    /// go through `run_builtin_entry` with a cached `BuiltinEntry`.
+    #[cfg(test)]
     pub(crate) fn run_builtin(
         &mut self,
         argv: &[Vec<u8>],
         assignments: &[(Vec<u8>, Vec<u8>)],
     ) -> Result<FlowSignal, ShellError> {
+        self.apply_builtin_assignments(assignments)?;
+        let outcome = builtin::run(self, argv, assignments)?;
+        self.outcome_to_flow_signal(outcome)
+    }
+
+    /// Like `run_builtin`, but dispatches through a previously-resolved
+    /// `BuiltinEntry`. Callers that hold a cached entry (via the
+    /// `argv[0]` memo on `SimpleCommand`) can skip the name lookup.
+    pub(crate) fn run_builtin_entry(
+        &mut self,
+        entry: &builtin::BuiltinEntry,
+        argv: &[Vec<u8>],
+        assignments: &[(Vec<u8>, Vec<u8>)],
+    ) -> Result<FlowSignal, ShellError> {
+        self.apply_builtin_assignments(assignments)?;
+        let outcome = builtin::run_entry(entry, self, argv, assignments)?;
+        self.outcome_to_flow_signal(outcome)
+    }
+
+    fn apply_builtin_assignments(
+        &mut self,
+        assignments: &[(Vec<u8>, Vec<u8>)],
+    ) -> Result<(), ShellError> {
         for (name, value) in assignments {
             self.set_var(name, value).map_err(|e| {
                 let msg = var_error_message(&e);
                 self.diagnostic(1, &msg)
             })?;
         }
-        match builtin::run(self, argv, assignments)? {
+        Ok(())
+    }
+
+    fn outcome_to_flow_signal(
+        &mut self,
+        outcome: BuiltinOutcome,
+    ) -> Result<FlowSignal, ShellError> {
+        match outcome {
             BuiltinOutcome::Status(status) => Ok(FlowSignal::Continue(status)),
             BuiltinOutcome::UtilityError(status) => Ok(FlowSignal::UtilityError(status)),
             BuiltinOutcome::Exit(status) => Ok(FlowSignal::Exit(status)),
