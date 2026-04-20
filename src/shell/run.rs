@@ -442,13 +442,16 @@ impl Shell {
             let _ = sys::fd_io::close_fd(read_fd);
             let _ = sys::fd_io::duplicate_fd(write_fd, sys::constants::STDOUT_FILENO);
             let _ = sys::fd_io::close_fd(write_fd);
-            let mut child_shell = self.clone();
-            child_shell.owns_terminal = false;
-            child_shell.in_subshell = true;
-            child_shell.restore_signals_for_child();
-            let _ = child_shell.reset_traps_for_subshell();
-            let status = child_shell.execute_program(program).unwrap_or(1);
-            let status = child_shell.run_exit_trap(status).unwrap_or(status);
+            // Fork already gave us a COW-isolated address space; avoid
+            // the userspace `self.clone()` so `Rc<SharedEnv>` strong-count
+            // stays at 1 and later mutations skip `Rc::make_mut`'s deep
+            // clone.
+            self.owns_terminal = false;
+            self.in_subshell = true;
+            self.restore_signals_for_child();
+            let _ = self.reset_traps_for_subshell();
+            let status = self.execute_program(program).unwrap_or(1);
+            let status = self.run_exit_trap(status).unwrap_or(status);
             sys::process::exit_process(status as sys::types::RawFd);
         }
         sys::fd_io::close_fd(write_fd).map_err(|e| self.diagnostic_syserr(1, &e))?;
@@ -480,13 +483,16 @@ impl Shell {
             let _ = sys::fd_io::close_fd(read_fd);
             let _ = sys::fd_io::duplicate_fd(write_fd, sys::constants::STDOUT_FILENO);
             let _ = sys::fd_io::close_fd(write_fd);
-            let mut child_shell = self.clone();
-            child_shell.owns_terminal = false;
-            child_shell.in_subshell = true;
-            child_shell.restore_signals_for_child();
-            let _ = child_shell.reset_traps_for_subshell();
-            let status = child_shell.execute_string(source).unwrap_or(1);
-            let status = child_shell.run_exit_trap(status).unwrap_or(status);
+            // Fork already gave us a COW-isolated address space; avoid
+            // the userspace `self.clone()` so `Rc<SharedEnv>` strong-count
+            // stays at 1 and later mutations skip `Rc::make_mut`'s deep
+            // clone.
+            self.owns_terminal = false;
+            self.in_subshell = true;
+            self.restore_signals_for_child();
+            let _ = self.reset_traps_for_subshell();
+            let status = self.execute_string(source).unwrap_or(1);
+            let status = self.run_exit_trap(status).unwrap_or(status);
             sys::process::exit_process(status as sys::types::RawFd);
         }
         sys::fd_io::close_fd(write_fd).map_err(|e| self.diagnostic_syserr(1, &e))?;

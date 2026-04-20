@@ -77,17 +77,19 @@ pub(super) fn spawn_and_or(
             let _ = sys::process::ignore_signal(sys::constants::SIGINT);
             let _ = sys::process::ignore_signal(sys::constants::SIGQUIT);
         }
-        let mut child_shell = shell.clone();
-        child_shell.owns_terminal = false;
-        child_shell.in_subshell = true;
-        child_shell.restore_signals_for_child();
-        let _ = child_shell.reset_traps_for_subshell();
+        // Fork already gave us a COW-isolated address space; avoid the
+        // userspace `shell.clone()` so `Rc<SharedEnv>` strong-count stays
+        // at 1 and later mutations skip `Rc::make_mut`'s deep clone.
+        shell.owns_terminal = false;
+        shell.in_subshell = true;
+        shell.restore_signals_for_child();
+        let _ = shell.reset_traps_for_subshell();
         let status = if node.rest.is_empty() {
-            execute_pipeline(&mut child_shell, &node.first, false).unwrap_or(1)
+            execute_pipeline(shell, &node.first, false).unwrap_or(1)
         } else {
-            execute_and_or(&mut child_shell, node).unwrap_or(1)
+            execute_and_or(shell, node).unwrap_or(1)
         };
-        let status = child_shell.run_exit_trap(status).unwrap_or(status);
+        let status = shell.run_exit_trap(status).unwrap_or(status);
         sys::process::exit_process(status as sys::types::RawFd);
     }
     if let Some(fd) = stdin_override {

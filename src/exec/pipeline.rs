@@ -196,13 +196,15 @@ pub(super) fn fork_and_execute_command(
             }
             _ => {}
         }
-        let mut child_shell = shell.clone();
-        child_shell.owns_terminal = false;
-        child_shell.in_subshell = true;
-        child_shell.restore_signals_for_child();
-        let _ = child_shell.reset_traps_for_subshell();
-        let status = execute_command_in_pipeline_child(&mut child_shell, command).unwrap_or(1);
-        let status = child_shell.run_exit_trap(status).unwrap_or(status);
+        // Fork already gave us a COW-isolated address space; avoid the
+        // userspace `shell.clone()` so `Rc<SharedEnv>` strong-count stays
+        // at 1 and later mutations skip `Rc::make_mut`'s deep clone.
+        shell.owns_terminal = false;
+        shell.in_subshell = true;
+        shell.restore_signals_for_child();
+        let _ = shell.reset_traps_for_subshell();
+        let status = execute_command_in_pipeline_child(shell, command).unwrap_or(1);
+        let status = shell.run_exit_trap(status).unwrap_or(status);
         sys::process::exit_process(status as sys::types::RawFd);
     }
 

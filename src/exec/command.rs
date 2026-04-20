@@ -35,16 +35,19 @@ pub(super) fn execute_command_inner(
         Command::Subshell(program) => {
             let pid = sys::process::fork_process().map_err(|e| shell.diagnostic_syserr(1, &e))?;
             if pid == 0 {
-                let mut child_shell = shell.clone();
-                child_shell.owns_terminal = false;
-                child_shell.in_subshell = true;
-                child_shell.restore_signals_for_child();
-                let _ = child_shell.reset_traps_for_subshell();
-                let status = match execute_nested_program(&mut child_shell, program) {
+                // Fork already gave us a COW-isolated address space; we do
+                // not need a userspace `shell.clone()` on top of it. Keeping
+                // `Rc<SharedEnv>` strong-count at 1 lets the first
+                // `vars_mut()` skip `Rc::make_mut`'s deep hash-map clone.
+                shell.owns_terminal = false;
+                shell.in_subshell = true;
+                shell.restore_signals_for_child();
+                let _ = shell.reset_traps_for_subshell();
+                let status = match execute_nested_program(shell, program) {
                     Ok(s) => s,
                     Err(error) => error.exit_status(),
                 };
-                let status = child_shell.run_exit_trap(status).unwrap_or(status);
+                let status = shell.run_exit_trap(status).unwrap_or(status);
                 sys::process::exit_process(status as sys::types::RawFd);
             }
             let ws = loop {
