@@ -13,7 +13,7 @@ pub(crate) mod syntax;
 pub mod sys;
 
 #[cfg(test)]
-#[allow(unused_macros)]
+#[allow(unused_macros, unused_macro_rules)]
 macro_rules! syscall_test {
     (
         name: $name:ident,
