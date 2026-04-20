@@ -326,6 +326,34 @@ fn direct_ast_execution_preserves_compound_commands() {
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "matched");
 }
 
+#[test]
+fn case_pattern_that_is_a_reserved_word_name_still_matches() {
+    // POSIX 2.10.1: reserved-word recognition does not apply to the word
+    // after `case`, nor to case patterns. Patterns spelled with reserved
+    // word names (e.g. `if`, `then`, `else`) must match ordinary-word
+    // equality.
+    for source in [
+        "case if in if) echo ok;; esac",
+        "case then in if|then) echo ok;; esac",
+        "case foo in if) echo no;; *) echo ok;; esac",
+    ] {
+        let output = Command::new(meiksh())
+            .args(["-c", source])
+            .output()
+            .expect("run meiksh");
+        assert!(
+            output.status.success(),
+            "source={source:?} status={:?}",
+            output.status
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout).trim(),
+            "ok",
+            "source={source:?}"
+        );
+    }
+}
+
 // ── Pipeline and and/or ──
 
 #[test]

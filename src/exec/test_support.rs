@@ -27,6 +27,7 @@ pub(super) fn literal_word(raw: &[u8]) -> Word {
         end: raw.len(),
         has_glob: false,
         newlines: 0,
+        assignment: false,
     }];
     Word {
         raw: raw.to_vec(),

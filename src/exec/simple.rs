@@ -366,8 +366,13 @@ pub(super) fn expand_simple(
                 .as_ref()
                 .ok_or_else(|| shell.diagnostic(2, b"missing here-document body" as &[u8]))?;
             let body = if here_doc.expand {
-                word::expand_here_document(shell, &here_doc.body, here_doc.body_line)
-                    .map_err(|e| shell.expand_to_err(e))?
+                word::expand_here_document(
+                    shell,
+                    &here_doc.body,
+                    &here_doc.body_parts,
+                    here_doc.body_line,
+                )
+                .map_err(|e| shell.expand_to_err(e))?
             } else {
                 here_doc.body.to_vec()
             };
@@ -424,7 +429,7 @@ pub(super) fn expand_words_declaration(
             {
                 found_cmd = true;
             }
-        } else if word::word_is_assignment(&word.raw) {
+        } else if word::word_is_assignment(word) {
             result.push(
                 word::expand_word_as_declaration_assignment(shell, word)
                     .map_err(|e| shell.expand_to_err(e))?,
@@ -452,8 +457,13 @@ pub(super) fn expand_redirections(
                 .as_ref()
                 .ok_or_else(|| shell.diagnostic(2, b"missing here-document body" as &[u8]))?;
             let body = if here_doc.expand {
-                word::expand_here_document(shell, &here_doc.body, here_doc.body_line)
-                    .map_err(|e| shell.expand_to_err(e))?
+                word::expand_here_document(
+                    shell,
+                    &here_doc.body,
+                    &here_doc.body_parts,
+                    here_doc.body_line,
+                )
+                .map_err(|e| shell.expand_to_err(e))?
             } else {
                 here_doc.body.to_vec()
             };

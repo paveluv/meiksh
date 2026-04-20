@@ -1,3 +1,4 @@
+mod assignment_context;
 pub(crate) mod ast;
 pub(crate) mod byte_class;
 mod token;
@@ -73,6 +74,9 @@ impl<'src> ParseSession<'src> {
 }
 
 pub(crate) use byte_class::is_name;
+
+#[cfg(test)]
+pub(crate) use token::build_heredoc_parts;
 
 #[cfg(test)]
 #[allow(

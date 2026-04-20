@@ -20,6 +20,11 @@ pub(crate) trait Context {
     fn pathname_expansion_enabled(&self) -> bool;
     fn shell_name(&self) -> &[u8];
     fn command_substitute(&mut self, program: &Rc<Program>) -> Result<Vec<u8>, ExpandError>;
+    /// Test-only convenience: parse `command` and delegate to
+    /// `command_substitute`. Production expansion must never call into the
+    /// parser; this lives on the `Context` trait solely so tests can
+    /// substitute raw byte slices without wiring up a full parse themselves.
+    #[cfg(test)]
     fn command_substitute_raw(&mut self, command: &[u8]) -> Result<Vec<u8>, ExpandError> {
         let program = crate::syntax::parse(command).unwrap_or_default();
         self.command_substitute(&Rc::new(program))

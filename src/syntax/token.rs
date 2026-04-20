@@ -1732,7 +1732,7 @@ fn classify_dollar_from_slice(slice: &[u8], _quoted: bool, base: usize) -> (Expa
                 return (ExpansionKind::SimpleVar { start, end }, consumed);
             }
             let word_parts = if word_rel_start < brace_end {
-                build_word_parts_for_slice(slice, word_rel_start, brace_end, base)
+                build_word_parts_for_slice(slice, word_rel_start, brace_end, base, false)
             } else {
                 Vec::new()
             };
@@ -1753,7 +1753,7 @@ fn classify_dollar_from_slice(slice: &[u8], _quoted: bool, base: usize) -> (Expa
                 } else {
                     slice.len()
                 };
-                let arith_parts = build_word_parts_impl(slice, 3, arith_end, base, false);
+                let arith_parts = build_word_parts_impl(slice, 3, arith_end, base, false, false);
                 if let [WordPart::Literal { start, end, .. }] = &*arith_parts {
                     return (
                         ExpansionKind::ArithmeticLiteral {
@@ -1875,6 +1875,7 @@ fn flush_literal(raw: &[u8], start: usize, end: usize, parts: &mut Vec<WordPart>
             end,
             has_glob,
             newlines,
+            assignment: false,
         });
     }
 }
@@ -1932,8 +1933,137 @@ fn parse_braced_name_end(expr: &[u8]) -> usize {
 /// Builds `WordPart` entries for a sub-range of a raw byte buffer.
 /// `base` is added to all positional offsets so they reference positions
 /// in the full `Word.raw` buffer (use 0 when `raw` is already the full buffer).
-fn build_word_parts_for_slice(raw: &[u8], start: usize, end: usize, base: usize) -> Vec<WordPart> {
-    build_word_parts_impl(raw, start, end, base, true)
+///
+/// When `assignment_rhs` is `true`, apply assignment-context tilde rules:
+/// `~` at slice start AND `~` immediately following an unquoted unescaped
+/// `:` both emit a `TildeLiteral`. When `false`, only word-start `~`
+/// emits a `TildeLiteral` (ordinary word tokenization).
+pub(crate) fn build_word_parts_for_slice(
+    raw: &[u8],
+    start: usize,
+    end: usize,
+    base: usize,
+    assignment_rhs: bool,
+) -> Vec<WordPart> {
+    build_word_parts_impl(raw, start, end, base, true, assignment_rhs)
+}
+
+/// Build `WordPart` entries for the body of an unquoted-delimiter
+/// heredoc. Heredoc expansion differs from ordinary word expansion:
+///
+/// - Quotes (`'` and `"`) are literal bytes; there is no quoted-mode
+///   sub-parsing.
+/// - The only backslash escapes recognized are `\\`, `\$`, and
+///   `\<newline>` (line continuation). Any other backslash is literal.
+/// - `$...` and `` `...` `` introduce expansions. Because heredoc
+///   bodies do not undergo field splitting, the emitted Expansion parts
+///   carry `quoted: true` so the downstream expander collapses them to
+///   a single string just like content inside double quotes.
+/// - Tilde expansion does not apply. No `TildeLiteral` is emitted.
+/// - Literal parts never carry the `assignment` flag.
+///
+/// Offsets in emitted parts are relative to `body` (i.e. the heredoc
+/// body buffer), which is what the expander receives at runtime.
+pub(crate) fn build_heredoc_parts(body: &[u8]) -> Vec<WordPart> {
+    let mut parts: Vec<WordPart> = Vec::new();
+    let mut qbuf: Vec<u8> = Vec::new();
+    let mut i = 0usize;
+    let end = body.len();
+
+    while i < end {
+        match body[i] {
+            b'\\' => {
+                if i + 1 >= end {
+                    // Trailing backslash is literal.
+                    qbuf.push(b'\\');
+                    i += 1;
+                    continue;
+                }
+                match body[i + 1] {
+                    b'$' | b'\\' => {
+                        qbuf.push(body[i + 1]);
+                        i += 2;
+                    }
+                    b'\n' => {
+                        // Line continuation: drop both bytes.
+                        i += 2;
+                    }
+                    _ => {
+                        qbuf.push(b'\\');
+                        qbuf.push(body[i + 1]);
+                        i += 2;
+                    }
+                }
+            }
+            b'$' => {
+                flush_quoted_buf(&mut qbuf, &mut parts);
+                let (kind, consumed) = classify_dollar_from_slice(&body[i..end], true, i);
+                parts.push(WordPart::Expansion { kind, quoted: true });
+                i += consumed;
+            }
+            b'`' => {
+                flush_quoted_buf(&mut qbuf, &mut parts);
+                let bt_end = find_backtick_end(body, i + 1, end);
+                let body_bytes = unescape_backtick(&body[i + 1..bt_end], true);
+                let program = crate::syntax::parse(&body_bytes).unwrap_or_default();
+                parts.push(WordPart::Expansion {
+                    kind: ExpansionKind::Command {
+                        program: Rc::new(program),
+                    },
+                    quoted: true,
+                });
+                i = if bt_end < end { bt_end + 1 } else { bt_end };
+            }
+            b => {
+                qbuf.push(b);
+                i += 1;
+            }
+        }
+    }
+    flush_quoted_buf(&mut qbuf, &mut parts);
+    parts
+}
+
+/// Consume a `~user/...` prefix starting at `*i`. Pushes a
+/// `TildeLiteral` into `parts`. The path-tail consumption stops at the
+/// first quote byte, and additionally at the first unquoted `:` when
+/// `assignment_rhs` is `true` (so that assignment values like
+/// `~/bin:~/scripts` split into two `TildeLiteral`s separated by a
+/// literal `:`).
+fn consume_tilde_at(
+    raw: &[u8],
+    i: &mut usize,
+    end: usize,
+    base: usize,
+    assignment_rhs: bool,
+    parts: &mut Vec<WordPart>,
+) {
+    let tilde_pos = base + *i;
+    *i += 1;
+    while *i < end && !is_tilde_user_break(raw[*i]) {
+        *i += 1;
+    }
+    let user_end = base + *i;
+    if *i < end && raw[*i] == b'/' {
+        *i += 1;
+        while *i < end && !is_quote(raw[*i]) && !(assignment_rhs && raw[*i] == b':') {
+            *i += 1;
+        }
+    }
+    let tilde_end = base + *i;
+    if user_end > tilde_pos + 1 || tilde_end > tilde_pos + 1 {
+        parts.push(WordPart::TildeLiteral {
+            tilde_pos,
+            user_end,
+            end: tilde_end,
+        });
+    } else {
+        parts.push(WordPart::TildeLiteral {
+            tilde_pos,
+            user_end: tilde_pos + 1,
+            end: tilde_pos + 1,
+        });
+    }
 }
 
 fn build_word_parts_impl(
@@ -1942,37 +2072,13 @@ fn build_word_parts_impl(
     end: usize,
     base: usize,
     allow_tilde: bool,
+    assignment_rhs: bool,
 ) -> Vec<WordPart> {
     let mut parts = Vec::new();
     let mut qbuf = Vec::new();
     let mut i = start;
     if allow_tilde && i < end && raw[i] == b'~' {
-        let tilde_pos = base + i;
-        i += 1;
-        while i < end && !is_tilde_user_break(raw[i]) {
-            i += 1;
-        }
-        let user_end = base + i;
-        if i < end && raw[i] == b'/' {
-            i += 1;
-            while i < end && !is_quote(raw[i]) {
-                i += 1;
-            }
-        }
-        let tilde_end = base + i;
-        if user_end > tilde_pos + 1 || tilde_end > tilde_pos + 1 {
-            parts.push(WordPart::TildeLiteral {
-                tilde_pos,
-                user_end,
-                end: tilde_end,
-            });
-        } else {
-            parts.push(WordPart::TildeLiteral {
-                tilde_pos,
-                user_end: tilde_pos + 1,
-                end: tilde_pos + 1,
-            });
-        }
+        consume_tilde_at(raw, &mut i, end, base, assignment_rhs, &mut parts);
     }
     while i < end {
         match raw[i] {
@@ -2042,6 +2148,30 @@ fn build_word_parts_impl(
                 }
             }
             b'$' => {
+                // `$'...'` is an ANSI-C escape construct; the body is
+                // decoded here and contributes as a single quoted
+                // literal. The re-parse path has to mirror the
+                // top-level tokenizer's handling (see
+                // `scan_raw_word_parts_scratch`) so assignment RHS
+                // values like `x=$'a\\tb'` decode identically to the
+                // argv form `echo $'a\tb'`.
+                if i + 1 < end && raw[i + 1] == b'\'' {
+                    let body_start = i + 2;
+                    let mut j = body_start;
+                    while j < end && raw[j] != b'\'' {
+                        if raw[j] == b'\\' && j + 1 < end {
+                            j += 2;
+                        } else {
+                            j += 1;
+                        }
+                    }
+                    let decoded = crate::expand::parameter::parse_dollar_single_quoted_body(
+                        &raw[body_start..j],
+                    );
+                    qbuf.extend_from_slice(&decoded);
+                    i = if j < end { j + 1 } else { j };
+                    continue;
+                }
                 flush_quoted_buf(&mut qbuf, &mut parts);
                 let (kind, consumed) = classify_dollar_from_slice(&raw[i..end], false, base + i);
                 parts.push(WordPart::Expansion {
@@ -2065,19 +2195,42 @@ fn build_word_parts_impl(
             }
             _ => {
                 let lit_start = i;
-                while i < end && !is_quote(raw[i]) {
-                    i += 1;
+                loop {
+                    while i < end && !is_quote(raw[i]) && !(assignment_rhs && raw[i] == b':') {
+                        i += 1;
+                    }
+                    if assignment_rhs && i < end && raw[i] == b':' {
+                        i += 1;
+                        if i < end && raw[i] == b'~' {
+                            flush_quoted_buf(&mut qbuf, &mut parts);
+                            let span = &raw[lit_start..i];
+                            let has_glob = span.iter().any(|&b| is_glob_char(b));
+                            let newlines = span.iter().filter(|&&b| b == b'\n').count() as u16;
+                            parts.push(WordPart::Literal {
+                                start: base + lit_start,
+                                end: base + i,
+                                has_glob,
+                                newlines,
+                                assignment: false,
+                            });
+                            consume_tilde_at(raw, &mut i, end, base, assignment_rhs, &mut parts);
+                            break;
+                        }
+                        continue;
+                    }
+                    flush_quoted_buf(&mut qbuf, &mut parts);
+                    let span = &raw[lit_start..i];
+                    let has_glob = span.iter().any(|&b| is_glob_char(b));
+                    let newlines = span.iter().filter(|&&b| b == b'\n').count() as u16;
+                    parts.push(WordPart::Literal {
+                        start: base + lit_start,
+                        end: base + i,
+                        has_glob,
+                        newlines,
+                        assignment: false,
+                    });
+                    break;
                 }
-                flush_quoted_buf(&mut qbuf, &mut parts);
-                let span = &raw[lit_start..i];
-                let has_glob = span.iter().any(|&b| is_glob_char(b));
-                let newlines = span.iter().filter(|&&b| b == b'\n').count() as u16;
-                parts.push(WordPart::Literal {
-                    start: base + lit_start,
-                    end: base + i,
-                    has_glob,
-                    newlines,
-                });
             }
         }
     }
@@ -2563,7 +2716,7 @@ mod tests {
     #[test]
     fn build_word_parts_for_slice_tilde_at_start() {
         let raw = b"${x:-~/path}";
-        let parts = build_word_parts_for_slice(raw, 5, 11, 0);
+        let parts = build_word_parts_for_slice(raw, 5, 11, 0, false);
         assert!(
             matches!(parts[0], WordPart::TildeLiteral { .. }),
             "tilde at start of braced word should produce TildeLiteral, got {:?}",
@@ -2574,7 +2727,7 @@ mod tests {
     #[test]
     fn build_word_parts_for_slice_bare_tilde() {
         let raw = b"${x:-~}";
-        let parts = build_word_parts_for_slice(raw, 5, 6, 0);
+        let parts = build_word_parts_for_slice(raw, 5, 6, 0, false);
         assert!(
             matches!(parts[0], WordPart::TildeLiteral { .. }),
             "bare tilde should produce TildeLiteral, got {:?}",
@@ -2585,42 +2738,42 @@ mod tests {
     #[test]
     fn build_word_parts_for_slice_dquote_with_dollar() {
         let raw = b"${x:-\"$y\"}";
-        let parts = build_word_parts_for_slice(raw, 5, 9, 0);
+        let parts = build_word_parts_for_slice(raw, 5, 9, 0, false);
         assert!(parts.len() >= 1);
     }
 
     #[test]
     fn build_word_parts_for_slice_dquote_with_backslash() {
         let raw = b"${x:-\"a\\$b\"}";
-        let parts = build_word_parts_for_slice(raw, 5, 11, 0);
+        let parts = build_word_parts_for_slice(raw, 5, 11, 0, false);
         assert!(parts.len() >= 1);
     }
 
     #[test]
     fn build_word_parts_for_slice_dquote_with_backtick() {
         let raw = b"${x:-\"`echo y`\"}";
-        let parts = build_word_parts_for_slice(raw, 5, 15, 0);
+        let parts = build_word_parts_for_slice(raw, 5, 15, 0, false);
         assert!(parts.len() >= 1);
     }
 
     #[test]
     fn build_word_parts_for_slice_top_level_backslash() {
         let raw = b"${x:-a\\nb}";
-        let parts = build_word_parts_for_slice(raw, 5, 9, 0);
+        let parts = build_word_parts_for_slice(raw, 5, 9, 0, false);
         assert!(parts.len() >= 1);
     }
 
     #[test]
     fn build_word_parts_for_slice_top_level_dollar() {
         let raw = b"${x:-$y}";
-        let parts = build_word_parts_for_slice(raw, 5, 7, 0);
+        let parts = build_word_parts_for_slice(raw, 5, 7, 0, false);
         assert!(parts.len() >= 1);
     }
 
     #[test]
     fn build_word_parts_for_slice_top_level_backtick() {
         let raw = b"${x:-`echo z`}";
-        let parts = build_word_parts_for_slice(raw, 5, 13, 0);
+        let parts = build_word_parts_for_slice(raw, 5, 13, 0, false);
         assert!(parts.len() >= 1);
     }
 
@@ -2916,7 +3069,7 @@ mod tests {
     #[test]
     fn build_word_parts_impl_tilde_expansion() {
         let raw = b"~user/path";
-        let parts = build_word_parts_impl(raw, 0, raw.len(), 0, true);
+        let parts = build_word_parts_impl(raw, 0, raw.len(), 0, true, false);
         assert!(!parts.is_empty());
         assert!(matches!(parts[0], WordPart::TildeLiteral { .. }));
     }
@@ -2924,7 +3077,7 @@ mod tests {
     #[test]
     fn build_word_parts_impl_dquote_non_special_backslash() {
         let raw = b"\"hello\\wworld\"";
-        let parts = build_word_parts_impl(raw, 0, raw.len(), 0, false);
+        let parts = build_word_parts_impl(raw, 0, raw.len(), 0, false, false);
         assert!(!parts.is_empty());
         let has_quoted = parts
             .iter()
@@ -2935,14 +3088,14 @@ mod tests {
     #[test]
     fn build_word_parts_impl_unquoted_backslash() {
         let raw = b"hello\\ world";
-        let parts = build_word_parts_impl(raw, 0, raw.len(), 0, false);
+        let parts = build_word_parts_impl(raw, 0, raw.len(), 0, false, false);
         assert!(!parts.is_empty());
     }
 
     #[test]
     fn build_word_parts_impl_dollar_literal() {
         let raw = b"$";
-        let parts = build_word_parts_impl(raw, 0, raw.len(), 0, false);
+        let parts = build_word_parts_impl(raw, 0, raw.len(), 0, false, false);
         assert!(!parts.is_empty());
         assert!(parts.iter().any(|p| matches!(
             p,

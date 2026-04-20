@@ -120,6 +120,25 @@ fn dollar_single_quotes_follow_issue_eight_rules() {
 }
 
 #[test]
+fn dollar_single_quote_decodes_inside_assignment_value() {
+    // Issue 8 / bash-compat: `NAME=$'...'` assignments decode the ANSI-C
+    // escape sequences in the value, just like the same quoting in an
+    // ordinary argv word.
+    let output = Command::new(meiksh())
+        .args([
+            "-c",
+            "x=$'a\\tb\\nc'; printf '%s' \"$x\" | od -An -c | tr -s ' '",
+        ])
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success(), "status={:?}", output.status);
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        "a \\t b \\n c",
+    );
+}
+
+#[test]
 fn field_splitting_respects_ifs_defaults_and_star_joining() {
     let output = Command::new(meiksh())
         .args([

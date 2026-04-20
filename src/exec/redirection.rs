@@ -453,6 +453,7 @@ mod tests {
                         here_doc: Some(HereDoc {
                             delimiter: b"EOF".to_vec().into(),
                             body: b"hello $USER".to_vec().into(),
+                            body_parts: crate::syntax::build_heredoc_parts(b"hello $USER"),
                             expand: true,
                             strip_tabs: false,
                             body_line: 0,
@@ -476,6 +477,7 @@ mod tests {
                         here_doc: Some(HereDoc {
                             delimiter: b"EOF".to_vec().into(),
                             body: b"hello $USER".to_vec().into(),
+                            body_parts: Vec::new(),
                             expand: false,
                             strip_tabs: false,
                             body_line: 0,
@@ -511,6 +513,7 @@ mod tests {
                         here_doc: Some(HereDoc {
                             delimiter: b"EOF".to_vec().into(),
                             body: b"hello\nworld\n".to_vec().into(),
+                            body_parts: Vec::new(),
                             expand: false,
                             strip_tabs: true,
                             body_line: 0,

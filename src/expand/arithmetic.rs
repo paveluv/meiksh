@@ -2,55 +2,6 @@ use crate::bstr;
 use crate::syntax::byte_class::{is_ascii_ws, is_digit, is_name_cont, is_name_start};
 
 use super::core::{Context, ExpandError};
-use super::model::Expansion;
-use super::parameter::expand_dollar;
-use super::word::{scan_backtick_command, trim_trailing_newlines};
-
-pub(super) fn expand_arithmetic_expression<C: Context>(
-    ctx: &mut C,
-    expression: &[u8],
-) -> Result<Vec<u8>, ExpandError> {
-    let mut out = Vec::new();
-    expand_arithmetic_expression_into(ctx, expression, &mut out)?;
-    Ok(out)
-}
-
-/// Append the pre-expanded form of an arithmetic `expression` (with `$…`,
-/// `` `…` ``, and line-continuation handling performed) into `out`.
-/// Caller clears `out` first if a fresh buffer is desired.
-pub(super) fn expand_arithmetic_expression_into<C: Context>(
-    ctx: &mut C,
-    expression: &[u8],
-    out: &mut Vec<u8>,
-) -> Result<(), ExpandError> {
-    let mut i = 0;
-    while i < expression.len() {
-        if expression[i] == b'$' {
-            let (expansion, consumed) = expand_dollar(ctx, &expression[i..], true)?;
-            match expansion {
-                Expansion::One(s) => out.extend_from_slice(&s),
-                Expansion::Static(s) => out.extend_from_slice(s),
-                Expansion::AtFields(fields) => {
-                    out.extend_from_slice(&bstr::join_bstrings(&fields, b" "));
-                }
-            }
-            i += consumed;
-        } else if expression[i] == b'`' {
-            i += 1;
-            let command = scan_backtick_command(expression, &mut i, true)?;
-            let output = ctx.command_substitute_raw(&command)?;
-            out.extend_from_slice(trim_trailing_newlines(&output));
-        } else if expression[i] == b'\n' {
-            ctx.inc_lineno();
-            out.push(b'\n');
-            i += 1;
-        } else {
-            out.push(expression[i]);
-            i += 1;
-        }
-    }
-    Ok(())
-}
 
 pub(super) fn eval_arithmetic<C: Context>(
     ctx: &mut C,
@@ -586,48 +537,10 @@ pub(super) fn apply_compound_assign(op: &[u8], lhs: i64, rhs: i64) -> Result<i64
 mod tests {
     use super::*;
     use crate::expand::test_support::FakeContext;
-    use crate::sys::test_support::assert_no_syscalls;
     #[test]
     fn apply_compound_assign_unknown_op_returns_error() {
         let err = apply_compound_assign(b"??=", 1, 2).unwrap_err();
         assert!(err.message.windows(7).any(|w| w == b"unknown"));
-    }
-
-    #[test]
-    fn expand_arithmetic_with_literal_newlines() {
-        let mut ctx = FakeContext::new();
-        let result = expand_arithmetic_expression(&mut ctx, b"1\n+\n2").expect("newline arith");
-        assert_eq!(result, b"1\n+\n2");
-    }
-
-    #[test]
-    fn expand_arithmetic_expression_static_literal_dollar() {
-        assert_no_syscalls(|| {
-            let mut ctx = FakeContext::new();
-            let result = expand_arithmetic_expression(&mut ctx, b"$ ").expect("static dollar");
-            assert_eq!(result, b"$ ");
-        });
-    }
-
-    #[test]
-    fn expand_arithmetic_expression_one_and_at_fields() {
-        // Covers the Expansion::One and Expansion::AtFields match arms of
-        // expand_arithmetic_expression. This helper is called from
-        // parameter.rs:45 for nested `$((…))` inside `${…}` expansions.
-        let mut ctx = FakeContext::new();
-        ctx.env.insert(b"N".to_vec(), b"7".to_vec());
-        let one = expand_arithmetic_expression(&mut ctx, b"$N+1").expect("name expansion");
-        assert_eq!(one, b"7+1");
-
-        let at_fields =
-            expand_arithmetic_expression(&mut ctx, b"$@").expect("at fields join with space");
-        assert_eq!(at_fields, b"alpha beta");
-
-        // Backtick and literal-newline branches are already exercised in other
-        // tests; double-check by piping through eval_arithmetic for good
-        // measure on a trivial expression.
-        let result = expand_arithmetic_expression(&mut ctx, b"1+2").expect("plain");
-        assert_eq!(result, b"1+2");
     }
 
     #[test]
