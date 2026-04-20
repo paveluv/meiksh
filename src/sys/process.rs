@@ -804,6 +804,7 @@ mod tests {
         use test_support::run_trace;
         run_trace(
             trace_entries![
+                fstat(fd(STDIN_FILENO), _) -> stat_char,
                 isatty(fd(STDIN_FILENO)) -> 1,
                 fcntl(fd(STDIN_FILENO), int(F_GETFL), int(0)) -> int((O_NONBLOCK | 0o2) as i64),
                 fcntl(fd(STDIN_FILENO), int(F_SETFL), int(0o2)) -> err(libc::EIO),

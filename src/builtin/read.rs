@@ -84,6 +84,81 @@ pub(super) fn parse_read_options(argv: &[Vec<u8>]) -> Option<(ReadOptions, Vec<V
     Some((options, argv[index..].to_vec()))
 }
 
+/// Size of the per-invocation read buffer used when the input fd is
+/// seekable. Sized to fit a handful of typical log / CSV lines per
+/// syscall without pushing stack use above a page.
+const READ_CHUNK: usize = 1024;
+
+/// Stateful byte-source used by `read_logical_line`. On seekable fds
+/// the cursor buffers up to [`READ_CHUNK`] bytes per `read()` syscall
+/// and rewinds any unconsumed bytes in `Drop`, so callers that share
+/// the fd with subsequent commands still observe the byte-at-a-time fd
+/// position they would get from the unbuffered path. On non-seekable
+/// fds (pipes, FIFOs, sockets, terminals) we cannot over-read without
+/// losing data, so the cursor reads one byte per syscall.
+enum ReadCursor {
+    Buffered {
+        buf: [u8; READ_CHUNK],
+        start: usize,
+        end: usize,
+        fd: i32,
+    },
+    Unbuffered,
+}
+
+impl ReadCursor {
+    fn for_fd(fd: i32) -> Self {
+        match sys::fd_io::fd_seek_cur(fd) {
+            Ok(_) => Self::Buffered {
+                buf: [0u8; READ_CHUNK],
+                start: 0,
+                end: 0,
+                fd,
+            },
+            Err(_) => Self::Unbuffered,
+        }
+    }
+
+    fn next_byte(&mut self, input_fd: i32) -> sys::error::SysResult<Option<u8>> {
+        match self {
+            Self::Buffered {
+                buf, start, end, ..
+            } => {
+                if *start == *end {
+                    let n = sys::fd_io::read_fd(input_fd, &mut buf[..])?;
+                    if n == 0 {
+                        return Ok(None);
+                    }
+                    *start = 0;
+                    *end = n;
+                }
+                let b = buf[*start];
+                *start += 1;
+                Ok(Some(b))
+            }
+            Self::Unbuffered => {
+                let mut one = [0u8; 1];
+                let n = sys::fd_io::read_fd(input_fd, &mut one)?;
+                if n == 0 { Ok(None) } else { Ok(Some(one[0])) }
+            }
+        }
+    }
+}
+
+impl Drop for ReadCursor {
+    fn drop(&mut self) {
+        if let Self::Buffered { start, end, fd, .. } = self {
+            let unused = end.saturating_sub(*start);
+            if unused > 0 {
+                // Best-effort rewind: if the seek fails the caller
+                // will surface the real error on the next read from
+                // the same fd.
+                let _ = sys::fd_io::fd_seek_rewind(*fd, unused);
+            }
+        }
+    }
+}
+
 pub(super) fn read_logical_line(
     shell: &Shell,
     options: ReadOptions,
@@ -92,23 +167,19 @@ pub(super) fn read_logical_line(
     let mut pieces = Vec::new();
     let mut current = Vec::new();
     let mut current_quoted = false;
+    let mut cursor = ReadCursor::for_fd(input_fd);
 
     loop {
-        let mut byte = [0u8; 1];
-        let count = sys::fd_io::read_fd(input_fd, &mut byte)?;
-        if count == 0 {
+        let Some(ch) = cursor.next_byte(input_fd)? else {
             push_read_piece(&mut pieces, &mut current, current_quoted);
             return Ok((pieces, false));
-        }
-        let ch = byte[0];
+        };
         if !options.raw && ch == b'\\' {
-            let count = sys::fd_io::read_fd(input_fd, &mut byte)?;
-            if count == 0 {
+            let Some(escaped) = cursor.next_byte(input_fd)? else {
                 current.push(b'\\');
                 push_read_piece(&mut pieces, &mut current, current_quoted);
                 return Ok((pieces, false));
-            }
-            let escaped = byte[0];
+            };
             if escaped == b'\n' || escaped == options.delimiter {
                 push_read_piece(&mut pieces, &mut current, current_quoted);
                 current_quoted = false;
@@ -322,7 +393,28 @@ mod tests {
     };
     use crate::trace_entries;
 
-    fn byte_reads(fd: i32, input: &[u8]) -> Vec<crate::sys::test_support::TraceEntry> {
+    /// Prepends the "probe lseek fails with ESPIPE" entry every trace
+    /// needs for `read_logical_line` to drop into the unbuffered path.
+    /// Returning ESPIPE mirrors what the kernel does for
+    /// pipes / FIFOs / sockets / terminals, which is what every unit
+    /// test in this module is modelling.
+    fn unseekable_probe(fd: i32) -> crate::sys::test_support::TraceEntry {
+        t(
+            "lseek",
+            vec![
+                ArgMatcher::Fd(fd),
+                ArgMatcher::Int(0),
+                ArgMatcher::Int(sys::constants::SEEK_CUR as i64),
+            ],
+            TraceResult::Err(sys::constants::ESPIPE),
+        )
+    }
+
+    /// Byte-at-a-time reads without a leading seekability probe —
+    /// for mid-call continuations that happen inside a single
+    /// `read_logical_line` invocation and therefore share the same
+    /// probe as the surrounding trace.
+    fn byte_reads_continuation(fd: i32, input: &[u8]) -> Vec<crate::sys::test_support::TraceEntry> {
         input
             .iter()
             .map(|&b| {
@@ -333,6 +425,12 @@ mod tests {
                 )
             })
             .collect()
+    }
+
+    fn byte_reads(fd: i32, input: &[u8]) -> Vec<crate::sys::test_support::TraceEntry> {
+        let mut out = vec![unseekable_probe(fd)];
+        out.extend(byte_reads_continuation(fd, input));
+        out
     }
 
     fn byte_reads_then_eof(fd: i32, input: &[u8]) -> Vec<crate::sys::test_support::TraceEntry> {
@@ -507,11 +605,14 @@ mod tests {
         let mut diag_body = b"read: ".to_vec();
         diag_body.extend_from_slice(&eio_str);
         let msg = diag(&diag_body);
-        let reads = vec![t(
-            "read",
-            vec![ArgMatcher::Fd(42), ArgMatcher::Any],
-            TraceResult::Err(sys::constants::EIO),
-        )];
+        let reads = vec![
+            unseekable_probe(42),
+            t(
+                "read",
+                vec![ArgMatcher::Fd(42), ArgMatcher::Any],
+                TraceResult::Err(sys::constants::EIO),
+            ),
+        ];
         run_trace(
             trace_entries![
                 ..reads,
@@ -676,7 +777,7 @@ mod tests {
     #[test]
     fn read_logical_line_backslash_newline_interactive_shows_ps2() {
         let before = byte_reads(42, b"first\\\n");
-        let after = byte_reads(42, b"second\n");
+        let after = byte_reads_continuation(42, b"second\n");
         run_trace(
             trace_entries![
                 ..before,
@@ -760,6 +861,49 @@ mod tests {
             let (_, second_quoted) = &pieces[1];
             assert!(*first_quoted);
             assert!(!*second_quoted);
+        });
+    }
+
+    /// Seekable-fd happy path: a single `read()` returns a chunk that
+    /// contains the delimiter plus trailing bytes; `ReadCursor::Drop`
+    /// must `lseek` back by the unconsumed byte count so the caller's
+    /// fd position lands exactly one byte past the delimiter, matching
+    /// the byte-at-a-time semantics.
+    #[test]
+    fn read_logical_line_buffered_rewinds_past_delimiter() {
+        let probe = t(
+            "lseek",
+            vec![
+                ArgMatcher::Fd(42),
+                ArgMatcher::Int(0),
+                ArgMatcher::Int(sys::constants::SEEK_CUR as i64),
+            ],
+            TraceResult::Int(0),
+        );
+        let chunk = t(
+            "read",
+            vec![ArgMatcher::Fd(42), ArgMatcher::Any],
+            TraceResult::Bytes(b"hello\nextra".to_vec()),
+        );
+        let rewind = t(
+            "lseek",
+            vec![
+                ArgMatcher::Fd(42),
+                ArgMatcher::Int(-5),
+                ArgMatcher::Int(sys::constants::SEEK_CUR as i64),
+            ],
+            TraceResult::Int(6),
+        );
+        run_trace(trace_entries![..vec![probe, chunk, rewind]], || {
+            let shell = test_shell();
+            let options = ReadOptions {
+                raw: false,
+                delimiter: b'\n',
+            };
+            let (pieces, hit_delim) = read_logical_line(&shell, options, 42).expect("read");
+            assert!(hit_delim);
+            let text: Vec<u8> = pieces.iter().flat_map(|(p, _)| p.iter().copied()).collect();
+            assert_eq!(text, b"hello");
         });
     }
 }

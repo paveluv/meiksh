@@ -281,6 +281,15 @@ pub(super) fn read(fd: c_int, buf: &mut [u8]) -> isize {
 }
 
 #[cfg(not(test))]
+pub(super) fn lseek(fd: c_int, offset: libc::off_t, whence: c_int) -> libc::off_t {
+    unsafe { libc::lseek(fd, offset, whence) }
+}
+#[cfg(test)]
+pub(super) fn lseek(fd: c_int, offset: libc::off_t, whence: c_int) -> libc::off_t {
+    super::test_support::trace_lseek(fd, offset, whence)
+}
+
+#[cfg(not(test))]
 pub(super) fn umask(cmask: FileModeMask) -> FileModeMask {
     unsafe { libc::umask(cmask) }
 }

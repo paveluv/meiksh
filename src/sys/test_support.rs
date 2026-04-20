@@ -119,6 +119,7 @@ pub(crate) enum TraceResult {
     StatFile(mode_t),
     StatFileSize(u64),
     StatFifo,
+    StatChar,
     StatSymlink,
     DirEntryBytes(Vec<u8>),
     StrVal(Vec<u8>),
@@ -448,6 +449,26 @@ pub(super) fn trace_read(fd: c_int, buf: &mut [u8]) -> isize {
         ),
     }
 }
+pub(super) fn trace_lseek(fd: c_int, offset: libc::off_t, whence: c_int) -> libc::off_t {
+    let entry = trace_dispatch(
+        "lseek",
+        &[
+            ArgMatcher::Fd(fd),
+            ArgMatcher::Int(offset as i64),
+            ArgMatcher::Int(whence as i64),
+        ],
+    );
+    match &entry.result {
+        TraceResult::Int(v) => *v as libc::off_t,
+        TraceResult::Err(errno) => {
+            set_errno(*errno);
+            -1
+        }
+        other => {
+            panic!("trace result type mismatch for 'lseek': expected Int/Err, got {other:?}")
+        }
+    }
+}
 pub(super) fn trace_umask(cmask: FileModeMask) -> FileModeMask {
     let entry = trace_dispatch("umask", &[ArgMatcher::Int(cmask as i64)]);
     match &entry.result {
@@ -553,6 +574,13 @@ fn fill_stat_buf(result: &TraceResult, buf: *mut libc::stat) -> Option<c_int> {
             unsafe {
                 std::ptr::write_bytes(buf, 0, 1);
                 (*buf).st_mode = libc::S_IFIFO | 0o644;
+            }
+            Some(0)
+        }
+        TraceResult::StatChar => {
+            unsafe {
+                std::ptr::write_bytes(buf, 0, 1);
+                (*buf).st_mode = libc::S_IFCHR | 0o644;
             }
             Some(0)
         }
@@ -820,6 +848,7 @@ pub(crate) struct ChildExitPanic(pub i32);
 /// `trace_dispatch`, catching pure-logic tests that accidentally escape
 /// into `sys::*`.
 pub(crate) fn assert_no_syscalls<T>(f: impl FnOnce() -> T) -> T {
+    super::fd_io::reset_passthrough_fd_cache_for_test();
     TRACE_LOG.with(|cell| {
         let prev_trace = cell.replace(Some(Vec::new()));
         let prev_index = TRACE_INDEX.with(|idx| idx.replace(0));
@@ -849,6 +878,10 @@ fn validate_fork_child_traces(trace: &[TraceEntry]) {
 }
 
 pub(crate) fn run_trace(trace: Vec<TraceEntry>, f: impl Fn()) {
+    // `ensure_blocking_read_fd` keeps a one-entry "known passthrough"
+    // fd cache that survives across tests on the same thread; clear
+    // it so each trace sees deterministic syscall behaviour.
+    super::fd_io::reset_passthrough_fd_cache_for_test();
     validate_fork_child_traces(&trace);
     let paths = enumerate_fork_paths(&trace);
 

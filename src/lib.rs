@@ -255,6 +255,21 @@ macro_rules! syscall_test {
             $crate::sys::test_support::TraceResult::StatDir,
         ));
     };
+    (@emit_entry $trace:ident; $syscall:ident; ($($args:tt)*); stat_char, $($rest:tt)*) => {
+        $trace.push($crate::sys::test_support::t(
+            stringify!($syscall),
+            $crate::syscall_test!(@args $($args)*),
+            $crate::sys::test_support::TraceResult::StatChar,
+        ));
+        $crate::syscall_test!(@parse_entries $trace; $($rest)*);
+    };
+    (@emit_entry $trace:ident; $syscall:ident; ($($args:tt)*); stat_char) => {
+        $trace.push($crate::sys::test_support::t(
+            stringify!($syscall),
+            $crate::syscall_test!(@args $($args)*),
+            $crate::sys::test_support::TraceResult::StatChar,
+        ));
+    };
     (@emit_entry $trace:ident; $syscall:ident; ($($args:tt)*); stat_fifo, $($rest:tt)*) => {
         $trace.push($crate::sys::test_support::t(
             stringify!($syscall),
