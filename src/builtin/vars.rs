@@ -4,31 +4,6 @@ use crate::bstr::BStrExt;
 use crate::bstr::ByteWriter;
 use crate::shell::error::ShellError;
 use crate::shell::state::Shell;
-use crate::sys;
-
-pub(super) fn expand_assignment_tilde(shell: &Shell, value: &[u8]) -> Vec<u8> {
-    if value.first() != Some(&b'~') {
-        return value.to_vec();
-    }
-    let slash_pos = value.iter().position(|&b| b == b'/');
-    let prefix_end = slash_pos.unwrap_or(value.len());
-    let user = &value[1..prefix_end];
-    let replacement = if user.is_empty() {
-        match shell.get_var(b"HOME") {
-            Some(h) => h.to_vec(),
-            None => return value.to_vec(),
-        }
-    } else {
-        match sys::env::home_dir_for_user(user) {
-            Some(dir) => dir,
-            None => return value.to_vec(),
-        }
-    };
-    let suffix = &value[prefix_end..];
-    let mut result = replacement;
-    result.extend_from_slice(suffix);
-    result
-}
 
 pub(super) fn export(shell: &mut Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutcome, ShellError> {
     let (print, index) = parse_declaration_listing_flag(shell, b"export", argv)?;
@@ -38,10 +13,12 @@ pub(super) fn export(shell: &mut Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutco
         }
         return Ok(BuiltinOutcome::Status(0));
     }
+    // Assignment-context expansion (including tilde-prefix handling)
+    // is performed by the parser/expander at AST-build and word-expand
+    // time; the builtin receives the already-expanded value verbatim.
     for item in &argv[index..] {
         if let Some((name, value)) = item.split_once_byte(b'=') {
-            let value = expand_assignment_tilde(shell, value);
-            shell.export_var(name, Some(&value))?;
+            shell.export_var(name, Some(value))?;
         } else {
             shell.export_var(item, None)?;
         }
@@ -59,9 +36,8 @@ pub(super) fn readonly(shell: &mut Shell, argv: &[Vec<u8>]) -> Result<BuiltinOut
     }
     for item in &argv[index..] {
         if let Some((name, value)) = item.split_once_byte(b'=') {
-            let value = expand_assignment_tilde(shell, value);
             shell
-                .set_var(name, &value)
+                .set_var(name, value)
                 .map_err(|e| shell.diagnostic(1, &var_error_msg(b"readonly", &e)))?;
             shell.mark_readonly(name);
         } else {
@@ -240,14 +216,31 @@ mod tests {
     }
 
     #[test]
-    fn export_tilde_expansion_in_value() {
+    fn export_preserves_literal_tilde_in_value() {
+        // Assignment-context tilde expansion is done by the parser; the
+        // builtin stores its operand verbatim. This test guards against
+        // the legacy double-expansion bug where the builtin re-expanded
+        // a tilde byte that had been preserved via quoting or escape.
         assert_no_syscalls(|| {
             let mut shell = test_shell();
             shell
                 .env_mut()
                 .insert(b"HOME".to_vec(), b"/home/user".to_vec());
             invoke(&mut shell, &[b"export".to_vec(), b"FOO=~/bin".to_vec()]).expect("export tilde");
-            assert_eq!(shell.get_var(b"FOO"), Some(b"/home/user/bin" as &[u8]));
+            assert_eq!(shell.get_var(b"FOO"), Some(b"~/bin" as &[u8]));
+        });
+    }
+
+    #[test]
+    fn readonly_preserves_literal_tilde_in_value() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            shell
+                .env_mut()
+                .insert(b"HOME".to_vec(), b"/home/user".to_vec());
+            invoke(&mut shell, &[b"readonly".to_vec(), b"FOO=~/bin".to_vec()])
+                .expect("readonly tilde");
+            assert_eq!(shell.get_var(b"FOO"), Some(b"~/bin" as &[u8]));
         });
     }
 
@@ -263,35 +256,6 @@ mod tests {
                 let outcome =
                     invoke(&mut shell, &[b"unset".to_vec(), b"RO".to_vec()]).expect("unset RO");
                 assert!(matches!(outcome, BuiltinOutcome::UtilityError(1)));
-            },
-        );
-    }
-
-    #[test]
-    fn expand_assignment_tilde_no_home() {
-        assert_no_syscalls(|| {
-            let shell = test_shell();
-            assert_eq!(expand_assignment_tilde(&shell, b"~/bin"), b"~/bin");
-        });
-    }
-
-    #[test]
-    fn expand_assignment_tilde_username() {
-        use crate::sys::test_support::{ArgMatcher, TraceResult, t};
-        run_trace(
-            trace_entries![
-                ..vec![t(
-                    "getpwnam",
-                    vec![ArgMatcher::Str(b"bob".to_vec())],
-                    TraceResult::StrVal(b"/home/bob".to_vec()),
-                )]
-            ],
-            || {
-                let shell = test_shell();
-                assert_eq!(
-                    expand_assignment_tilde(&shell, b"~bob/docs"),
-                    b"/home/bob/docs"
-                );
             },
         );
     }

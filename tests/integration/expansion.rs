@@ -515,6 +515,42 @@ fn export_with_unknown_tilde_user_preserved() {
 }
 
 #[test]
+fn export_with_quoted_tilde_stays_literal() {
+    let output = Command::new(meiksh())
+        .args([
+            "-c",
+            "HOME=/fakehome; export V=\"~\"; printf '%s\\n' \"$V\"",
+        ])
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "~");
+}
+
+#[test]
+fn export_with_escaped_tilde_stays_literal() {
+    let output = Command::new(meiksh())
+        .args(["-c", "HOME=/fakehome; export V=\\~; printf '%s\\n' \"$V\""])
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "~");
+}
+
+#[test]
+fn readonly_with_quoted_tilde_stays_literal() {
+    let output = Command::new(meiksh())
+        .args([
+            "-c",
+            "HOME=/fakehome; readonly V=\"~\"; printf '%s\\n' \"$V\"",
+        ])
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "~");
+}
+
+#[test]
 fn assignment_with_nested_parameter_expansion() {
     let output = Command::new(meiksh())
         .args(["-c", "y=${x:-hello}; echo $y"])
