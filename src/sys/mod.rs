@@ -14,6 +14,11 @@ pub(crate) mod types;
 pub(crate) mod test_support;
 
 #[cfg(test)]
+#[allow(
+    clippy::disallowed_types,
+    clippy::disallowed_methods,
+    clippy::disallowed_macros
+)]
 mod boundary_tests {
     //! Enforce that `libc::` is only referenced inside `src/sys/`.
     //!
@@ -22,6 +27,12 @@ mod boundary_tests {
     //! libc/syscall dependency surface auditable in one place, and
     //! forces new code to either reuse an existing `sys` wrapper or
     //! add one deliberately.
+    //!
+    //! This auditor intentionally uses `std::fs`, `std::path::Path`
+    //! and `format!` directly: it must stay independent of the very
+    //! wrappers it is policing, so the `disallowed_*` clippy lints
+    //! that apply to production code are silenced at the module
+    //! boundary.
 
     use std::fs;
     use std::path::{Path, PathBuf};
