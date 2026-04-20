@@ -2,7 +2,7 @@ pub(crate) mod ast;
 pub(crate) mod byte_class;
 mod declaration_context;
 mod token;
-pub(crate) mod word_parts;
+pub(crate) mod word_part;
 
 use ast::Program;
 use token::{Parser, SavedAliasState};

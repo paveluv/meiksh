@@ -128,7 +128,7 @@ pub(super) fn write_xtrace(shell: &mut Shell, expanded: &ExpandedSimpleCommand) 
 
 pub(super) fn has_command_substitution(simple: &SimpleCommand) -> bool {
     fn word_has_cmd_sub(word: &crate::syntax::ast::Word) -> bool {
-        use crate::syntax::word_parts::{ExpansionKind, WordPart};
+        use crate::syntax::word_part::{ExpansionKind, WordPart};
         if !word.parts.is_empty() {
             return word.parts.iter().any(|p| {
                 matches!(
@@ -804,7 +804,7 @@ mod tests {
 
     #[test]
     fn has_command_substitution_via_word_parts() {
-        use crate::syntax::word_parts::{ExpansionKind, WordPart};
+        use crate::syntax::word_part::{ExpansionKind, WordPart};
         assert_no_syscalls(|| {
             let cmd_with_parts = SimpleCommand {
                 words: vec![Word {
