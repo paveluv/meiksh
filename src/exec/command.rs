@@ -59,9 +59,7 @@ pub(super) fn execute_command_inner(
         }
         Command::Group(program) => execute_nested_program(shell, program),
         Command::FunctionDef(function) => {
-            shell
-                .functions_mut()
-                .insert(function.name.to_vec(), Rc::clone(&function.body));
+            shell.define_function(function.name.to_vec(), Rc::clone(&function.body));
             Ok(0)
         }
         Command::If(if_command) => execute_if(shell, if_command),

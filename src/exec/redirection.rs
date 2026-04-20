@@ -34,8 +34,22 @@ pub(super) struct PreparedRedirections {
 }
 
 #[derive(Debug)]
-pub(super) struct ShellRedirectionGuard {
-    pub(super) saved: Vec<(i32, Option<i32>)>,
+pub(super) enum ShellRedirectionGuard {
+    Empty,
+    Saved(Vec<(i32, Option<i32>)>),
+}
+
+impl ShellRedirectionGuard {
+    #[inline]
+    fn saved_mut(&mut self) -> &mut Vec<(i32, Option<i32>)> {
+        if let ShellRedirectionGuard::Empty = self {
+            *self = ShellRedirectionGuard::Saved(Vec::new());
+        }
+        match self {
+            ShellRedirectionGuard::Saved(v) => v,
+            ShellRedirectionGuard::Empty => unreachable!(),
+        }
+    }
 }
 
 pub(super) fn close_parent_redirection_fds(prepared_redirections: &PreparedRedirections) {
@@ -178,7 +192,11 @@ pub(super) fn apply_child_setup(
 
 impl Drop for ShellRedirectionGuard {
     fn drop(&mut self) {
-        for (target_fd, saved_fd) in self.saved.iter().rev() {
+        let saved = match self {
+            ShellRedirectionGuard::Empty => return,
+            ShellRedirectionGuard::Saved(v) => v,
+        };
+        for (target_fd, saved_fd) in saved.iter().rev() {
             match saved_fd {
                 Some(saved_fd) => {
                     let _ = sys::fd_io::duplicate_fd(*saved_fd, *target_fd);
@@ -192,20 +210,32 @@ impl Drop for ShellRedirectionGuard {
     }
 }
 
+#[inline]
 pub(super) fn apply_shell_redirections<R: RedirectionRef>(
     redirections: &[R],
     noclobber: bool,
 ) -> Result<ShellRedirectionGuard, sys::error::SysError> {
-    let mut guard = ShellRedirectionGuard { saved: Vec::new() };
+    if redirections.is_empty() {
+        return Ok(ShellRedirectionGuard::Empty);
+    }
+    apply_shell_redirections_nonempty(redirections, noclobber)
+}
+
+fn apply_shell_redirections_nonempty<R: RedirectionRef>(
+    redirections: &[R],
+    noclobber: bool,
+) -> Result<ShellRedirectionGuard, sys::error::SysError> {
+    let mut guard = ShellRedirectionGuard::Empty;
 
     for redirection in redirections {
-        if !guard.saved.iter().any(|(fd, _)| *fd == redirection.fd()) {
+        let saved = guard.saved_mut();
+        if !saved.iter().any(|(fd, _)| *fd == redirection.fd()) {
             let original = match sys::fd_io::duplicate_fd_to_new(redirection.fd()) {
                 Ok(fd) => Some(fd),
                 Err(error) if error.is_ebadf() => None,
                 Err(error) => return Err(error),
             };
-            guard.saved.push((redirection.fd(), original));
+            saved.push((redirection.fd(), original));
         }
         apply_shell_redirection(redirection, noclobber)?;
     }

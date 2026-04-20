@@ -21,10 +21,16 @@ pub(super) fn join_boxed_bytes(parts: &[Box<[u8]>], sep: u8) -> Vec<u8> {
     out
 }
 
+/// Owned expansion result. Production code populates an
+/// [`crate::exec::scratch::ExecScratch`] directly via
+/// `expand_simple_in_place`; this type is retained only for tests and
+/// for the `expand_simple` convenience wrapper.
+#[cfg(test)]
 #[derive(Debug)]
 pub(super) struct ExpandedSimpleCommand {
     pub(super) assignments: Vec<(Vec<u8>, Vec<u8>)>,
     pub(super) argv: Vec<Vec<u8>>,
+    #[allow(dead_code)]
     pub(super) redirections: Vec<ExpandedRedirection>,
 }
 

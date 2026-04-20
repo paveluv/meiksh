@@ -459,6 +459,24 @@ fn expand_special_var<C: Context>(
             let value = bstr::join_bstrings(ctx.positional_params(), sep);
             output.push_value(&value, quoted, &scratch.ifs_chars);
         }
+        b'?' | b'$' | b'#' | b'!' => {
+            // Fast path: `$?`, `$$`, `$#`, `$!` all expand to a decimal
+            // integer. `special_param_int` lets us format into a
+            // stack-resident [`bstr::I64Buf`] and skip the `Cow::Owned`
+            // allocation that `special_param` would otherwise perform
+            // every time. For `$!` with no background job, the trait
+            // method returns `None`, in which case we fall back to the
+            // generic path so `nounset` / "parameter not set" diagnostics
+            // keep working unchanged.
+            if let Some(val) = ctx.special_param_int(ch) {
+                let buf = bstr::I64Buf::new(val);
+                output.push_value(buf.as_bytes(), quoted, &scratch.ifs_chars);
+            } else {
+                let value = ctx.special_param(ch);
+                let value = require_set_parameter(ctx, &[ch], value)?;
+                output.push_value(value.as_bytes(), quoted, &scratch.ifs_chars);
+            }
+        }
         _ => {
             let value = ctx.special_param(ch);
             let value = require_set_parameter(ctx, &[ch], value)?;
@@ -515,8 +533,11 @@ fn expand_braced<C: Context>(
         BracedOp::Length => {
             let value = lookup_braced_param(ctx, raw, braced_name);
             let value = require_set_parameter(ctx, name, value)?;
-            let len = bstr::u64_to_bytes(crate::sys::locale::count_chars(&value));
-            output.push_value(&len, quoted, &scratch.ifs_chars);
+            // `count_chars` returns the locale-aware character count as
+            // `u64`; format it into a stack buffer instead of allocating
+            // a `Vec<u8>` via `u64_to_bytes`.
+            let buf = bstr::I64Buf::from_u64(crate::sys::locale::count_chars(&value));
+            output.push_value(buf.as_bytes(), quoted, &scratch.ifs_chars);
         }
         BracedOp::None => {
             if !word_parts.is_empty() {

@@ -59,7 +59,7 @@ pub(super) fn unset(shell: &mut Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutcom
                 }
             }
             UnsetTarget::Function => {
-                shell.functions_mut().remove(item.as_slice());
+                shell.unset_function(item.as_slice());
             }
         }
     }

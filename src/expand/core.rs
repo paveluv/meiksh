@@ -13,6 +13,18 @@ pub(crate) struct ExpandError {
 pub(crate) trait Context {
     fn env_var(&self, name: &[u8]) -> Option<Cow<'_, [u8]>>;
     fn special_param(&self, name: u8) -> Option<Cow<'_, [u8]>>;
+    /// Integer-valued fast path for the numeric special parameters
+    /// (`$?`, `$$`, `$!`, `$#`). When `Some(v)` is returned, the caller
+    /// must format `v` via a stack buffer and skip the allocating
+    /// [`special_param`] path. `None` either means "not an integer
+    /// special" (fall through to [`special_param`]) or "the integer
+    /// parameter is currently unset" -- in both cases the slow path
+    /// below is the correct answer, so the distinction does not matter
+    /// at the call site.
+    #[inline]
+    fn special_param_int(&self, _name: u8) -> Option<i64> {
+        None
+    }
     fn positional_param(&self, index: usize) -> Option<Cow<'_, [u8]>>;
     fn positional_params(&self) -> &[Vec<u8>];
     fn set_var(&mut self, name: &[u8], value: &[u8]) -> Result<(), ExpandError>;
@@ -38,4 +50,9 @@ pub(crate) trait Context {
     /// it out via `std::mem::take` so that borrow checking does not
     /// conflict with further `&mut self` calls into the context.
     fn expand_scratch_mut(&mut self) -> &mut ExpandScratch;
+    /// Borrow the shared [`BytesPool`](crate::exec::scratch::BytesPool)
+    /// that the hot literal fast path pulls argv buffers from, and
+    /// that `execute_simple` recycles argv / assignment buffers back
+    /// into. See `expand_word_into` for the intended use pattern.
+    fn bytes_pool_mut(&mut self) -> &mut crate::exec::scratch::BytesPool;
 }

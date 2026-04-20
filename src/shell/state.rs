@@ -1,6 +1,8 @@
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::rc::Rc;
 
+use crate::exec::scratch::{BytesPool, ExecScratch, ExecScratchPool};
 use crate::expand::scratch::ExpandScratch;
 use crate::hash::ShellMap;
 use crate::sys;
@@ -22,13 +24,31 @@ pub(crate) enum PendingControl {
     Continue(usize),
 }
 
+/// A stable anchor for a shell-function body. Holders of
+/// `Rc<FunctionSlot>` observe live redefinitions via `slot.body.borrow()`
+/// and see `None` after `unset -f`. The indirection lets the per-
+/// `SimpleCommand` `argv[0]` memo cache an `Rc<FunctionSlot>` whose
+/// identity survives map rehashes and redefinitions.
+#[derive(Debug)]
+pub(crate) struct FunctionSlot {
+    pub(crate) body: RefCell<Option<Rc<crate::syntax::ast::Command>>>,
+}
+
+impl FunctionSlot {
+    pub(crate) fn new(body: Rc<crate::syntax::ast::Command>) -> Self {
+        Self {
+            body: RefCell::new(Some(body)),
+        }
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct SharedEnv {
     pub(crate) env: ShellMap<Vec<u8>, Vec<u8>>,
     pub(crate) exported: BTreeSet<Vec<u8>>,
     pub(crate) readonly: BTreeSet<Vec<u8>>,
     pub(crate) aliases: ShellMap<Box<[u8]>, Box<[u8]>>,
-    pub(crate) functions: ShellMap<Vec<u8>, Rc<crate::syntax::ast::Command>>,
+    pub(crate) functions: ShellMap<Vec<u8>, Rc<FunctionSlot>>,
     pub(crate) path_cache: ShellMap<Box<[u8]>, Vec<u8>>,
     pub(crate) history: Vec<Box<[u8]>>,
     pub(crate) mail_sizes: ShellMap<Box<[u8]>, u64>,
@@ -67,6 +87,15 @@ pub(crate) struct Shell {
     /// fork boundaries. Clone produces a semantically-equivalent but
     /// capacity-wise empty scratch; buffers will regrow on first use.
     pub(crate) expand_scratch: ExpandScratch,
+    /// Free-list of per-`execute_simple` scratch buffers holding the
+    /// expanded argv / assignments / redirections outer `Vec`s.
+    /// See [`ExecScratchPool`] for the re-entrancy contract.
+    pub(crate) exec_scratch_pool: ExecScratchPool,
+    /// Free-list of cleared `Vec<u8>` buffers. Producers include the
+    /// literal fast path in word expansion; consumers include the
+    /// recycling of argv / assignment / redirection buffers after
+    /// `execute_simple`.
+    pub(crate) bytes_pool: BytesPool,
 }
 
 impl Shell {
@@ -94,13 +123,63 @@ impl Shell {
     pub(crate) fn aliases_mut(&mut self) -> &mut ShellMap<Box<[u8]>, Box<[u8]>> {
         &mut Rc::make_mut(&mut self.shared).aliases
     }
-    pub(crate) fn functions(&self) -> &ShellMap<Vec<u8>, Rc<crate::syntax::ast::Command>> {
+    pub(crate) fn functions(&self) -> &ShellMap<Vec<u8>, Rc<FunctionSlot>> {
         &self.shared.functions
     }
-    pub(crate) fn functions_mut(
-        &mut self,
-    ) -> &mut ShellMap<Vec<u8>, Rc<crate::syntax::ast::Command>> {
+    pub(crate) fn functions_mut(&mut self) -> &mut ShellMap<Vec<u8>, Rc<FunctionSlot>> {
         &mut Rc::make_mut(&mut self.shared).functions
+    }
+
+    /// Look up a function body by name. Returns `None` if no slot exists
+    /// or if the slot was cleared by a recent `unset -f`.
+    pub(crate) fn lookup_function(&self, name: &[u8]) -> Option<Rc<crate::syntax::ast::Command>> {
+        self.shared
+            .functions
+            .get(name)
+            .and_then(|slot| slot.body.borrow().as_ref().map(Rc::clone))
+    }
+
+    /// Look up the `FunctionSlot` handle for `name`. Used by the
+    /// `argv[0]` memo on `SimpleCommand` to cache a stable handle whose
+    /// body can be re-checked directly without re-probing the map.
+    pub(crate) fn lookup_function_slot(&self, name: &[u8]) -> Option<Rc<FunctionSlot>> {
+        self.shared.functions.get(name).map(Rc::clone)
+    }
+
+    /// Define or redefine a function. If a slot already exists for
+    /// `name`, mutate its `body` in place so any cached handles observe
+    /// the new definition; otherwise create a fresh slot.
+    pub(crate) fn define_function(&mut self, name: Vec<u8>, body: Rc<crate::syntax::ast::Command>) {
+        let map = self.functions_mut();
+        if let Some(slot) = map.get(name.as_slice()) {
+            *slot.body.borrow_mut() = Some(body);
+        } else {
+            map.insert(name, Rc::new(FunctionSlot::new(body)));
+        }
+    }
+
+    /// Unset a function. Any outstanding `Rc<FunctionSlot>` handles will
+    /// observe `body.is_none()` and fall back through the classifier.
+    pub(crate) fn unset_function(&mut self, name: &[u8]) {
+        let map = self.functions_mut();
+        if let Some(slot) = map.get(name) {
+            *slot.body.borrow_mut() = None;
+        }
+        map.remove(name);
+    }
+
+    /// Take an [`ExecScratch`] out of the pool, or create a fresh one
+    /// if the pool is empty.
+    pub(crate) fn take_exec_scratch(&mut self) -> ExecScratch {
+        self.exec_scratch_pool.take()
+    }
+
+    /// Return an `ExecScratch` to the pool. Inner `Vec<u8>` buffers
+    /// are drained into `bytes_pool` so they can be re-used by the
+    /// next word-expansion fast path.
+    pub(crate) fn recycle_exec_scratch(&mut self, mut scratch: ExecScratch) {
+        scratch.clear_into_pool(&mut self.bytes_pool);
+        self.exec_scratch_pool.push_cleared(scratch);
     }
     pub(crate) fn path_cache(&self) -> &ShellMap<Box<[u8]>, Vec<u8>> {
         &self.shared.path_cache
