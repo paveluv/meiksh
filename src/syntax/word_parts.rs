@@ -14,7 +14,7 @@ pub(crate) enum WordPart {
         /// at position `end-1`, and bytes `[start..end-1)` form a POSIX NAME
         /// with every byte unquoted and unescaped. Set exclusively by the
         /// parser at AST-build time (via
-        /// `assignment_context::apply_assignment_context_to_argv_word`) for
+        /// `declaration_context::apply_assignment_context_to_argv_word`) for
         /// argv words attached to a declaration-utility call. Consumed by
         /// the declaration-utility expander to identify and split argv
         /// tokens like `A=value` without re-parsing.

@@ -466,6 +466,7 @@ mod tests {
                     },
                     here_doc: None,
                 }],
+                ..SimpleCommand::default()
             };
             assert_eq!(render_simple(&simple), b"X=1 echo >out");
 
@@ -488,9 +489,7 @@ mod tests {
                         },
                     },
                 ],
-                words: vec![],
-
-                redirections: vec![],
+                ..SimpleCommand::default()
             };
             assert_eq!(render_simple(&multi_assign), b"A=1 B=2");
 
@@ -1192,8 +1191,6 @@ mod tests {
     fn render_command_line_redirections_only() {
         assert_no_syscalls(|| {
             let simple = SimpleCommand {
-                words: vec![],
-                assignments: vec![],
                 redirections: vec![Redirection {
                     fd: Some(2),
                     kind: RedirectionKind::Append,
@@ -1204,6 +1201,7 @@ mod tests {
                     },
                     here_doc: None,
                 }],
+                ..SimpleCommand::default()
             };
             let rendered = render_simple(&simple);
             assert_eq!(rendered, b"2>>err.log");
