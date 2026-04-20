@@ -291,7 +291,6 @@ pub(super) mod test_support {
 #[cfg(test)]
 mod tests {
     use super::cd::resolve_cd_target;
-    use super::printf::{parse_hex_i64, parse_octal_i64};
     use super::*;
     use crate::builtin::test_support::{diag, invoke, test_shell};
     use crate::sys;
@@ -309,27 +308,6 @@ mod tests {
             assert!(is_builtin(b"echo"));
             assert!(is_builtin(b"test"));
             assert!(is_builtin(b"["));
-        });
-    }
-
-    #[test]
-    fn parse_hex_i64_helper() {
-        assert_no_syscalls(|| {
-            assert_eq!(parse_hex_i64(b"ff"), Some(255));
-            assert_eq!(parse_hex_i64(b"FF"), Some(255));
-            assert_eq!(parse_hex_i64(b"0"), Some(0));
-            assert_eq!(parse_hex_i64(b""), None);
-            assert_eq!(parse_hex_i64(b"zz"), None);
-        });
-    }
-
-    #[test]
-    fn parse_octal_i64_helper() {
-        assert_no_syscalls(|| {
-            assert_eq!(parse_octal_i64(b"77"), Some(63));
-            assert_eq!(parse_octal_i64(b"0"), Some(0));
-            assert_eq!(parse_octal_i64(b""), None);
-            assert_eq!(parse_octal_i64(b"89"), None);
         });
     }
 

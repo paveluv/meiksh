@@ -840,6 +840,28 @@ begin test "printf %d trailing non-numeric exits non-zero"
 end test "printf %d trailing non-numeric exits non-zero"
 ```
 
+#### Test: printf %d writes accumulated value on partial conversion
+
+When an operand cannot be completely converted for `%d` because of trailing
+non-numeric characters, the standard requires three things simultaneously:
+a diagnostic is written to standard error, the utility does not exit with a
+zero exit status, and `printf` "shall write the value accumulated at the
+time the error was detected to standard output". For `42abc`, the leading
+`42` has already been accumulated when the trailing `a` is detected as
+non-numeric, so standard output must contain `42` (not `0` and not an
+empty string) while standard error carries the diagnostic.
+
+```
+begin test "printf %d writes accumulated value on partial conversion"
+  script
+    printf "%d" 42abc
+  expect
+    stdout "42"
+    stderr ".+"
+    exit_code !=0
+end test "printf %d writes accumulated value on partial conversion"
+```
+
 #### Test: printf conversion error not masked by %b \c
 
 When a numeric conversion error occurs, the utility shall not exit with a zero exit status, even if a subsequent `%b` argument contains `\c` which stops output. Known `bash --posix` non-compliance #12: the `\c` escape causes an immediate return that bypasses the conversion error check, resulting in exit status 0.

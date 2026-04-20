@@ -36,109 +36,106 @@ pub(super) fn printf_builtin(
     Ok(BuiltinOutcome::Status(if had_error { 1 } else { 0 }))
 }
 
-pub(super) fn printf_parse_numeric_arg(
-    shell: &Shell,
-    arg: &[u8],
-    had_error: &mut bool,
-) -> (i64, bool) {
-    match printf_parse_int(arg) {
-        Ok(v) => (v, true),
-        Err(msg) => {
-            let full = ByteWriter::new().bytes(b"printf: ").bytes(&msg).finish();
-            shell.diagnostic(1, &full);
-            *had_error = true;
-            (0, false)
-        }
+pub(super) fn printf_parse_numeric_arg(shell: &Shell, arg: &[u8], had_error: &mut bool) -> i64 {
+    let (val, err) = printf_parse_int_partial(arg);
+    if let Some(msg) = err {
+        let full = ByteWriter::new().bytes(b"printf: ").bytes(&msg).finish();
+        shell.diagnostic(1, &full);
+        *had_error = true;
     }
-}
-
-pub(super) fn printf_check_trailing(shell: &Shell, arg: &[u8], had_error: &mut bool) {
-    if !arg.is_empty() && arg[0] != b'\'' && arg[0] != b'"' {
-        if printf_find_trailing_garbage(arg).is_some() {
-            let msg = ByteWriter::new()
-                .bytes(b"printf: \"")
-                .bytes(arg)
-                .bytes(b"\": not completely converted")
-                .finish();
-            shell.diagnostic(1, &msg);
-            *had_error = true;
-        }
-    }
+    val
 }
 
 pub(super) fn printf_get_arg<'a>(args: &'a [Vec<u8>], base: usize, idx: usize) -> &'a [u8] {
     args.get(base + idx).map(|s| s.as_slice()).unwrap_or(b"")
 }
 
-pub(super) fn printf_parse_int(s: &[u8]) -> Result<i64, Vec<u8>> {
+/// Parse a printf numeric operand greedily, returning the accumulated value and
+/// an optional diagnostic message when the operand is not completely converted
+/// (POSIX: on partial conversion, write "the value accumulated at the time the
+/// error was detected" to stdout and a diagnostic to stderr).
+pub(super) fn printf_parse_int_partial(s: &[u8]) -> (i64, Option<Vec<u8>>) {
     if s.is_empty() {
-        return Ok(0);
+        return (0, None);
     }
     if s[0] == b'\'' || s[0] == b'"' {
         if s.len() <= 1 {
-            return Ok(0);
+            return (0, None);
         }
         let (wc, _) = crate::sys::locale::decode_char(&s[1..]);
-        return Ok(wc as i64);
+        return (wc as i64, None);
     }
-    let (neg, s) = if let Some(rest) = s.strip_prefix(b"-") {
-        (true, rest)
-    } else if let Some(rest) = s.strip_prefix(b"+") {
-        (false, rest)
-    } else {
-        (false, s)
+    let (neg, sign_len) = match s.first() {
+        Some(&b'-') => (true, 1),
+        Some(&b'+') => (false, 1),
+        _ => (false, 0),
     };
-    let val = if let Some(hex) = s.strip_prefix(b"0x").or_else(|| s.strip_prefix(b"0X")) {
-        parse_hex_i64(hex).ok_or_else(|| {
-            let mut msg = s.to_vec();
-            msg.extend_from_slice(b": invalid number");
-            msg
-        })
-    } else if s.first() == Some(&b'0') && s.len() > 1 {
-        parse_octal_i64(s).ok_or_else(|| {
-            let mut msg = s.to_vec();
-            msg.extend_from_slice(b": invalid number");
-            msg
-        })
+    let rest = &s[sign_len..];
+
+    let (magnitude, body_consumed) = if let Some(hex) = rest
+        .strip_prefix(b"0x")
+        .or_else(|| rest.strip_prefix(b"0X"))
+    {
+        let (v, n) = parse_hex_greedy(hex);
+        if n == 0 { (0, 0) } else { (v, 2 + n) }
+    } else if rest.first() == Some(&b'0') && rest.len() > 1 {
+        parse_octal_greedy(rest)
     } else {
-        bstr::parse_i64(s).ok_or_else(|| {
-            let mut msg = s.to_vec();
-            msg.extend_from_slice(b": invalid number");
-            msg
-        })
+        parse_decimal_greedy(rest)
     };
-    val.map(|v| if neg { -v } else { v })
+
+    let val = if neg {
+        magnitude.wrapping_neg()
+    } else {
+        magnitude
+    };
+
+    let total_consumed = sign_len + body_consumed;
+    if body_consumed == 0 || total_consumed < s.len() {
+        let msg = ByteWriter::new()
+            .bytes(b"\"")
+            .bytes(s)
+            .bytes(b"\": not completely converted")
+            .finish();
+        return (val, Some(msg));
+    }
+    (val, None)
 }
 
-pub(super) fn parse_hex_i64(s: &[u8]) -> Option<i64> {
-    if s.is_empty() {
-        return None;
-    }
+fn parse_hex_greedy(s: &[u8]) -> (i64, usize) {
     let mut result: i64 = 0;
-    for &b in s {
-        let digit = match b {
-            b'0'..=b'9' => (b - b'0') as i64,
-            b'a'..=b'f' => (b - b'a' + 10) as i64,
-            b'A'..=b'F' => (b - b'A' + 10) as i64,
-            _ => return None,
+    let mut i = 0;
+    while i < s.len() {
+        let digit = match s[i] {
+            b'0'..=b'9' => (s[i] - b'0') as i64,
+            b'a'..=b'f' => (s[i] - b'a' + 10) as i64,
+            b'A'..=b'F' => (s[i] - b'A' + 10) as i64,
+            _ => break,
         };
-        result = result.checked_mul(16)?.checked_add(digit)?;
+        result = result.wrapping_mul(16).wrapping_add(digit);
+        i += 1;
     }
-    Some(result)
+    (result, i)
 }
 
-pub(super) fn parse_octal_i64(s: &[u8]) -> Option<i64> {
-    if s.is_empty() {
-        return None;
-    }
+fn parse_octal_greedy(s: &[u8]) -> (i64, usize) {
     let mut result: i64 = 0;
-    for &b in s {
-        if !(b'0'..=b'7').contains(&b) {
-            return None;
-        }
-        result = result.checked_mul(8)?.checked_add((b - b'0') as i64)?;
+    let mut i = 0;
+    while i < s.len() && (b'0'..=b'7').contains(&s[i]) {
+        result = result.wrapping_mul(8).wrapping_add((s[i] - b'0') as i64);
+        i += 1;
     }
-    Some(result)
+    (result, i)
+}
+
+fn parse_decimal_greedy(s: &[u8]) -> (i64, usize) {
+    let mut result: i64 = 0;
+    let mut i = 0;
+    while i < s.len() && s[i].is_ascii_digit() {
+        result = result.wrapping_mul(10).wrapping_add((s[i] - b'0') as i64);
+        i += 1;
+    }
+    (result, i)
 }
 
 pub(super) fn printf_format(
@@ -236,35 +233,23 @@ pub(super) fn printf_format(
                     }
                 }
                 b'd' | b'i' => {
-                    let (val, parse_ok) = printf_parse_numeric_arg(shell, arg, &mut had_error);
-                    if parse_ok {
-                        printf_check_trailing(shell, arg, &mut had_error);
-                    }
+                    let val = printf_parse_numeric_arg(shell, arg, &mut had_error);
                     let mut c_spec = remove_byte(full_spec, conv);
                     c_spec.extend_from_slice(b"ld");
                     printf_format_signed(&mut out, &c_spec, val);
                 }
                 b'u' => {
-                    let (val, parse_ok) = printf_parse_numeric_arg(shell, arg, &mut had_error);
-                    if parse_ok {
-                        printf_check_trailing(shell, arg, &mut had_error);
-                    }
+                    let val = printf_parse_numeric_arg(shell, arg, &mut had_error);
                     let mut c_spec = remove_byte(full_spec, b'u');
                     c_spec.extend_from_slice(b"lu");
                     printf_format_unsigned(&mut out, &c_spec, val as u64);
                 }
                 b'o' => {
-                    let (val, parse_ok) = printf_parse_numeric_arg(shell, arg, &mut had_error);
-                    if parse_ok {
-                        printf_check_trailing(shell, arg, &mut had_error);
-                    }
+                    let val = printf_parse_numeric_arg(shell, arg, &mut had_error);
                     printf_format_octal(&mut out, full_spec, val as u64);
                 }
                 b'x' | b'X' => {
-                    let (val, parse_ok) = printf_parse_numeric_arg(shell, arg, &mut had_error);
-                    if parse_ok {
-                        printf_check_trailing(shell, arg, &mut had_error);
-                    }
+                    let val = printf_parse_numeric_arg(shell, arg, &mut had_error);
                     printf_format_hex(&mut out, full_spec, val as u64, conv == b'X');
                 }
                 _ => {
@@ -286,36 +271,6 @@ pub(super) fn printf_format(
 
 pub(super) fn remove_byte(s: &[u8], byte: u8) -> Vec<u8> {
     s.iter().copied().filter(|&b| b != byte).collect()
-}
-
-pub(super) fn printf_find_trailing_garbage(s: &[u8]) -> Option<usize> {
-    let s = if s.first() == Some(&b'+') || s.first() == Some(&b'-') {
-        &s[1..]
-    } else {
-        s
-    };
-    if let Some(hex) = s.strip_prefix(b"0x").or_else(|| s.strip_prefix(b"0X")) {
-        for (i, &c) in hex.iter().enumerate() {
-            if !c.is_ascii_hexdigit() {
-                return Some(i + 2);
-            }
-        }
-        return None;
-    }
-    if s.first() == Some(&b'0') && s.len() > 1 {
-        for (i, &c) in s.iter().enumerate().skip(1) {
-            if !(b'0'..=b'7').contains(&c) {
-                return Some(i);
-            }
-        }
-        return None;
-    }
-    for (i, &c) in s.iter().enumerate() {
-        if !c.is_ascii_digit() {
-            return Some(i);
-        }
-    }
-    None
 }
 
 pub(super) fn printf_format_escape(bytes: &[u8], start: usize) -> (Vec<u8>, usize) {
@@ -891,41 +846,108 @@ mod tests {
     #[test]
     fn printf_hex_parse() {
         assert_no_syscalls(|| {
-            assert_eq!(printf_parse_int(b"0xFF"), Ok(255));
-            assert_eq!(printf_parse_int(b"0x10"), Ok(16));
+            assert_eq!(printf_parse_int_partial(b"0xFF"), (255, None));
+            assert_eq!(printf_parse_int_partial(b"0x10"), (16, None));
         });
     }
 
     #[test]
     fn printf_octal_parse() {
         assert_no_syscalls(|| {
-            assert_eq!(printf_parse_int(b"010"), Ok(8));
-            assert_eq!(printf_parse_int(b"077"), Ok(63));
+            assert_eq!(printf_parse_int_partial(b"010"), (8, None));
+            assert_eq!(printf_parse_int_partial(b"077"), (63, None));
         });
     }
 
     #[test]
     fn printf_char_value_parse() {
         assert_no_syscalls(|| {
-            assert_eq!(printf_parse_int(b"'A"), Ok(65));
-            assert_eq!(printf_parse_int(b"\"B"), Ok(66));
-            assert_eq!(printf_parse_int(b"'"), Ok(0));
+            assert_eq!(printf_parse_int_partial(b"'A"), (65, None));
+            assert_eq!(printf_parse_int_partial(b"\"B"), (66, None));
+            assert_eq!(printf_parse_int_partial(b"'"), (0, None));
         });
     }
 
     #[test]
     fn printf_sign_prefix_parse() {
         assert_no_syscalls(|| {
-            assert_eq!(printf_parse_int(b"+42"), Ok(42));
-            assert_eq!(printf_parse_int(b"-42"), Ok(-42));
+            assert_eq!(printf_parse_int_partial(b"+42"), (42, None));
+            assert_eq!(printf_parse_int_partial(b"-42"), (-42, None));
         });
     }
 
     #[test]
     fn printf_invalid_number_error() {
         assert_no_syscalls(|| {
-            let result = printf_parse_int(b"abc");
-            assert!(result.is_err());
+            let (val, err) = printf_parse_int_partial(b"abc");
+            assert_eq!(val, 0);
+            assert!(err.is_some());
+        });
+    }
+
+    #[test]
+    fn printf_partial_decimal_accumulates() {
+        assert_no_syscalls(|| {
+            let (val, err) = printf_parse_int_partial(b"42abc");
+            assert_eq!(val, 42);
+            assert!(err.is_some());
+        });
+    }
+
+    #[test]
+    fn printf_partial_decimal_negative_accumulates() {
+        assert_no_syscalls(|| {
+            let (val, err) = printf_parse_int_partial(b"-42abc");
+            assert_eq!(val, -42);
+            assert!(err.is_some());
+        });
+    }
+
+    #[test]
+    fn printf_partial_hex_accumulates() {
+        assert_no_syscalls(|| {
+            let (val, err) = printf_parse_int_partial(b"0x1Gz");
+            assert_eq!(val, 1);
+            assert!(err.is_some());
+        });
+    }
+
+    #[test]
+    fn printf_partial_octal_accumulates() {
+        assert_no_syscalls(|| {
+            let (val, err) = printf_parse_int_partial(b"077x");
+            assert_eq!(val, 63);
+            assert!(err.is_some());
+        });
+    }
+
+    #[test]
+    fn printf_octal_invalid_digit_accumulates_zero() {
+        assert_no_syscalls(|| {
+            let (val, err) = printf_parse_int_partial(b"08");
+            assert_eq!(val, 0);
+            assert!(err.is_some());
+        });
+    }
+
+    #[test]
+    fn printf_hex_prefix_no_digits_errors() {
+        assert_no_syscalls(|| {
+            let (val, err) = printf_parse_int_partial(b"0x");
+            assert_eq!(val, 0);
+            assert!(err.is_some());
+        });
+    }
+
+    #[test]
+    fn printf_sign_alone_errors() {
+        assert_no_syscalls(|| {
+            let (val, err) = printf_parse_int_partial(b"-");
+            assert_eq!(val, 0);
+            assert!(err.is_some());
+            let (val2, err2) = printf_parse_int_partial(b"+");
+            assert_eq!(val2, 0);
+            assert!(err2.is_some());
         });
     }
 
@@ -1163,18 +1185,6 @@ mod tests {
     }
 
     #[test]
-    fn printf_check_trailing_garbage() {
-        assert_no_syscalls(|| {
-            assert!(printf_find_trailing_garbage(b"123abc").is_some());
-            assert!(printf_find_trailing_garbage(b"123").is_none());
-            assert!(printf_find_trailing_garbage(b"0xFG").is_some());
-            assert!(printf_find_trailing_garbage(b"0xFF").is_none());
-            assert!(printf_find_trailing_garbage(b"089").is_some());
-            assert!(printf_find_trailing_garbage(b"077").is_none());
-        });
-    }
-
-    #[test]
     fn printf_missing_format_operand() {
         run_trace(
             trace_entries![
@@ -1207,7 +1217,7 @@ mod tests {
 
     #[test]
     fn printf_format_parse_numeric_error() {
-        let msg = diag(b"printf: abc: invalid number");
+        let msg = diag(b"printf: \"abc\": not completely converted");
         run_trace(
             trace_entries![
                 write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto,
@@ -1226,53 +1236,59 @@ mod tests {
     }
 
     #[test]
+    fn printf_format_partial_conversion_accumulates() {
+        let msg = diag(b"printf: \"42abc\": not completely converted");
+        run_trace(
+            trace_entries![
+                write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto,
+                write(fd(1), bytes(b"42")) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                let outcome = invoke(
+                    &mut shell,
+                    &[b"printf".to_vec(), b"%d".to_vec(), b"42abc".to_vec()],
+                )
+                .expect("printf %d 42abc");
+                assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+            },
+        );
+    }
+
+    #[test]
     fn printf_parse_int_hex() {
         assert_no_syscalls(|| {
-            assert_eq!(printf_parse_int(b"0xff"), Ok(255));
-            assert_eq!(printf_parse_int(b"0XFF"), Ok(255));
+            assert_eq!(printf_parse_int_partial(b"0xff"), (255, None));
+            assert_eq!(printf_parse_int_partial(b"0XFF"), (255, None));
         });
     }
 
     #[test]
     fn printf_parse_int_octal() {
         assert_no_syscalls(|| {
-            assert_eq!(printf_parse_int(b"010"), Ok(8));
+            assert_eq!(printf_parse_int_partial(b"010"), (8, None));
         });
     }
 
     #[test]
     fn printf_parse_int_char_literal() {
         assert_no_syscalls(|| {
-            assert_eq!(printf_parse_int(b"'A"), Ok(65));
-            assert_eq!(printf_parse_int(b"\"B"), Ok(66));
+            assert_eq!(printf_parse_int_partial(b"'A"), (65, None));
+            assert_eq!(printf_parse_int_partial(b"\"B"), (66, None));
         });
     }
 
     #[test]
     fn printf_parse_int_empty() {
         assert_no_syscalls(|| {
-            assert_eq!(printf_parse_int(b""), Ok(0));
+            assert_eq!(printf_parse_int_partial(b""), (0, None));
         });
     }
 
     #[test]
     fn printf_parse_int_negative() {
         assert_no_syscalls(|| {
-            assert_eq!(printf_parse_int(b"-42"), Ok(-42));
-        });
-    }
-
-    #[test]
-    fn printf_parse_int_invalid_hex() {
-        assert_no_syscalls(|| {
-            assert!(printf_parse_int(b"0xZZZ").is_err());
-        });
-    }
-
-    #[test]
-    fn printf_parse_int_invalid_octal() {
-        assert_no_syscalls(|| {
-            assert!(printf_parse_int(b"08").is_err());
+            assert_eq!(printf_parse_int_partial(b"-42"), (-42, None));
         });
     }
 
@@ -1385,45 +1401,25 @@ mod tests {
     }
 
     #[test]
-    fn printf_check_trailing_calls_diagnostic() {
+    fn printf_partial_conversion_detected() {
         assert_no_syscalls(|| {
-            assert!(printf_find_trailing_garbage(b"42abc").is_some());
-            assert!(printf_find_trailing_garbage(b"+42abc").is_some());
-            assert!(printf_find_trailing_garbage(b"-42abc").is_some());
-            assert!(printf_find_trailing_garbage(b"0x1Gz").is_some());
-            assert!(printf_find_trailing_garbage(b"078").is_some());
+            assert!(printf_parse_int_partial(b"42abc").1.is_some());
+            assert!(printf_parse_int_partial(b"+42abc").1.is_some());
+            assert!(printf_parse_int_partial(b"-42abc").1.is_some());
+            assert!(printf_parse_int_partial(b"0x1Gz").1.is_some());
+            assert!(printf_parse_int_partial(b"078").1.is_some());
 
-            assert!(printf_find_trailing_garbage(b"42").is_none());
-            assert!(printf_find_trailing_garbage(b"+42").is_none());
-            assert!(printf_find_trailing_garbage(b"-42").is_none());
+            assert!(printf_parse_int_partial(b"42").1.is_none());
+            assert!(printf_parse_int_partial(b"+42").1.is_none());
+            assert!(printf_parse_int_partial(b"-42").1.is_none());
         });
     }
 
     #[test]
-    fn printf_check_trailing_diagnostic_message() {
-        let msg = diag(b"printf: \"42abc\": not completely converted");
-        run_trace(
-            trace_entries![
-                write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto,
-            ],
-            || {
-                let shell = test_shell();
-                let mut had_error = false;
-                printf_check_trailing(&shell, b"42abc", &mut had_error);
-                assert!(had_error);
-            },
-        );
-    }
-
-    #[test]
-    fn printf_check_trailing_skips_quoted() {
+    fn printf_partial_conversion_quoted_literal() {
         assert_no_syscalls(|| {
-            let shell = test_shell();
-            let mut had_error = false;
-            printf_check_trailing(&shell, b"'A", &mut had_error);
-            assert!(!had_error);
-            printf_check_trailing(&shell, b"\"B", &mut had_error);
-            assert!(!had_error);
+            assert!(printf_parse_int_partial(b"'A").1.is_none());
+            assert!(printf_parse_int_partial(b"\"B").1.is_none());
         });
     }
 
