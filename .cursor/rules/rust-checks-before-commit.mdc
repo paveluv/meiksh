@@ -1,0 +1,64 @@
+---
+description: Run cargo fmt and ensure zero warnings before creating a git commit
+alwaysApply: true
+---
+
+# Rust Checks Before Committing
+
+Before creating any git commit in this repository, always run
+`cargo fmt` AND verify the tree builds and tests cleanly with **zero
+warnings**. Stage any resulting changes as part of the same commit.
+This keeps formatting noise and warning regressions out of subsequent
+commits and avoids CI failures.
+
+## Workflow
+
+```bash
+cargo fmt
+cargo build --all-targets 2>&1 | tee /tmp/build.log | tail
+cargo test --all-targets 2>&1 | tee /tmp/test.log | tail
+git add -A
+git commit -m "..."
+```
+
+If `cargo fmt` touches files unrelated to your change, include them in
+the same commit rather than creating a separate formatting commit —
+the project's history treats formatting as part of the logical change
+that introduced it.
+
+## Verification
+
+All three checks MUST pass on the final tree before committing:
+
+1. `cargo fmt --check` exits 0. If not, run `cargo fmt` and re-stage.
+2. `cargo build --all-targets` produces no lines starting with
+   `warning:`. The default rustc lint set plus the project's
+   `[lints.rust]` config in `Cargo.toml` is the baseline — the tree
+   is expected to build clean under it, and any new warning your
+   change introduces must be fixed before committing.
+3. `cargo test --all-targets` produces no lines starting with
+   `warning:` and all tests pass.
+
+### Quick one-liner
+
+```bash
+cargo fmt --check \
+  && ! cargo build --all-targets 2>&1 | grep -q '^warning:' \
+  && ! cargo test --all-targets 2>&1 | grep -q '^warning:'
+```
+
+If any of these fail, fix the underlying cause before committing.
+Do NOT silence warnings with blanket `#[allow(...)]` just to pass
+this check — only silence a lint when the code genuinely needs to
+violate it (e.g. test-only code that must stay independent of
+production helpers) and add a comment or doc explaining why.
+
+## Scope note
+
+This rule covers the default `cargo build` / `cargo test` warning
+surface. It does NOT require `cargo clippy --all-targets` to be
+clean: the tree has a large pre-existing clippy-warning backlog
+that is being reduced opportunistically rather than as a hard
+precommit gate. If your change happens to touch a file whose clippy
+warnings you want to address, do so in the same commit; otherwise
+leave the backlog alone.
