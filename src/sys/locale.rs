@@ -67,10 +67,16 @@ fn libc_mb_cur_max() -> usize {
     }
     #[cfg(target_os = "freebsd")]
     {
+        // On FreeBSD the public `MB_CUR_MAX` macro expands to
+        // `((size_t)___mb_cur_max())` (three leading underscores). The
+        // two-underscore `__mb_cur_max` symbol is an `extern int` data
+        // object, not a function, so calling it as a function jumps
+        // into the bytes of that `int` and segfaults. Always go
+        // through the triple-underscore function accessor here.
         unsafe extern "C" {
-            fn __mb_cur_max() -> usize;
+            fn ___mb_cur_max() -> c_int;
         }
-        unsafe { __mb_cur_max() }
+        unsafe { ___mb_cur_max() as usize }
     }
 }
 
