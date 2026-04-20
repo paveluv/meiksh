@@ -7,7 +7,7 @@ use super::arithmetic::eval_arithmetic;
 use super::core::{Context, ExpandError};
 use super::glob::pattern_matches_with_offsets;
 use super::model::{QuoteState, Segment, render_pattern_from_segments};
-use super::parameter::{lookup_param, require_set_parameter};
+use super::parameter::{lookup_param_cached, require_set_parameter};
 use super::scratch::ExpandScratch;
 use super::word::trim_trailing_newlines;
 use crate::syntax::byte_class::{is_glob_char, is_name};
@@ -398,9 +398,9 @@ fn expand_kind<C: Context>(
     scratch: &mut ExpandScratch,
 ) -> Result<(), ExpandError> {
     match kind {
-        ExpansionKind::SimpleVar { start, end } => {
+        ExpansionKind::SimpleVar { start, end, cache } => {
             let name = &raw[*start..*end];
-            let value = lookup_param(ctx, name);
+            let value = lookup_param_cached(ctx, cache, name);
             let value = require_set_parameter(ctx, name, value)?;
             output.push_value(value.as_bytes(), quoted, &scratch.ifs_chars);
         }
@@ -530,9 +530,9 @@ fn lookup_braced_param<'a, C: Context>(
     braced_name: &BracedName,
 ) -> Option<Cow<'a, [u8]>> {
     match braced_name {
-        BracedName::Var { start, end } => {
+        BracedName::Var { start, end, cache } => {
             let name = &raw[*start..*end];
-            lookup_param(ctx, name)
+            lookup_param_cached(ctx, cache, name)
         }
         BracedName::Positional { index, .. } => ctx.positional_param(*index as usize),
         BracedName::Special { ch, .. } => {

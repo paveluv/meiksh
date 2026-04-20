@@ -23,6 +23,47 @@ use super::redirection::{
 };
 use super::scratch::ExecScratch;
 
+/// Bare-literal RHS fast path for assignment values.
+///
+/// Returns `Some(bytes)` when `value` is a single unglobbed
+/// `WordPart::Literal` that spans the full raw source (or is an
+/// entirely empty word, as in `FOO=`). In those shapes the bytes the
+/// assignment should write are literally `value.raw[start..end]`,
+/// with no expansion, tilde processing, field splitting, or
+/// pathname expansion needed.
+///
+/// Returning `None` defers to the full `expand_assignment_value`
+/// pipeline for anything else — tilde words, glob literals,
+/// `$var` / `${var}` / `$(...)` parts, multi-part concatenations,
+/// and so on. The discriminator is the parser-recorded
+/// `has_glob`, `newlines`, and `parts` layout, so no bytes-level
+/// scan runs on the fast path.
+#[inline]
+fn assignment_literal_fast_path(value: &crate::syntax::ast::Word) -> Option<&[u8]> {
+    match &value.parts[..] {
+        // Empty RHS: parser emits a word with no parts. The raw
+        // source may still be non-empty for quoted-null shapes like
+        // `FOO=''` or `FOO=""`, but either way the expansion result
+        // is the empty string.
+        [] => Some(&[]),
+        // `FOO=value` — single unquoted, unglobbed literal that
+        // spans the whole raw source.
+        [
+            WordPart::Literal {
+                start: 0,
+                end,
+                has_glob: false,
+                newlines: 0,
+                ..
+            },
+        ] if *end == value.raw.len() => Some(&value.raw),
+        // `FOO="quoted value"` — the parser has already materialised
+        // the quoted payload; no expansion is needed.
+        [WordPart::QuotedLiteral { bytes, newlines: 0 }] => Some(bytes),
+        _ => None,
+    }
+}
+
 pub(super) fn var_error_bytes(e: &VarError) -> Vec<u8> {
     match e {
         VarError::Readonly(name) => ByteWriter::new()
@@ -44,17 +85,25 @@ pub(super) fn save_vars(shell: &Shell, assignments: &[(Vec<u8>, Vec<u8>)]) -> Ve
         .map(|(name, _)| SavedVar {
             name: name.clone().into(),
             value: shell.get_var(name).map(|s| s.to_vec()),
-            was_exported: shell.exported().contains(name),
+            was_exported: shell.is_exported(name),
         })
         .collect()
 }
 
-pub(super) fn apply_prefix_assignments(
+/// Slot-cache-aware variant used when we still have the AST
+/// [`Assignment`] nodes alongside the expanded name/value pairs.
+/// Skips the `ShellMap<Vec<u8>, u32>` name lookup for each
+/// assignment by consulting the cached slot index stored in the
+/// `Assignment::name_slot` field.
+pub(super) fn apply_prefix_assignments_cached(
     shell: &mut Shell,
-    assignments: &[(Vec<u8>, Vec<u8>)],
+    ast: &[crate::syntax::ast::Assignment],
+    expanded: &[(Vec<u8>, Vec<u8>)],
 ) -> Result<(), ShellError> {
-    for (name, value) in assignments {
-        shell.set_var(name, value).map_err(|e| {
+    debug_assert_eq!(ast.len(), expanded.len());
+    for (assignment, (name, value)) in ast.iter().zip(expanded) {
+        let slot = assignment.name_slot.resolve(shell.vars_mut(), name);
+        shell.set_var_by_slot(slot, name, value).map_err(|e| {
             let msg = var_error_bytes(&e);
             shell.diagnostic(1, &msg)
         })?;
@@ -75,23 +124,23 @@ pub(super) fn restore_vars(shell: &mut Shell, saved: Vec<SavedVar>) {
         }
         match entry.value {
             Some(v) => {
-                shell.env_mut().insert(name.clone(), v);
+                shell.env_set_raw(name.clone(), v);
             }
             None => {
-                shell.env_mut().remove(&name);
+                shell.env_remove_raw(&name);
             }
         }
         if entry.was_exported {
-            shell.exported_mut().insert(name);
+            shell.mark_exported(&name);
         } else {
-            shell.exported_mut().remove(&name);
+            shell.unmark_exported(&name);
         }
     }
     if path_changed {
         shell.path_cache_mut().clear();
     }
-    if ifs_changed {
-        shell.expand_scratch.invalidate_ifs();
+    if ifs_changed && let Some(s) = shell.expand_scratch.as_mut() {
+        s.invalidate_ifs();
     }
 }
 
@@ -328,8 +377,10 @@ fn execute_simple_with_scratch(
             Ok(g) => g,
             Err(error) => return Ok(shell.diagnostic_syserr(1, &error).exit_status()),
         };
-        for (name, value) in &scratch.assignments {
-            shell.set_var(name, value).map_err(|e| {
+        debug_assert_eq!(simple.assignments.len(), scratch.assignments.len());
+        for (assignment, (name, value)) in simple.assignments.iter().zip(&scratch.assignments) {
+            let slot = assignment.name_slot.resolve(shell.vars_mut(), name);
+            shell.set_var_by_slot(slot, name, value).map_err(|e| {
                 let msg = var_error_bytes(&e);
                 shell.diagnostic(1, &msg)
             })?;
@@ -381,7 +432,9 @@ fn execute_simple_with_scratch(
             Err(error) => return Ok(shell.diagnostic_syserr(1, &error).exit_status()),
         };
         let saved_vars = save_vars(shell, &scratch.assignments);
-        if let Err(e) = apply_prefix_assignments(shell, &scratch.assignments) {
+        if let Err(e) =
+            apply_prefix_assignments_cached(shell, &simple.assignments, &scratch.assignments)
+        {
             restore_vars(shell, saved_vars);
             drop(guard);
             return Err(e);
@@ -413,7 +466,8 @@ fn execute_simple_with_scratch(
 
     if let Argv0Classification::RegularBuiltin(entry) = classification {
         let saved_vars = save_vars(shell, &scratch.assignments);
-        let assign_result = apply_prefix_assignments(shell, &scratch.assignments);
+        let assign_result =
+            apply_prefix_assignments_cached(shell, &simple.assignments, &scratch.assignments);
         let result = match assign_result {
             Ok(()) => {
                 let r = match apply_shell_redirections(
@@ -448,7 +502,7 @@ fn execute_simple_with_scratch(
     // benchmarks.
     {
         for (name, _value) in &scratch.assignments {
-            if shell.readonly().contains(name) {
+            if shell.is_readonly(name) {
                 let mut msg = name.clone();
                 msg.extend_from_slice(b": readonly variable");
                 return Err(shell.diagnostic(1, &msg));
@@ -503,8 +557,22 @@ pub(super) fn expand_simple_in_place(
     scratch.clear();
     scratch.assignments.reserve(simple.assignments.len());
     for assignment in &simple.assignments {
-        let value = word::expand_assignment_value(shell, &assignment.value)
-            .map_err(|e| shell.expand_to_err(e))?;
+        let value = if let Some(bytes) = assignment_literal_fast_path(&assignment.value) {
+            // Fast path for the pervasive `NAME=literal` shape (e.g.
+            // loops like `for i in 1 2 3; do x=$i ...`): skip the full
+            // `expand_assignment_value` pipeline (no `with_scratch`,
+            // no `expand_parts_into_mode`, no `ExpandOutput` drain)
+            // and take the bytes straight from the AST `raw` buffer.
+            // A pool-allocated `Vec<u8>` still carries the value so
+            // the downstream assignment / env-write paths stay
+            // uniform and can recycle the buffer on reset.
+            let mut buf = shell.bytes_pool.take();
+            buf.extend_from_slice(bytes);
+            buf
+        } else {
+            word::expand_assignment_value(shell, &assignment.value)
+                .map_err(|e| shell.expand_to_err(e))?
+        };
         scratch.assignments.push((assignment.name.to_vec(), value));
     }
 
@@ -741,10 +809,8 @@ mod tests {
     fn save_restore_vars_restores_previous_values() {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
-            shell
-                .env_mut()
-                .insert(b"FOO".to_vec(), b"original".to_vec());
-            shell.exported_mut().insert(b"FOO".to_vec());
+            shell.env_set_raw(b"FOO".to_vec(), b"original".to_vec());
+            shell.mark_exported(b"FOO");
 
             let assignments = vec![
                 (b"FOO".to_vec(), b"temp".to_vec()),
@@ -759,9 +825,9 @@ mod tests {
 
             restore_vars(&mut shell, saved);
             assert_eq!(shell.get_var(b"FOO"), Some(b"original" as &[u8]));
-            assert!(shell.exported().contains(&b"FOO".to_vec()));
+            assert!(shell.is_exported(b"FOO"));
             assert_eq!(shell.get_var(b"BAR"), None);
-            assert!(!shell.exported().contains(&b"BAR".to_vec()));
+            assert!(!shell.is_exported(b"BAR"));
         });
     }
 
@@ -769,20 +835,20 @@ mod tests {
     fn restore_vars_with_ifs_invalidates_cache() {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
-            shell.env_mut().insert(b"IFS".to_vec(), b" ".to_vec());
+            shell.env_set_raw(b"IFS".to_vec(), b" ".to_vec());
             // Prime the IFS cache via a first expansion.
             let _ = shell.execute_string(b"x=1").expect("prime");
-            assert!(shell.expand_scratch.ifs_valid);
+            assert!(shell.expand_scratch.as_ref().unwrap().ifs_valid);
             let assignments = vec![(b"IFS".to_vec(), b":".to_vec())];
             let saved = save_vars(&shell, &assignments);
             shell.set_var(b"IFS", b":").unwrap();
-            assert!(!shell.expand_scratch.ifs_valid);
-            shell.expand_scratch.ifs_valid = true;
+            assert!(!shell.expand_scratch.as_ref().unwrap().ifs_valid);
+            shell.expand_scratch.as_mut().unwrap().ifs_valid = true;
             // The crucial case: restore via the env_mut path must
             // still mark the cache stale so the next expansion re-reads
             // the live IFS.
             restore_vars(&mut shell, saved);
-            assert!(!shell.expand_scratch.ifs_valid);
+            assert!(!shell.expand_scratch.as_ref().unwrap().ifs_valid);
             assert_eq!(shell.get_var(b"IFS"), Some(b" " as &[u8]));
         });
     }
@@ -791,9 +857,7 @@ mod tests {
     fn restore_vars_with_path_clears_cache() {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
-            shell
-                .env_mut()
-                .insert(b"PATH".to_vec(), b"/usr/bin".to_vec());
+            shell.env_set_raw(b"PATH".to_vec(), b"/usr/bin".to_vec());
             let assignments = vec![(b"PATH".to_vec(), b"/tmp".to_vec())];
             let saved = save_vars(&shell, &assignments);
             shell.set_var(b"PATH", b"/tmp").unwrap();
@@ -806,9 +870,7 @@ mod tests {
     fn non_special_builtin_prefix_assignments_are_temporary() {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
-            shell
-                .env_mut()
-                .insert(b"FOO".to_vec(), b"original".to_vec());
+            shell.env_set_raw(b"FOO".to_vec(), b"original".to_vec());
             let program = parse_test("FOO=temp true").expect("parse");
             let status = execute_program(&mut shell, &program).expect("execute");
             assert_eq!(status, 0);
@@ -831,9 +893,7 @@ mod tests {
     fn function_prefix_assignments_are_temporary() {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
-            shell
-                .env_mut()
-                .insert(b"FOO".to_vec(), b"original".to_vec());
+            shell.env_set_raw(b"FOO".to_vec(), b"original".to_vec());
             let program = parse_test("myfn() { :; }; FOO=temp myfn").expect("parse");
             let status = execute_program(&mut shell, &program).expect("execute");
             assert_eq!(status, 0);
@@ -856,8 +916,8 @@ mod tests {
     fn assignment_expansion_does_not_field_split() {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
-            shell.env_mut().insert(b"IFS".to_vec(), b" ".to_vec());
-            shell.env_mut().insert(b"X".to_vec(), b"a b c".to_vec());
+            shell.env_set_raw(b"IFS".to_vec(), b" ".to_vec());
+            shell.env_set_raw(b"X".to_vec(), b"a b c".to_vec());
             let program = parse_test("Y=$X").expect("parse");
             let _status = execute_program(&mut shell, &program).expect("execute");
             assert_eq!(shell.get_var(b"Y"), Some(b"a b c" as &[u8]));
@@ -976,27 +1036,27 @@ mod tests {
     fn has_command_substitution_dollar_paren_in_assignments() {
         assert_no_syscalls(|| {
             let cmd = SimpleCommand {
-                assignments: vec![Assignment {
-                    name: b"X".to_vec().into(),
-                    value: Word {
-                        raw: b"$(date)".to_vec().into(),
+                assignments: vec![Assignment::new(
+                    b"X".to_vec(),
+                    Word {
+                        raw: b"$(date)".to_vec(),
                         parts: Vec::new(),
                         line: 0,
                     },
-                }],
+                )],
                 ..SimpleCommand::default()
             };
             assert!(has_command_substitution(&cmd));
 
             let cmd_backtick_assign = SimpleCommand {
-                assignments: vec![Assignment {
-                    name: b"X".to_vec().into(),
-                    value: Word {
-                        raw: b"`date`".to_vec().into(),
+                assignments: vec![Assignment::new(
+                    b"X".to_vec(),
+                    Word {
+                        raw: b"`date`".to_vec(),
                         parts: Vec::new(),
                         line: 0,
                     },
-                }],
+                )],
                 ..SimpleCommand::default()
             };
             assert!(has_command_substitution(&cmd_backtick_assign));
@@ -1012,14 +1072,14 @@ mod tests {
             assert!(has_command_substitution(&cmd_dollar_paren_word));
 
             let cmd_none = SimpleCommand {
-                assignments: vec![Assignment {
-                    name: b"X".to_vec().into(),
-                    value: Word {
-                        raw: b"plain".to_vec().into(),
+                assignments: vec![Assignment::new(
+                    b"X".to_vec(),
+                    Word {
+                        raw: b"plain".to_vec(),
                         parts: Vec::new(),
                         line: 0,
                     },
-                }],
+                )],
                 words: vec![Word {
                     raw: b"echo".to_vec().into(),
                     parts: Vec::new(),
@@ -1054,7 +1114,11 @@ mod tests {
                 words: vec![Word {
                     raw: b"$X".to_vec(),
                     parts: vec![WordPart::Expansion {
-                        kind: ExpansionKind::SimpleVar { start: 0, end: 2 },
+                        kind: ExpansionKind::SimpleVar {
+                            start: 0,
+                            end: 2,
+                            cache: crate::shell::vars::CachedVarBinding::default(),
+                        },
                         quoted: false,
                     }],
                     line: 0,
@@ -1071,10 +1135,8 @@ mod tests {
             trace_entries![write(fd(sys::constants::STDERR_FILENO), bytes(b"meiksh: line 1: X: readonly variable\n")) -> auto],
             || {
                 let mut shell = test_shell();
-                shell
-                    .env_mut()
-                    .insert(b"PATH".to_vec(), b"/usr/bin".to_vec());
-                shell.readonly_mut().insert(b"X".to_vec());
+                shell.env_set_raw(b"PATH".to_vec(), b"/usr/bin".to_vec());
+                shell.mark_readonly(b"X");
                 let err = shell
                     .execute_string(b"X=val /nonexistent/cmd")
                     .expect_err("readonly prefix");
@@ -1090,7 +1152,7 @@ mod tests {
             || {
                 let mut shell = test_shell();
                 shell.options.xtrace = true;
-                shell.env_mut().insert(b"PS4".to_vec(), b">> ".to_vec());
+                shell.env_set_raw(b"PS4".to_vec(), b">> ".to_vec());
                 let expanded = ExpandedSimpleCommand {
                     assignments: vec![],
                     argv: vec![b"echo".to_vec(), b"hi".to_vec()],
@@ -1127,9 +1189,17 @@ mod tests {
             trace_entries![write(fd(sys::constants::STDERR_FILENO), bytes(b"meiksh: RO: readonly variable\n")) -> auto],
             || {
                 let mut shell = test_shell();
-                shell.readonly_mut().insert(b"RO".to_vec());
-                let assignments = vec![(b"RO".to_vec(), b"newval".to_vec())];
-                let err = apply_prefix_assignments(&mut shell, &assignments)
+                shell.mark_readonly(b"RO");
+                let ast = vec![crate::syntax::ast::Assignment::new(
+                    b"RO".to_vec(),
+                    crate::syntax::ast::Word {
+                        raw: Vec::new(),
+                        parts: Vec::new(),
+                        line: 1,
+                    },
+                )];
+                let expanded = vec![(b"RO".to_vec(), b"newval".to_vec())];
+                let err = apply_prefix_assignments_cached(&mut shell, &ast, &expanded)
                     .expect_err("readonly should fail");
                 assert_ne!(err.exit_status(), 0);
             },

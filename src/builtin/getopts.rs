@@ -243,7 +243,7 @@ mod tests {
             || {
                 let mut shell = test_shell();
                 shell.env_mut().insert(b"OPTIND".to_vec(), b"5".to_vec());
-                shell.readonly_mut().insert(b"OPTIND".to_vec());
+                shell.mark_readonly(b"OPTIND");
                 let outcome = invoke(
                     &mut shell,
                     &[

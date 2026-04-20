@@ -6,11 +6,12 @@ use crate::shell::state::Shell;
 
 pub(super) fn set(shell: &mut Shell, argv: &[Vec<u8>]) -> BuiltinOutcome {
     if argv.len() == 1 {
-        let mut items: Vec<_> = shell.env().iter().collect();
+        let env = shell.env();
+        let mut items: Vec<(&[u8], &[u8])> = env.iter().collect();
         items.sort_by(|a, b| crate::sys::locale::strcoll(a.0, b.0));
         for (name, value) in items {
             let quoted = shell_quote_if_needed(value);
-            let mut line = name.clone();
+            let mut line = name.to_vec();
             line.push(b'=');
             line.extend_from_slice(&quoted);
             write_stdout_line(&line);

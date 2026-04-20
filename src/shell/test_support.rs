@@ -26,9 +26,7 @@ pub fn test_shell() -> Shell {
         options: ShellOptions::default(),
         shell_name: b"meiksh"[..].into(),
         shared: Rc::new(SharedEnv {
-            env: ShellMap::default(),
-            exported: BTreeSet::new(),
-            readonly: BTreeSet::new(),
+            vars: crate::shell::vars::VarTable::default(),
             aliases: ShellMap::default(),
             functions: ShellMap::default(),
             path_cache: ShellMap::default(),
@@ -57,7 +55,7 @@ pub fn test_shell() -> Shell {
         pid: 0,
         lineno: 0,
         mail_last_check: 0,
-        expand_scratch: crate::expand::scratch::ExpandScratch::new(),
+        expand_scratch: Some(crate::expand::scratch::ExpandScratch::new()),
         exec_scratch_pool: crate::exec::scratch::ExecScratchPool::new(),
         bytes_pool: crate::exec::scratch::BytesPool::new(),
     }

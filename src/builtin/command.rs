@@ -1214,7 +1214,7 @@ mod tests {
                 shell
                     .env_mut()
                     .insert(b"PATH".to_vec(), b"/custom".to_vec());
-                shell.exported_mut().insert(b"PATH".to_vec());
+                shell.mark_exported(b"PATH");
                 let outcome = invoke(
                     &mut shell,
                     &[b"command".to_vec(), b"-p".to_vec(), b"myext".to_vec()],

@@ -24,12 +24,17 @@ pub(crate) fn expand_words_into<C: Context>(
     })
 }
 
-/// Take the context's `ExpandScratch` out of `ctx`, run `body` with it, and
-/// always put it back (even on error). Nested expansion calls on the same
-/// `ctx` during `body` will observe a default/empty scratch; this is
-/// correct but loses pooling for that nesting level. In practice the only
-/// re-entry path during word expansion is command substitution, which
-/// `fork()`s into a child process with its own shell state.
+/// Take the context's pooled `ExpandScratch` out of `ctx`, run `body`
+/// with it, and always put it back (even on error). Nested expansion
+/// calls on the same `ctx` during `body` observe a `None` slot and
+/// construct a fresh local scratch; they never panic, and the outer
+/// pooled scratch is protected from re-entrant mutation.
+///
+/// Using an `Option` slot (rather than `std::mem::take` with a
+/// `Default`-constructed placeholder) avoids an `ExpandScratch`
+/// drop on every expansion — each `ExpandScratch` owns several
+/// `Vec`s whose allocators would otherwise fire on the placeholder
+/// drop.
 fn with_scratch<C, R>(
     ctx: &mut C,
     body: impl FnOnce(&mut C, &mut ExpandScratch) -> Result<R, ExpandError>,
@@ -37,10 +42,19 @@ fn with_scratch<C, R>(
 where
     C: Context,
 {
-    let mut scratch = std::mem::take(ctx.expand_scratch_mut());
-    let result = body(ctx, &mut scratch);
-    *ctx.expand_scratch_mut() = scratch;
-    result
+    match ctx.expand_scratch_slot_mut().take() {
+        Some(mut scratch) => {
+            let result = body(ctx, &mut scratch);
+            *ctx.expand_scratch_slot_mut() = Some(scratch);
+            result
+        }
+        None => {
+            // Re-entrant: outer frame already owns the pooled scratch.
+            // Use a fresh one so we do not disturb the outer state.
+            let mut scratch = ExpandScratch::default();
+            body(ctx, &mut scratch)
+        }
+    }
 }
 
 /// Ensure `scratch.ifs_bytes` holds the current `$IFS`. Cached across
@@ -81,9 +95,9 @@ fn expand_word_with_scratch<C: Context>(
     // Move `scratch.output` out so `scratch` can be threaded alongside
     // the main output buffer without aliasing. The taken value is
     // placed back before returning (even on error).
-    let mut output = std::mem::take(&mut scratch.output);
+    let mut output = scratch.output.take().unwrap_or_default();
     let result = expand_word_into(ctx, word, &mut output, scratch, argv);
-    scratch.output = output;
+    scratch.output = Some(output);
     result
 }
 
@@ -114,7 +128,7 @@ pub(crate) fn expand_word_as_declaration_assignment<C: Context>(
     let name_bytes = &word.raw[*start..*end];
     let value_parts = &word.parts[1..];
     with_scratch(ctx, |ctx, scratch| {
-        let mut output = std::mem::take(&mut scratch.output);
+        let mut output = scratch.output.take().unwrap_or_default();
         output.clear();
         let result = expand_parts_into_mode(
             ctx,
@@ -129,7 +143,7 @@ pub(crate) fn expand_word_as_declaration_assignment<C: Context>(
             Ok(()) => output.drain_single_vec_pooled(ctx.bytes_pool_mut()),
             Err(_) => Vec::new(),
         };
-        scratch.output = output;
+        scratch.output = Some(output);
         result.map(|()| {
             // Declaration-utility assignment words like `export FOO=bar`
             // produce a concatenated `NAME=value` for the child exec;
@@ -228,7 +242,7 @@ pub(crate) fn expand_redirect_word<C: Context>(
     ctx.set_lineno(word.line);
     with_scratch(ctx, |ctx, scratch| {
         ensure_ifs_cached(ctx, scratch);
-        let mut output = std::mem::take(&mut scratch.output);
+        let mut output = scratch.output.take().unwrap_or_default();
         output.clear();
         let result = expand_parts_into(ctx, &word.raw, &word.parts, false, &mut output, scratch);
         let joined = match &result {
@@ -240,7 +254,7 @@ pub(crate) fn expand_redirect_word<C: Context>(
             }
             Err(_) => Ok(Vec::new()),
         };
-        scratch.output = output;
+        scratch.output = Some(output);
         result?;
         joined
     })
@@ -252,7 +266,7 @@ pub(crate) fn expand_word_text<C: Context>(
 ) -> Result<Vec<u8>, ExpandError> {
     ctx.set_lineno(word.line);
     with_scratch(ctx, |ctx, scratch| {
-        let mut output = std::mem::take(&mut scratch.output);
+        let mut output = scratch.output.take().unwrap_or_default();
         output.clear();
         let result = expand_parts_into_mode(
             ctx,
@@ -267,7 +281,7 @@ pub(crate) fn expand_word_text<C: Context>(
             Ok(()) => output.drain_single_vec_pooled(ctx.bytes_pool_mut()),
             Err(_) => Vec::new(),
         };
-        scratch.output = output;
+        scratch.output = Some(output);
         result.map(|()| value)
     })
 }
@@ -302,7 +316,7 @@ pub(crate) fn expand_assignment_value<C: Context>(
 ) -> Result<Vec<u8>, ExpandError> {
     ctx.set_lineno(word.line);
     with_scratch(ctx, |ctx, scratch| {
-        let mut output = std::mem::take(&mut scratch.output);
+        let mut output = scratch.output.take().unwrap_or_default();
         output.clear();
         let result = expand_parts_into_mode(
             ctx,
@@ -326,7 +340,7 @@ pub(crate) fn expand_assignment_value<C: Context>(
             Ok(()) => output.drain_single_vec_pooled(ctx.bytes_pool_mut()),
             Err(_) => Vec::new(),
         };
-        scratch.output = output;
+        scratch.output = Some(output);
         result.map(|()| value)
     })
 }
@@ -375,14 +389,14 @@ pub(crate) fn expand_here_document<C: Context>(
 ) -> Result<Vec<u8>, ExpandError> {
     ctx.set_lineno(body_line);
     with_scratch(ctx, |ctx, scratch| {
-        let mut output = std::mem::take(&mut scratch.output);
+        let mut output = scratch.output.take().unwrap_or_default();
         output.clear();
         let result = expand_parts_into_mode(ctx, raw, parts, true, true, &mut output, scratch);
         let value = match &result {
             Ok(()) => output.drain_single_vec_pooled(ctx.bytes_pool_mut()),
             Err(_) => Vec::new(),
         };
-        scratch.output = output;
+        scratch.output = Some(output);
         result.map(|()| value)
     })
 }

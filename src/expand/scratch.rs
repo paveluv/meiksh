@@ -16,7 +16,11 @@ use super::model::Segment;
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ExpandScratch {
     /// Primary `ExpandOutput` reused across every word in a command.
-    pub(crate) output: ExpandOutput,
+    /// Wrapped in `Option` so callers can `.take()` ownership without
+    /// paying for an `ExpandOutput::default()` placeholder plus its
+    /// drop on every word expansion. At steady state the slot is
+    /// `Some`; callers restore it before returning.
+    pub(crate) output: Option<ExpandOutput>,
     /// Secondary `ExpandOutput` for sub-expansions (e.g. the inner word of
     /// `${a:-...}` or an arithmetic sub-expression). Re-entrant calls that
     /// find it non-empty allocate their own fresh `ExpandOutput` — see the

@@ -4,6 +4,7 @@ use crate::sys;
 use super::error::{ShellError, VarError, var_error_message};
 use super::run::stdin_parse_error_requires_more_input;
 use super::state::Shell;
+use super::vars::EnvEntry;
 
 const LOCALE_VARS: &[&[u8]] = &[
     b"LC_ALL",
@@ -21,13 +22,9 @@ fn is_locale_var(name: &[u8]) -> bool {
 
 impl Shell {
     pub(crate) fn env_for_child(&self) -> Vec<(Vec<u8>, Vec<u8>)> {
-        self.exported()
-            .iter()
-            .filter_map(|name| {
-                self.env()
-                    .get(name)
-                    .map(|value| (name.clone(), value.clone()))
-            })
+        self.vars()
+            .iter_exported()
+            .filter_map(|(name, entry)| entry.value.as_ref().map(|v| (name.to_vec(), v.clone())))
             .collect()
     }
 
@@ -47,7 +44,7 @@ impl Shell {
     }
 
     pub(crate) fn get_var(&self, name: &[u8]) -> Option<&[u8]> {
-        self.env().get(name).map(Vec::as_slice)
+        self.var_value(name)
     }
 
     pub(crate) fn input_is_incomplete(&self, error: &crate::syntax::ParseError) -> bool {
@@ -84,23 +81,75 @@ impl Shell {
     }
 
     pub(crate) fn set_var(&mut self, name: &[u8], value: &[u8]) -> Result<(), VarError> {
-        if self.readonly().contains(name) {
+        let vars = self.vars_mut();
+        let slot = vars.ensure_slot(name) as u32;
+        self.set_var_by_slot(slot, name, value)
+    }
+
+    /// Slot-indexed variant of [`Shell::set_var`]. Callers that have
+    /// already resolved the variable's dense-slot index (typically
+    /// via an AST-level [`crate::shell::vars::CachedVarBinding`]) use
+    /// this to skip the `ShellMap<Vec<u8>, u32>` name lookup and go
+    /// straight to the slot vector.
+    ///
+    /// `name` is still required because it is used for:
+    /// * the readonly-error message,
+    /// * the side-effect channels that depend on the name (`PATH`
+    ///   cache invalidation, `IFS` cache invalidation,
+    ///   locale-variable environment propagation).
+    ///
+    /// The caller must pass the same `name` that `slot` was
+    /// resolved from; passing a mismatching pair writes to the slot
+    /// indicated by `slot`, which would desync cached bindings.
+    pub(crate) fn set_var_by_slot(
+        &mut self,
+        slot: u32,
+        name: &[u8],
+        value: &[u8],
+    ) -> Result<(), VarError> {
+        if self.vars().get_slot(slot).is_some_and(|e| e.readonly) {
             return Err(VarError::Readonly(name.into()));
         }
-        if name == b"PATH" {
+        let path_var = name == b"PATH";
+        let ifs_var = name == b"IFS";
+        let allexport = self.options.allexport;
+        {
+            let vars = self.vars_mut();
+            // Grow the slot vector if necessary. This should not
+            // normally happen since the caller resolved the slot via
+            // ensure_slot, but a copy-on-write SharedEnv clone may
+            // have shrunk us here.
+            while (slot as usize) >= vars.slots.len() {
+                vars.slots.push(None);
+            }
+            let slot_idx = slot as usize;
+            match &mut vars.slots[slot_idx] {
+                Some(entry) => {
+                    match &mut entry.value {
+                        Some(buf) => {
+                            buf.clear();
+                            buf.extend_from_slice(value);
+                        }
+                        val @ None => *val = Some(value.to_vec()),
+                    }
+                    if allexport {
+                        entry.exported = true;
+                    }
+                }
+                None => {
+                    vars.slots[slot_idx] = Some(EnvEntry {
+                        value: Some(value.to_vec()),
+                        exported: allexport,
+                        readonly: false,
+                    });
+                }
+            }
+        }
+        if path_var {
             self.path_cache_mut().clear();
         }
-        if name == b"IFS" {
-            self.expand_scratch.invalidate_ifs();
-        }
-        if let Some(existing) = self.env_mut().get_mut(name) {
-            existing.clear();
-            existing.extend_from_slice(value);
-        } else {
-            self.env_mut().insert(name.to_vec(), value.to_vec());
-        }
-        if self.options.allexport && !self.exported().contains(name) {
-            self.exported_mut().insert(name.to_vec());
+        if ifs_var && let Some(s) = self.expand_scratch.as_mut() {
+            s.invalidate_ifs();
         }
         if is_locale_var(name) {
             #[cfg(not(test))]
@@ -123,27 +172,40 @@ impl Shell {
                 self.diagnostic(1, &msg)
             })?;
         }
-        if !self.exported().contains(name) {
-            self.exported_mut().insert(name.to_vec());
-        }
+        self.mark_exported(name);
         Ok(())
     }
 
     pub(crate) fn mark_readonly(&mut self, name: &[u8]) {
-        self.readonly_mut().insert(name.to_vec());
+        let vars = self.vars_mut();
+        let slot = vars.ensure_slot(name) as usize;
+        match &mut vars.slots[slot] {
+            Some(entry) => entry.readonly = true,
+            None => {
+                vars.slots[slot] = Some(EnvEntry {
+                    value: None,
+                    exported: false,
+                    readonly: true,
+                });
+            }
+        }
     }
 
     pub(crate) fn unset_var(&mut self, name: &[u8]) -> Result<(), VarError> {
-        if self.readonly().contains(name) {
+        if self.is_readonly(name) {
             return Err(VarError::Readonly(name.into()));
         }
-        self.env_mut().remove(name);
-        self.exported_mut().remove(name);
+        let vars = self.vars_mut();
+        if let Some(slot) = vars.slot_of(name) {
+            vars.slots[slot as usize] = None;
+        }
         if name == b"PATH" {
             self.path_cache_mut().clear();
         }
-        if name == b"IFS" {
-            self.expand_scratch.invalidate_ifs();
+        if name == b"IFS"
+            && let Some(s) = self.expand_scratch.as_mut()
+        {
+            s.invalidate_ifs();
         }
         if is_locale_var(name) {
             #[cfg(not(test))]
@@ -173,9 +235,9 @@ mod tests {
     fn env_for_child_filters_exported_values() {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
-            shell.env_mut().insert(b"A".to_vec(), b"1".to_vec());
-            shell.env_mut().insert(b"B".to_vec(), b"2".to_vec());
-            shell.exported_mut().insert(b"A".to_vec());
+            shell.env_set_raw(b"A".to_vec(), b"1".to_vec());
+            shell.env_set_raw(b"B".to_vec(), b"2".to_vec());
+            shell.mark_exported(b"A");
             let env = shell.env_for_child();
             assert_eq!(
                 env.iter()
@@ -216,9 +278,9 @@ mod tests {
     fn export_without_value_marks_variable_exported() {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
-            shell.env_mut().insert(b"NAME".to_vec(), b"value".to_vec());
+            shell.env_set_raw(b"NAME".to_vec(), b"value".to_vec());
             shell.export_var(b"NAME", None).expect("export");
-            assert!(shell.exported().contains(b"NAME".as_slice()));
+            assert!(shell.is_exported(b"NAME"));
         });
     }
 
@@ -226,8 +288,8 @@ mod tests {
     fn env_for_exec_utility_overlays_and_appends() {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
-            shell.env_mut().insert(b"A".to_vec(), b"1".to_vec());
-            shell.exported_mut().insert(b"A".to_vec());
+            shell.env_set_raw(b"A".to_vec(), b"1".to_vec());
+            shell.mark_exported(b"A");
             let env = shell.env_for_exec_utility(&[
                 (b"A".to_vec(), b"2".to_vec()),
                 (b"B".to_vec(), b"3".to_vec()),
@@ -247,7 +309,7 @@ mod tests {
         shell.add_history(b"first");
         assert_eq!(shell.history().len(), 1);
 
-        shell.env_mut().insert(b"HISTSIZE".to_vec(), b"2".to_vec());
+        shell.env_set_raw(b"HISTSIZE".to_vec(), b"2".to_vec());
         shell.add_history(b"second");
         shell.add_history(b"third");
         assert_eq!(shell.history().len(), 2);
