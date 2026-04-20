@@ -170,6 +170,7 @@ impl Shell {
 
     /// Take an [`ExecScratch`] out of the pool, or create a fresh one
     /// if the pool is empty.
+    #[inline]
     pub(crate) fn take_exec_scratch(&mut self) -> ExecScratch {
         self.exec_scratch_pool.take()
     }
@@ -177,7 +178,20 @@ impl Shell {
     /// Return an `ExecScratch` to the pool. Inner `Vec<u8>` buffers
     /// are drained into `bytes_pool` so they can be re-used by the
     /// next word-expansion fast path.
+    ///
+    /// Fast path: an already-empty scratch (no argv, no assignments,
+    /// no redirections) skips the three drain loops and returns the
+    /// scratch directly. This is the common case for `_fn_noop`-style
+    /// zero-arg function calls in tight loops, where `execute_simple`
+    /// has already moved every inner `Vec<u8>` out of the scratch
+    /// (into `shell.positional` / the expansion result) before
+    /// returning.
+    #[inline]
     pub(crate) fn recycle_exec_scratch(&mut self, mut scratch: ExecScratch) {
+        if scratch.is_empty() {
+            self.exec_scratch_pool.push_cleared(scratch);
+            return;
+        }
         scratch.clear_into_pool(&mut self.bytes_pool);
         self.exec_scratch_pool.push_cleared(scratch);
     }
