@@ -1,6 +1,6 @@
 use crate::bstr;
 use crate::syntax::ast::Word;
-use crate::syntax::word_parts::WordPart;
+use crate::syntax::word_part::WordPart;
 
 use super::core::{Context, ExpandError};
 use super::expand_parts::{
@@ -568,7 +568,7 @@ mod tests {
 
     #[test]
     fn expand_redirect_word_empty_quoted_via_parts() {
-        use crate::syntax::word_parts::WordPart;
+        use crate::syntax::word_part::WordPart;
         assert_no_syscalls(|| {
             let mut ctx = FakeContext::new();
             let word = Word {
@@ -591,7 +591,7 @@ mod tests {
         // the "no command words" case).  Driving it through the public
         // `expand_words_into` entry keeps the test free of `pub(super)`
         // plumbing while still exercising the empty-word branch.
-        use crate::syntax::word_parts::WordPart;
+        use crate::syntax::word_part::WordPart;
         assert_no_syscalls(|| {
             let mut ctx = FakeContext::new();
             let empty = Word {

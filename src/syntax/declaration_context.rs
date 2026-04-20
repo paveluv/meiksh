@@ -19,7 +19,7 @@
 use super::ast::Word;
 use super::byte_class::{is_glob_char, is_name_cont, is_name_start};
 use super::token;
-use super::word_parts::WordPart;
+use super::word_part::WordPart;
 
 /// POSIX special built-ins that take assignment-word arguments. This
 /// is the single source of truth for the declaration-utility set;
@@ -166,7 +166,7 @@ fn literal_only_bytes(word: &Word) -> Option<&[u8]> {
 mod tests {
     use super::*;
 
-    use crate::syntax::word_parts::ExpansionKind;
+    use crate::syntax::word_part::ExpansionKind;
     use crate::sys::test_support::assert_no_syscalls;
 
     fn word(raw: &[u8]) -> Word {

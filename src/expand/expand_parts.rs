@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 
 use crate::bstr;
-use crate::syntax::word_parts::{BracedName, BracedOp, ExpansionKind, WordPart};
+use crate::syntax::word_part::{BracedName, BracedOp, ExpansionKind, WordPart};
 
 use super::arithmetic::eval_arithmetic;
 use super::core::{Context, ExpandError};

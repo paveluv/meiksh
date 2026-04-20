@@ -7,7 +7,7 @@ use super::byte_class::{
     alias_has_trailing_blank, is_delim, is_digit, is_glob_char, is_name_cont, is_name_start,
     is_quote, is_special_param, is_tilde_user_break, is_word_break,
 };
-use super::word_parts::{BracedName, BracedOp, ExpansionKind, WordPart};
+use super::word_part::{BracedName, BracedOp, ExpansionKind, WordPart};
 use crate::hash::ShellMap;
 
 struct AliasLayer<'a> {
@@ -2992,7 +2992,7 @@ mod tests {
 
     #[test]
     fn token_into_word_some_and_none() {
-        use crate::syntax::word_parts::WordPart;
+        use crate::syntax::word_part::WordPart;
         let empty_parts: Vec<WordPart> = Vec::new();
         assert_eq!(
             Token::Word(bx(b"hi"), Vec::new()).into_word(),

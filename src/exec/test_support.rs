@@ -2,7 +2,7 @@
 
 use crate::shell::state::Shell;
 use crate::syntax::ast::{Assignment, HereDoc, Redirection, Word};
-use crate::syntax::word_parts::WordPart;
+use crate::syntax::word_part::WordPart;
 use crate::sys;
 use crate::sys::test_support::{ArgMatcher, TraceEntry, TraceResult, t};
 

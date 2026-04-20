@@ -6,7 +6,7 @@ use super::declaration_context::{
     find_command_decl_util_boundary, is_command_utility, is_declaration_utility,
 };
 use super::token::{Parser, Token};
-use super::word_parts::WordPart;
+use super::word_part::WordPart;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Program {
@@ -164,7 +164,7 @@ pub(crate) struct HereDoc {
     /// Populated by the parser; consumed by the expander (Phase 7) so no
     /// runtime byte-scanning of heredoc bodies is needed. Empty when
     /// `expand == false` (quoted delimiter).
-    pub(crate) body_parts: Vec<crate::syntax::word_parts::WordPart>,
+    pub(crate) body_parts: Vec<crate::syntax::word_part::WordPart>,
     pub(crate) expand: bool,
     pub(crate) strip_tabs: bool,
     pub(crate) body_line: usize,
