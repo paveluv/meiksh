@@ -17,6 +17,7 @@
 #![allow(dead_code)]
 
 pub(crate) mod conditional;
+pub(crate) mod editline;
 pub(crate) mod escape;
 pub(crate) mod include;
 pub(crate) mod keybind;
