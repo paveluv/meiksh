@@ -763,6 +763,32 @@ const BUILTINS_W: &[BuiltinEntry] = &[BuiltinEntry {
     handler: h_wait,
 }];
 
+/// All builtin names, unsorted. Used by tab-completion to enumerate
+/// first-word command candidates (spec § 5.8, emacs mode).
+pub(crate) fn all_builtin_names() -> impl Iterator<Item = &'static [u8]> {
+    let buckets: &[&[BuiltinEntry]] = &[
+        BUILTINS_DOT,
+        BUILTINS_COLON,
+        BUILTINS_LBRACKET,
+        BUILTINS_A,
+        BUILTINS_B,
+        BUILTINS_C,
+        BUILTINS_E,
+        BUILTINS_F,
+        BUILTINS_G,
+        BUILTINS_H,
+        BUILTINS_J,
+        BUILTINS_K,
+        BUILTINS_P,
+        BUILTINS_R,
+        BUILTINS_S,
+        BUILTINS_T,
+        BUILTINS_U,
+        BUILTINS_W,
+    ];
+    buckets.iter().flat_map(|b| b.iter()).map(|e| e.name)
+}
+
 #[cfg(test)]
 pub(super) mod test_support {
     use crate::shell::error::ShellError;

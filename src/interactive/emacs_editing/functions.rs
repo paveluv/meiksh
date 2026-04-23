@@ -65,10 +65,20 @@ pub(crate) fn apply(
         EmacsFn::BeginningOfLine => state.cursor = 0,
         EmacsFn::EndOfLine => state.cursor = state.buf.len(),
         EmacsFn::ForwardChar => {
-            let n = state.cursor + char_len_at(&state.buf, state.cursor);
-            state.cursor = n.min(state.buf.len());
+            if state.cursor >= state.buf.len() {
+                out.bell = true;
+            } else {
+                let n = state.cursor + char_len_at(&state.buf, state.cursor);
+                state.cursor = n.min(state.buf.len());
+            }
         }
-        EmacsFn::BackwardChar => state.cursor = prev_char_start(&state.buf, state.cursor),
+        EmacsFn::BackwardChar => {
+            if state.cursor == 0 {
+                out.bell = true;
+            } else {
+                state.cursor = prev_char_start(&state.buf, state.cursor);
+            }
+        }
         EmacsFn::ForwardWord => {
             state.cursor = next_word_boundary(&state.buf, state.cursor, WordClass::AlnumUnderscore)
         }
@@ -101,11 +111,12 @@ pub(crate) fn apply(
             }
         }
         EmacsFn::Abort => {
-            // C-g clears the current line (per spec § 5.5); the outer
-            // loop redraws afterwards.
-            state.buf.clear();
-            state.cursor = 0;
-            state.undo.clear();
+            // C-g's sole job (spec § 5.9) is to abort a composite action
+            // (incremental search, `quoted-insert`). Those composites
+            // are handled directly by the outer dispatch loop and never
+            // reach `apply()`, so if we're here there was nothing to
+            // abort — ring the bell.
+            out.bell = true;
         }
         EmacsFn::SendSigint => {
             // C-c: emulate the "discard current line, prompt again"
@@ -117,8 +128,8 @@ pub(crate) fn apply(
             state.undo.clear();
             write_bytes(b"^C\r\n");
         }
-        EmacsFn::PreviousHistory => do_history_step(shell, state, -1),
-        EmacsFn::NextHistory => do_history_step(shell, state, 1),
+        EmacsFn::PreviousHistory => do_history_step(shell, state, -1, &mut out),
+        EmacsFn::NextHistory => do_history_step(shell, state, 1, &mut out),
         EmacsFn::BeginningOfHistory => do_history_jump(shell, state, true),
         EmacsFn::EndOfHistory => do_history_jump(shell, state, false),
         EmacsFn::HistorySearchBackward => {
@@ -372,32 +383,64 @@ fn do_transpose_chars(state: &mut EmacsState, out: &mut Outcome) {
 }
 
 fn do_transpose_words(state: &mut EmacsState, out: &mut Outcome) {
-    // Find the two nearest words around the cursor and swap them.
-    // Algorithm: walk to the end of the current word, remember the
-    // left word, skip whitespace, walk to end of right word, remember
-    // it; then splice.
+    use super::super::editor::words::is_word_char_at;
+
     let buf = state.buf.clone();
-    let left_end = match word_end_at(&buf, state.cursor) {
-        Some(e) => e,
-        None => {
-            out.bell = true;
-            return;
+
+    // Identify the *right* word (the one that ends up to the left of
+    // the cursor after the swap, per spec § 5.6):
+    //   - If the cursor is inside a word, that is the right word.
+    //   - If the cursor is at EOB or on non-word chars, use the last
+    //     word ending at/before the cursor. If no such word exists,
+    //     use the next word after the cursor.
+    let right_end = if state.cursor < buf.len() && is_word_char_at(&buf, state.cursor) {
+        let mut p = state.cursor;
+        while p < buf.len() && is_word_char_at(&buf, p) {
+            p += char_len_at(&buf, p);
+        }
+        p
+    } else {
+        let mut p = state.cursor.min(buf.len());
+        while p > 0 && !is_word_char_at(&buf, p - 1) {
+            p -= 1;
+        }
+        if p == 0 {
+            // No word behind the cursor; try to use the next word.
+            let mut q = state.cursor.min(buf.len());
+            while q < buf.len() && !is_word_char_at(&buf, q) {
+                q += 1;
+            }
+            if q == buf.len() {
+                out.bell = true;
+                return;
+            }
+            while q < buf.len() && is_word_char_at(&buf, q) {
+                q += char_len_at(&buf, q);
+            }
+            q
+        } else {
+            p
         }
     };
-    let left_start = prev_word_boundary(&buf, left_end, WordClass::AlnumUnderscore);
-    let right_start = next_word_boundary(&buf, left_end, WordClass::AlnumUnderscore);
-    let right_end = next_word_boundary(&buf, right_start, WordClass::AlnumUnderscore);
-    if left_start == left_end
-        || right_start == right_end
-        || right_start < left_end
-        || left_end >= buf.len()
-    {
+
+    let mut right_start = right_end;
+    while right_start > 0 && is_word_char_at(&buf, right_start - 1) {
+        right_start -= 1;
+    }
+
+    let mut left_end = right_start;
+    while left_end > 0 && !is_word_char_at(&buf, left_end - 1) {
+        left_end -= 1;
+    }
+    if left_end == 0 {
         out.bell = true;
         return;
     }
-    // Collapse the trailing-whitespace included in next_word_boundary:
-    // the "right word" should end at the first non-word char after it.
-    let right_end = trim_trailing_ws(&buf, right_end);
+
+    let mut left_start = left_end;
+    while left_start > 0 && is_word_char_at(&buf, left_start - 1) {
+        left_start -= 1;
+    }
 
     let left_len = left_end - left_start;
     let right_len = right_end - right_start;
@@ -420,32 +463,6 @@ fn do_transpose_words(state: &mut EmacsState, out: &mut Outcome) {
         gap_len,
         right_len,
     });
-}
-
-/// Start of the word at or before `pos`, or `None` if no word there.
-fn word_end_at(buf: &[u8], pos: usize) -> Option<usize> {
-    if buf.is_empty() {
-        return None;
-    }
-    let mut p = pos;
-    if p > buf.len() {
-        p = buf.len();
-    }
-    // walk forward to end of current word
-    while p < buf.len() && super::super::editor::words::is_word_char_at(buf, p) {
-        p += char_len_at(buf, p);
-    }
-    if p == 0 {
-        return None;
-    }
-    Some(p)
-}
-
-fn trim_trailing_ws(buf: &[u8], mut end: usize) -> usize {
-    while end > 0 && (buf[end - 1] == b' ' || buf[end - 1] == b'\t') {
-        end -= 1;
-    }
-    end
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -498,10 +515,11 @@ fn apply_case(bytes: &mut [u8], op: CaseOp) {
     }
 }
 
-fn do_history_step(shell: &Shell, state: &mut EmacsState, delta: i32) {
+fn do_history_step(shell: &Shell, state: &mut EmacsState, delta: i32, out: &mut Outcome) {
     let hist = shell.history();
     let len = hist.len();
     if len == 0 {
+        out.bell = true;
         return;
     }
     let current = match state.hist_index {
@@ -513,6 +531,7 @@ fn do_history_step(shell: &Shell, state: &mut EmacsState, delta: i32) {
     };
     let new = current as i32 + delta;
     if new < 0 || new > len as i32 {
+        out.bell = true;
         return;
     }
     let new = new as usize;
@@ -640,54 +659,294 @@ fn last_word_of(line: &[u8]) -> Vec<u8> {
     line[start..end].to_vec()
 }
 
-fn do_complete(shell: &mut Shell, state: &mut EmacsState, _out: &mut Outcome) {
-    // Minimal completion: expand the current word as a file path
-    // prefix. The full spec 5.7-5.8 behaviour (variables, tilde,
-    // aliases, builtins, PATH) is implemented as a cascade of checks
-    // on the literal prefix.
-    let word_start = {
-        let mut s = state.cursor;
-        while s > 0 {
-            let prev = prev_char_start(&state.buf, s);
-            let b = state.buf[prev];
-            if b == b' ' || b == b'\t' {
-                break;
-            }
-            s = prev;
+/// Word-boundary character set per spec § 5.8: SPACE, TAB, NEWLINE,
+/// `>`, `<`, `|`, `;`, `(`, `)`, `&`, backtick, double and single
+/// quote. Everything else (including `$`, `~`, `/`, `.`, `-`,
+/// alphanumerics) is part of the word.
+fn is_completion_delim(b: u8) -> bool {
+    matches!(
+        b,
+        b' ' | b'\t' | b'\n' | b'>' | b'<' | b'|' | b';' | b'(' | b')' | b'&' | b'`' | b'"' | b'\''
+    )
+}
+
+/// Find the start of the completion-word containing `cursor`, walking
+/// backwards across non-delimiter bytes per spec § 5.8.
+fn find_completion_word_start(buf: &[u8], cursor: usize) -> usize {
+    let mut s = cursor;
+    while s > 0 {
+        let prev = prev_char_start(buf, s);
+        if is_completion_delim(buf[prev]) {
+            break;
         }
-        s
-    };
+        s = prev;
+    }
+    s
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CompletionKind {
+    /// Filesystem completion. Directory matches get a trailing `/` on
+    /// a unique match; plain-file matches are inserted as-is.
+    Path,
+    /// Shell variable (`$NAME`). Inserted as-is.
+    Variable,
+    /// First-word command completion (builtins, aliases, functions,
+    /// PATH executables). Inserted as-is.
+    Command,
+}
+
+/// One candidate for display / replacement. The `word` is what replaces
+/// the whole partial word (the `[word_start..cursor]` slice of the
+/// buffer), and `display` is the short label used by second-TAB
+/// listings.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct Candidate {
+    word: Vec<u8>,
+    display: Vec<u8>,
+}
+
+fn do_complete(shell: &mut Shell, state: &mut EmacsState, out: &mut Outcome) {
+    let word_start = find_completion_word_start(&state.buf, state.cursor);
     let prefix = state.buf[word_start..state.cursor].to_vec();
-    if let Some(completion) = try_complete_cascade(shell, &prefix) {
-        if completion.len() > prefix.len() {
-            let extra: Vec<u8> = completion[prefix.len()..].to_vec();
-            let at = state.cursor;
-            state.buf.splice(at..at, extra.iter().copied());
-            state.cursor = at + extra.len();
-            state.undo.push(UndoEntry::Inserted { at, bytes: extra });
-        }
+
+    let before = &state.buf[..word_start];
+    let is_first_word = before
+        .iter()
+        .all(|&b| b == b' ' || b == b'\t' || b == b';' || b == b'&' || b == b'|' || b == b'(');
+
+    let (mut candidates, kind) = gather_candidates(shell, &prefix, is_first_word);
+    if candidates.is_empty() {
+        out.bell = true;
+        return;
+    }
+    candidates.sort_by(|a, b| a.word.cmp(&b.word));
+    candidates.dedup_by(|a, b| a.word == b.word);
+
+    if candidates.len() == 1 {
+        let mut full = candidates[0].word.clone();
+        append_terminator(&mut full, &candidates[0], kind);
+        replace_prefix_with(state, word_start, prefix.len(), &full);
+        return;
+    }
+
+    let words: Vec<Vec<u8>> = candidates.iter().map(|c| c.word.clone()).collect();
+    let lcp = longest_common_prefix(&words).unwrap_or_default();
+    if lcp.len() > prefix.len() {
+        replace_prefix_with(state, word_start, prefix.len(), &lcp);
+        return;
+    }
+
+    if state.last_fn == Some(EmacsFn::Complete) {
+        list_candidates(&candidates);
+    } else {
+        out.bell = true;
     }
 }
 
-fn try_complete_cascade(shell: &Shell, prefix: &[u8]) -> Option<Vec<u8>> {
+/// Splice `replacement` into the buffer in place of the old partial
+/// word `buf[word_start..word_start + old_prefix_len]`, move the cursor
+/// to the end of the replacement, and push a single undo entry.
+fn replace_prefix_with(
+    state: &mut EmacsState,
+    word_start: usize,
+    old_prefix_len: usize,
+    replacement: &[u8],
+) {
+    let old_end = word_start + old_prefix_len;
+    let removed: Vec<u8> = state.buf[word_start..old_end].to_vec();
+    state
+        .buf
+        .splice(word_start..old_end, replacement.iter().copied());
+    state.cursor = word_start + replacement.len();
+    if !removed.is_empty() {
+        state.undo.push(UndoEntry::Killed {
+            at: word_start,
+            bytes: removed,
+        });
+    }
+    state.undo.push(UndoEntry::Inserted {
+        at: word_start,
+        bytes: replacement.to_vec(),
+    });
+}
+
+/// Append the per-candidate terminator (spec § 5.8): `/` for a
+/// directory match in [`CompletionKind::Path`]; nothing for anything
+/// else. We intentionally do not auto-insert a space after file /
+/// command names — the user is free to continue typing flags / paths.
+fn append_terminator(full: &mut Vec<u8>, cand: &Candidate, kind: CompletionKind) {
+    if matches!(kind, CompletionKind::Path) && is_dir_candidate(&cand.word) {
+        full.push(b'/');
+    }
+}
+
+fn is_dir_candidate(word: &[u8]) -> bool {
+    // Reject trivially-empty words and already-slash-terminated words.
+    if word.is_empty() || word.ends_with(b"/") {
+        return false;
+    }
+    sys::fs::is_directory(word)
+}
+
+/// Print `\r\n` followed by one candidate per line on stdout. The
+/// outer dispatch loop's `redraw` runs immediately after and redraws
+/// the prompt + buffer under the listing.
+fn list_candidates(cands: &[Candidate]) {
+    let mut buf: Vec<u8> = Vec::new();
+    buf.extend_from_slice(b"\r\n");
+    for c in cands {
+        buf.extend_from_slice(&c.display);
+        buf.push(b'\n');
+    }
+    write_bytes(&buf);
+}
+
+fn gather_candidates(
+    shell: &Shell,
+    prefix: &[u8],
+    is_first_word: bool,
+) -> (Vec<Candidate>, CompletionKind) {
     if let Some(stripped) = prefix.strip_prefix(b"$") {
-        let mut matches: Vec<Vec<u8>> = Vec::new();
+        let mut cands: Vec<Candidate> = Vec::new();
         for (name, _) in shell.env().iter() {
             if name.starts_with(stripped) {
-                matches.push(name.to_vec());
+                let mut word = b"$".to_vec();
+                word.extend_from_slice(name);
+                let display = name.to_vec();
+                cands.push(Candidate { word, display });
             }
         }
-        if let Some(common) = longest_common_prefix(&matches) {
-            let mut out = b"$".to_vec();
-            out.extend_from_slice(&common);
-            return Some(out);
+        return (cands, CompletionKind::Variable);
+    }
+
+    if prefix.starts_with(b"~") && !prefix[1..].contains(&b'/') {
+        // `~` or `~user` with no slash yet: expand `~` alone to the
+        // $HOME directory. Usernames other than the current one are
+        // not resolved (no /etc/passwd probing).
+        if prefix == b"~"
+            && let Some(home) = shell.get_var(b"HOME")
+        {
+            let cand = home.to_vec();
+            let display = cand.clone();
+            return (
+                vec![Candidate {
+                    word: cand,
+                    display,
+                }],
+                CompletionKind::Path,
+            );
         }
-        return None;
+        return (Vec::new(), CompletionKind::Path);
     }
-    if prefix.starts_with(b"~") {
-        return None;
+
+    if prefix.starts_with(b"~/")
+        && let Some(home) = shell.get_var(b"HOME")
+    {
+        let mut expanded = home.to_vec();
+        expanded.extend_from_slice(&prefix[1..]);
+        let cands = complete_path_candidates(&expanded);
+        return (cands, CompletionKind::Path);
     }
-    complete_path(prefix)
+
+    if is_first_word && !prefix.contains(&b'/') {
+        let cands = command_candidates(shell, prefix);
+        return (cands, CompletionKind::Command);
+    }
+
+    (complete_path_candidates(prefix), CompletionKind::Path)
+}
+
+fn command_candidates(shell: &Shell, prefix: &[u8]) -> Vec<Candidate> {
+    let mut out_cands: Vec<Candidate> = Vec::new();
+    let mut seen: std::collections::HashSet<Vec<u8>> = std::collections::HashSet::new();
+    let push = |cands: &mut Vec<Candidate>,
+                seen: &mut std::collections::HashSet<Vec<u8>>,
+                name: Vec<u8>| {
+        if !name.starts_with(prefix) {
+            return;
+        }
+        if seen.insert(name.clone()) {
+            let display = name.clone();
+            cands.push(Candidate {
+                word: name,
+                display,
+            });
+        }
+    };
+
+    for name in crate::builtin::all_builtin_names() {
+        push(&mut out_cands, &mut seen, name.to_vec());
+    }
+    for (name, _) in shell.aliases().iter() {
+        push(&mut out_cands, &mut seen, name.to_vec());
+    }
+    for (name, _) in shell.functions().iter() {
+        push(&mut out_cands, &mut seen, name.to_vec());
+    }
+
+    if let Some(path) = shell.get_var(b"PATH").map(|s| s.to_vec()) {
+        for segment in path.split(|&b| b == b':') {
+            let base: &[u8] = if segment.is_empty() { b"." } else { segment };
+            let c_dir = match crate::bstr::to_cstring(base) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+            let entries = match sys::fs::read_dir_entries_cstr(c_dir.as_c_str()) {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
+            for e in entries {
+                let name = e.as_bytes();
+                if !name.starts_with(prefix) {
+                    continue;
+                }
+                // Skip `.` and `..`.
+                if name == b"." || name == b".." {
+                    continue;
+                }
+                push(&mut out_cands, &mut seen, name.to_vec());
+            }
+        }
+    }
+
+    out_cands
+}
+
+/// File-system completion for the partial `prefix`. Candidates replace
+/// the whole word; the display label is just the matched basename.
+fn complete_path_candidates(prefix: &[u8]) -> Vec<Candidate> {
+    let (dir, fname) = match prefix.iter().rposition(|&b| b == b'/') {
+        Some(pos) => (&prefix[..=pos], &prefix[pos + 1..]),
+        None => (&b"."[..], prefix),
+    };
+    let c_dir = match crate::bstr::to_cstring(dir) {
+        Ok(c) => c,
+        Err(_) => return Vec::new(),
+    };
+    let entries = match sys::fs::read_dir_entries_cstr(c_dir.as_c_str()) {
+        Ok(e) => e,
+        Err(_) => return Vec::new(),
+    };
+    let mut cands: Vec<Candidate> = Vec::new();
+    for e in entries {
+        let name = e.as_bytes();
+        if !name.starts_with(fname) {
+            continue;
+        }
+        if name == b"." || name == b".." {
+            continue;
+        }
+        let mut word = if dir == b"." {
+            Vec::new()
+        } else {
+            dir.to_vec()
+        };
+        word.extend_from_slice(name);
+        let display = name.to_vec();
+        cands.push(Candidate { word, display });
+    }
+    cands
 }
 
 fn longest_common_prefix(items: &[Vec<u8>]) -> Option<Vec<u8>> {
@@ -707,30 +966,6 @@ fn longest_common_prefix(items: &[Vec<u8>]) -> Option<Vec<u8>> {
     } else {
         Some(prefix)
     }
-}
-
-fn complete_path(prefix: &[u8]) -> Option<Vec<u8>> {
-    let (dir, fname) = match prefix.iter().rposition(|&b| b == b'/') {
-        Some(pos) => (&prefix[..=pos], &prefix[pos + 1..]),
-        None => (&b"."[..], prefix),
-    };
-    let c_dir = crate::bstr::to_cstring(dir).ok()?;
-    let entries = sys::fs::read_dir_entries_cstr(c_dir.as_c_str()).ok()?;
-    let mut matches: Vec<Vec<u8>> = Vec::new();
-    for e in entries {
-        let bytes = e.as_bytes();
-        if bytes.starts_with(fname) {
-            matches.push(bytes.to_vec());
-        }
-    }
-    let common = longest_common_prefix(&matches)?;
-    let mut out = if dir == b"." {
-        Vec::new()
-    } else {
-        dir.to_vec()
-    };
-    out.extend_from_slice(&common);
-    Some(out)
 }
 
 fn editor_temp_path() -> Vec<u8> {
@@ -927,15 +1162,19 @@ mod tests {
     }
 
     #[test]
-    fn abort_clears_line() {
+    fn abort_without_composite_rings_bell() {
+        // Per spec § 5.9, C-g (`abort`) outside of a composite action
+        // (incremental search, `quoted-insert`) rings the bell and
+        // leaves the buffer untouched.
         assert_no_syscalls(|| {
             let mut shell = test_shell();
             let mut state = EmacsState::new(0x7f);
             state.buf = b"abc".to_vec();
             state.cursor = 3;
-            apply(&mut shell, &mut state, EmacsFn::Abort, 0x07);
-            assert_eq!(state.buf, b"");
-            assert_eq!(state.cursor, 0);
+            let out = apply(&mut shell, &mut state, EmacsFn::Abort, 0x07);
+            assert!(out.bell);
+            assert_eq!(state.buf, b"abc");
+            assert_eq!(state.cursor, 3);
         });
     }
 

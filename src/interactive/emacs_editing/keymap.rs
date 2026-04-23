@@ -392,6 +392,10 @@ pub(crate) const DEFAULT_BINDINGS: &[(&[u8], EmacsFn)] = &[
     (b"\x1b[1~", EmacsFn::BeginningOfLine),
     (b"\x1b[4~", EmacsFn::EndOfLine),
     (b"\x1b[3~", EmacsFn::DeleteChar),
+    (b"\x1b[5~", EmacsFn::BeginningOfHistory), // PageUp
+    (b"\x1b[6~", EmacsFn::EndOfHistory),       // PageDown
+    (b"\x1b[1;5C", EmacsFn::ForwardWord),      // Ctrl+Right
+    (b"\x1b[1;5D", EmacsFn::BackwardWord),     // Ctrl+Left
     // --- C-x prefix (section 5.5) ---
     (b"\x18\x05", EmacsFn::EditAndExecuteCommand), // C-x C-e
 ];
