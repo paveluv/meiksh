@@ -57,6 +57,39 @@ pub(crate) fn isatty_fd(fd: c_int) -> bool {
     interface::isatty(fd) != 0
 }
 
+/// Best-effort query for the connected terminal's column count via
+/// `TIOCGWINSZ`. Tries `stdout`, `stderr`, and `stdin` in turn; returns
+/// `None` if the call fails or reports a zero-width window (e.g. under
+/// a non-terminal fd). This is a display-only helper used by TAB
+/// completion listings and is intentionally side-channel: it does not
+/// go through the sys trace/mocking interface because it is never on
+/// the hot path and has no observable behavior when stdout is not a
+/// terminal.
+pub(crate) fn terminal_columns_from_stdio() -> Option<usize> {
+    use super::constants::{STDERR_FILENO, STDIN_FILENO, STDOUT_FILENO};
+
+    #[repr(C)]
+    struct Winsize {
+        ws_row: libc::c_ushort,
+        ws_col: libc::c_ushort,
+        ws_xpixel: libc::c_ushort,
+        ws_ypixel: libc::c_ushort,
+    }
+    let mut ws = Winsize {
+        ws_row: 0,
+        ws_col: 0,
+        ws_xpixel: 0,
+        ws_ypixel: 0,
+    };
+    for fd in [STDOUT_FILENO, STDERR_FILENO, STDIN_FILENO] {
+        let rc = unsafe { libc::ioctl(fd, libc::TIOCGWINSZ, &mut ws) };
+        if rc == 0 && ws.ws_col > 0 {
+            return Some(ws.ws_col as usize);
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
