@@ -1987,6 +1987,51 @@ fn tab_twice_lists_candidates() {
     );
 }
 
+/// § 5.8: double-TAB listings are laid out in a bash-style
+/// column-major grid so short candidates share a single row rather
+/// than printing one per line.
+#[test]
+fn tab_twice_lists_candidates_in_multi_column_grid() {
+    use std::fs;
+    let Some(mut pty) = spawn_or_skip() else {
+        return;
+    };
+    let dir = format!("/tmp/meiksh-compl-grid-{}", std::process::id());
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).expect("mkdir");
+    for name in ["GRIDa", "GRIDb", "GRIDc", "GRIDd"] {
+        fs::write(format!("{dir}/{name}"), b"").expect("touch");
+    }
+    enable_emacs(&mut pty);
+    pty.send(format!("cd {dir}\n").as_bytes());
+    let _ = drain_until_contains(&mut pty, b"$ ");
+    // Stable 80-column-ish width; 4 short names must fit on one row.
+    pty.send(b"export COLUMNS=80\n");
+    let _ = drain_until_contains(&mut pty, b"$ ");
+    pty.send(b"printf OK GRID\x09\x09");
+    let probe = drain_brief(&mut pty);
+    pty.send(b"\x15\n");
+    let _ = pty.exit_and_wait();
+    let _ = fs::remove_dir_all(&dir);
+    let text = String::from_utf8_lossy(&probe);
+    assert!(
+        text.contains("GRIDa") && text.contains("GRIDd"),
+        "expected double-TAB listing to show all grid entries: {text:?}"
+    );
+    // All four candidates must appear on the same grid row.
+    let row_with_a = text
+        .lines()
+        .find(|line| line.contains("GRIDa"))
+        .unwrap_or("");
+    assert!(
+        row_with_a.contains("GRIDa")
+            && row_with_a.contains("GRIDb")
+            && row_with_a.contains("GRIDc")
+            && row_with_a.contains("GRIDd"),
+        "expected all short candidates on one grid row, got row {row_with_a:?} in {text:?}"
+    );
+}
+
 /// § 5.8 bullet 2: "if the cursor is on the first word of the command
 /// line, meiksh shall attempt command completion."
 #[test]

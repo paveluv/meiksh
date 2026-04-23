@@ -11,7 +11,7 @@ use crate::sys;
 
 use super::super::editor::history_search::{Direction, find_prefix};
 use super::super::editor::input::write_bytes;
-use super::super::editor::redraw::{char_len_at, prev_char_start};
+use super::super::editor::redraw::{char_len_at, display_width, prev_char_start};
 use super::super::editor::words::{WordClass, next_word_boundary, prev_word_boundary};
 use super::keymap::EmacsFn;
 use super::kill_buffer::KillDirection;
@@ -789,17 +789,74 @@ fn is_dir_candidate(word: &[u8]) -> bool {
     sys::fs::is_directory(word)
 }
 
-/// Print `\r\n` followed by one candidate per line on stdout. The
-/// outer dispatch loop's `redraw` runs immediately after and redraws
-/// the prompt + buffer under the listing.
+/// Print a bash-style column-major grid of candidate display labels
+/// on stdout. The outer dispatch loop's `redraw` runs immediately
+/// after and redraws the prompt + buffer under the listing.
+///
+/// Layout matches readline's `rl_display_match_list` default:
+///
+/// - `max_width` = longest display width across all candidates.
+/// - `gutter`    = 2 columns of spacing between columns.
+/// - `cols`      = max(1, term_width / (max_width + gutter)).
+/// - `rows`      = ceil(ncands / cols).
+/// - Entries are placed column-major so each column is sorted top-
+///   to-bottom: row `r`, column `c` shows `cands[c * rows + r]`.
 fn list_candidates(cands: &[Candidate]) {
-    let mut buf: Vec<u8> = Vec::new();
+    if cands.is_empty() {
+        return;
+    }
+    let term_cols = terminal_columns();
+    let max_width = cands
+        .iter()
+        .map(|c| display_width(&c.display))
+        .max()
+        .unwrap_or(0);
+    const GUTTER: usize = 2;
+    let cell = max_width.saturating_add(GUTTER);
+    let cols = if cell == 0 {
+        1
+    } else {
+        (term_cols / cell).max(1)
+    };
+    let rows = cands.len().div_ceil(cols);
+
+    let mut buf: Vec<u8> = Vec::with_capacity(cands.len() * (max_width + GUTTER) + 4);
     buf.extend_from_slice(b"\r\n");
-    for c in cands {
-        buf.extend_from_slice(&c.display);
-        buf.push(b'\n');
+    for r in 0..rows {
+        for c in 0..cols {
+            let idx = c * rows + r;
+            if idx >= cands.len() {
+                break;
+            }
+            let entry = &cands[idx];
+            buf.extend_from_slice(&entry.display);
+            let is_last_on_row = c + 1 == cols || (c + 1) * rows + r >= cands.len();
+            if !is_last_on_row {
+                let pad = cell - display_width(&entry.display);
+                for _ in 0..pad {
+                    buf.push(b' ');
+                }
+            }
+        }
+        buf.extend_from_slice(b"\r\n");
     }
     write_bytes(&buf);
+}
+
+/// Best-effort query for the connected terminal's column count.
+/// Falls back to `$COLUMNS` (if it parses as a positive integer) and
+/// finally to 80.
+fn terminal_columns() -> usize {
+    if let Some(cols) = sys::tty::terminal_columns_from_stdio() {
+        return cols;
+    }
+    if let Ok(val) = std::env::var("COLUMNS")
+        && let Ok(n) = val.parse::<usize>()
+        && n > 0
+    {
+        return n;
+    }
+    80
 }
 
 fn gather_candidates(
