@@ -4,11 +4,17 @@
     clippy::disallowed_methods
 )]
 
-mod common;
+mod sys;
 
+mod common;
+mod interactive_common;
+
+mod bind_builtin;
 mod builtins;
 mod control_flow;
+mod emacs_mode;
 mod expansion;
+mod inputrc_parser;
 mod interactive;
 mod os_interface;
 mod parser_coverage;

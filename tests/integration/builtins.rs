@@ -1,5 +1,5 @@
 use super::common::*;
-use libc;
+use super::sys;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::CommandExt;
@@ -264,10 +264,7 @@ fn ignored_on_entry_signal_reported_by_trap() {
     let out = unsafe {
         Command::new(meiksh())
             .args(["-c", "trap -p USR1"])
-            .pre_exec(|| {
-                libc::signal(libc::SIGUSR1, libc::SIG_IGN);
-                Ok(())
-            })
+            .pre_exec(|| sys::ignore_sigusr1())
             .output()
             .expect("run")
     };

@@ -1,4 +1,4 @@
-use libc;
+use super::sys;
 use std::io::Write;
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
@@ -62,16 +62,7 @@ pub fn run_meiksh_with_stdin(script: &str, stdin: &[u8]) -> std::process::Output
 pub fn run_meiksh_with_nonblocking_stdin(stdin: &[u8]) -> std::process::Output {
     let mut command = Command::new(meiksh());
     unsafe {
-        command.pre_exec(|| {
-            let flags = libc::fcntl(0, libc::F_GETFL, 0);
-            if flags < 0 {
-                return Err(std::io::Error::last_os_error());
-            }
-            if libc::fcntl(0, libc::F_SETFL, flags | libc::O_NONBLOCK) < 0 {
-                return Err(std::io::Error::last_os_error());
-            }
-            Ok(())
-        });
+        command.pre_exec(|| sys::set_nonblocking(0, true));
     }
     let mut child = command
         .stdin(Stdio::piped())

@@ -6,7 +6,7 @@ This document records project rules, POSIX implementation-defined choices, and t
 
 - Language: Rust
 - Dependency policy: keep dependencies minimal; low-level POSIX interface access lives in `src/sys/`
-- FFI boundary policy: `libc` is permitted only in `src/sys/`, with a narrow documented exception for `tests/integration/basic.rs`; all other modules must go through shell-owned helpers exposed from that layer instead of importing `libc` directly
+- FFI boundary policy: `libc` is permitted only in two locations: (1) production `src/sys/`, and (2) `tests/integration/sys.rs`, the dedicated test-only sys-helpers module for integration tests. All other production and test modules must go through `src/sys/`-owned helpers (production) or `tests/integration/sys.rs` helpers (tests) instead of importing `libc` directly. `scripts/check-libc-boundary.sh` enforces this rule.
 - Portability policy: do not introduce `#[cfg(target_os = ...)]` switches as a normal implementation technique; platform differences should be absorbed through POSIX-facing helpers in `src/sys/`, preferably by relying on `libc`-provided types and constants rather than open-coding per-OS values
 - Source policy: no reuse of existing shell source code
 - Semantic target: Issue 8 first, with Issue 7 compatibility notes when needed for documentation review
@@ -15,9 +15,11 @@ This document records project rules, POSIX implementation-defined choices, and t
 ## Low-Level Interface Boundary
 
 - `src/sys/` is the only production module that may depend on `libc` directly.
-- `tests/integration/basic.rs` may also depend on `libc` for test-only setup of inherited file-descriptor state where using `src/sys/` helpers is not practical inside `pre_exec`.
-- Code outside `src/sys/` should express OS needs in terms of shell-owned helper functions, data types, and constants from `src/sys/`.
-- If a required interface or constant is missing, extend `src/sys/` instead of importing `libc` elsewhere.
+- `tests/integration/sys.rs` is the single licensed home for test-only libc usage (PTY setup, signal setup, inherited-fd manipulation, anything that's awkward to expose through production `src/sys/` just for tests). Other integration-test modules consume safe wrappers from it and do not import `libc` themselves.
+- `tests/expect_pty.rs` is the standalone matrix-test driver binary; it is a self-contained tool outside the integration-test framework and retains its own explicit `#![allow(...)]` attributes.
+- Code outside these three locations should express OS needs in terms of shell-owned helpers: production calls `src/sys/`, integration tests call `tests/integration/sys.rs` (which itself may call `src/sys/` or `libc`).
+- If a required interface or constant is missing, extend the appropriate sys module (production or test) instead of importing `libc` elsewhere.
+- `scripts/check-libc-boundary.sh` runs in the final validation step and fails the build if `libc` tokens appear outside the three permitted locations.
 - New platform-specific `target_os` branching is not an acceptable default approach for production code or tests.
 - Do not copy the old test-local `target_os` pattern into new code; use `libc`-provided constants instead.
 
@@ -135,6 +137,7 @@ All unit tests that exercise OS-interacting code paths use the **trace model** i
 ## Coverage Policy
 
 - Production-code line coverage must be at least **99.5%** as measured by `./scripts/coverage.sh`. The script instruments the real (non-test) binary, so `#[cfg(test)]` code is excluded automatically.
+- Both **unit tests** (colocated `#[cfg(test)] mod tests`) and **integration tests** (`tests/integration/`) contribute to this coverage number - `scripts/coverage.sh` runs `cargo test --lib --test integration_basic` and merges the profdata. Use integration tests to cover code paths that only execute behind real I/O (TTY editing, PTY sessions, signal delivery, child processes); keep unit tests for pure logic where the syscall trace model is the clearest expression of intent.
 - The 99.5% floor is a deliberate trade-off: chasing the last 0.5% of lines (unreachable fallbacks, defensive error branches, panic-on-corruption guards) produces contorted tests with diminishing value. Write tests that exercise real behavior; do not contort them to cover lines that exist only to keep the type checker or the compiler honest.
 - Every production code change must keep coverage above the 99.5% floor; this threshold must not be lowered further without an explicit policy change.
 - There is no per-line exemption mechanism. If a specific line is provably unreachable in production, delete it rather than exempting it; the coverage target accommodates incidental gaps without needing annotations.

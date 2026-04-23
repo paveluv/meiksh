@@ -2,7 +2,7 @@
 
 ## Status
 
-**Not implemented.** This document is a specification; no supporting code exists in meiksh yet. The `emacs` shell option is not accepted by `set -o`, no `src/interactive/emacs_editing.rs` is present, and the `bind` builtin is not registered. The four implementation stages (plumbing, core editor, inputrc parser, `bind` builtin) are scoped but not scheduled. Conformance tests under `tests/matrix/` do not yet reference this spec.
+**Not implemented.** This document is a specification; no supporting code exists in meiksh yet. The `emacs` shell option is not accepted by `set -o`, no `src/interactive/emacs_editing.rs` is present, and the `bind` builtin is not registered. The four implementation stages (plumbing, core editor, inputrc parser, `bind` builtin) are scoped but not scheduled. User-visible behavior shall be verified by integration tests under [tests/integration/emacs_mode.rs](../../tests/integration/emacs_mode.rs) driven through the shared PTY harness in [tests/integration/interactive_common/](../../tests/integration/interactive_common/); pure-logic pieces (keymap, kill buffer, undo, inputrc parser) are covered by colocated `#[cfg(test)]` unit tests alongside their implementation.
 
 ## 1. Scope
 
