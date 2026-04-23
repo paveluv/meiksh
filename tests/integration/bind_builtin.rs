@@ -27,26 +27,32 @@ fn drain_until_contains(pty: &mut PtyChild, needle: &[u8]) -> Vec<u8> {
     let needle = needle.to_vec();
     pty.drain_until(
         move |b| b.windows(needle.len()).any(|w| w == needle.as_slice()),
-        Duration::from_secs(60),
+        Duration::from_secs(5),
     )
 }
 
-/// Parse `>>RC=<digits><` from command output (sentinel introduced
-/// below). Returns the first match or `None`.
-fn parse_status_tag(out: &[u8], tag: &str) -> Option<i32> {
-    let prefix = format!("{tag}=");
-    let bytes = out;
-    for (start, _) in bytes
-        .windows(prefix.len())
-        .enumerate()
-        .filter(|(_, w)| *w == prefix.as_bytes())
-    {
+/// Scan `bytes` for the first well-formed `<prefix><digits><terminator>`
+/// occurrence and return the signed integer between `<prefix>` and
+/// `<terminator>`. Returns `None` when no complete occurrence is
+/// present.
+///
+/// The prefix and terminator together are what makes status tagging
+/// echo-safe: the terminal echoes the raw command text (which
+/// contains `>>TAG=%d<`), so any drain that matches only on the
+/// prefix `>>TAG=` would race the actual `printf` output. Requiring
+/// that `<prefix>` be followed by ASCII digits and then `<terminator>`
+/// is a pattern the echoed literal `%d` can never satisfy.
+fn match_status_tag(bytes: &[u8], prefix: &[u8], terminator: u8) -> Option<i32> {
+    for start in 0..bytes.len().saturating_sub(prefix.len()) {
+        if &bytes[start..start + prefix.len()] != prefix {
+            continue;
+        }
         let mut j = start + prefix.len();
         let digit_start = j;
         while j < bytes.len() && bytes[j].is_ascii_digit() {
             j += 1;
         }
-        if j > digit_start && bytes.get(j) == Some(&b'<') {
+        if j > digit_start && bytes.get(j) == Some(&terminator) {
             let digits = &bytes[digit_start..j];
             if let Ok(s) = std::str::from_utf8(digits) {
                 if let Ok(n) = s.parse::<i32>() {
@@ -58,10 +64,20 @@ fn parse_status_tag(out: &[u8], tag: &str) -> Option<i32> {
     None
 }
 
+/// Parse `>>TAG=<digits><` from command output.
+fn parse_status_tag(out: &[u8], tag: &str) -> Option<i32> {
+    let prefix = format!(">>{tag}=");
+    match_status_tag(out, prefix.as_bytes(), b'<')
+}
+
 fn send_cmd_with_tag(pty: &mut PtyChild, tag: &str, cmd: &str) -> Vec<u8> {
     let line = format!("{cmd} ; __r=$? ; printf '>>{tag}=%d<\\n' \"$__r\"\n");
     pty.send(line.as_bytes());
-    drain_until_contains(pty, format!(">>{tag}=").as_bytes())
+    let prefix: Vec<u8> = format!(">>{tag}=").into_bytes();
+    pty.drain_until(
+        move |buf| match_status_tag(buf, &prefix, b'<').is_some(),
+        Duration::from_secs(5),
+    )
 }
 
 /// A single PTY session that exercises every `bind` scenario. Each
