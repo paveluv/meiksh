@@ -1908,6 +1908,28 @@ fn tab_variable_completion_via_dollar_prefix() {
     );
 }
 
+/// § 5.8: variable completion also fires when the partial word begins
+/// with `${`. A unique match closes the expansion with `}` so the
+/// brace form stays well-formed after completion.
+#[test]
+fn tab_variable_completion_via_brace_prefix() {
+    let Some(mut pty) = spawn_or_skip() else {
+        return;
+    };
+    enable_emacs(&mut pty);
+    pty.send(b"export MEIKSHBRACEVAR=braced\n");
+    let _ = drain_until_contains(&mut pty, b"$ ");
+    // printf '[%s]' ${MEIKSHBR<TAB> → ${MEIKSHBRACEVAR} → "braced".
+    pty.send(b"printf '[%s]' ${MEIKSHBR\x09");
+    let out = accept_then_drain_end(&mut pty);
+    let _ = pty.exit_and_wait();
+    let text = String::from_utf8_lossy(&out);
+    assert!(
+        text.contains("[braced]"),
+        "expected `${{`-prefixed TAB to complete to ${{MEIKSHBRACEVAR}} and expand: {text:?}"
+    );
+}
+
 /// § 5.8: filename completion via a path containing `/`. TAB on
 /// `/tmp/<fixture>/FOOB` completes to the full filename.
 #[test]
