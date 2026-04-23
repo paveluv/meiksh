@@ -19,11 +19,15 @@ fn spawn_or_skip() -> Option<PtyChild> {
     spawn_meiksh_pty(&[])
 }
 
+// PTY roundtrips (kernel echo + shell command + kernel buffer flush)
+// complete in single-digit milliseconds on any reasonable host; the
+// 5-second budget here is ~100× that to tolerate heavy parallel test
+// load without hiding real regressions behind a minute-long hang.
 fn drain_until_contains(pty: &mut PtyChild, needle: &[u8]) -> Vec<u8> {
     let needle = needle.to_vec();
     pty.drain_until(
         move |b| b.windows(needle.len()).any(|w| w == needle.as_slice()),
-        Duration::from_secs(60),
+        Duration::from_secs(5),
     )
 }
 
@@ -146,8 +150,15 @@ fn emacs_mode_turns_off_vi_mode() {
     pty.send(b"set -o vi\n");
     pty.send(b"set +o emacs\n");
     pty.send(b"set -o emacs\n");
-    pty.send(b"set -o | grep -E '^(vi|emacs) '; echo EMACSDONE\n");
-    let out = drain_until_contains(&mut pty, b"EMACSDONE\r\n");
+    // The terminator is produced by `printf` using octal escapes
+    // (`\105\116\104` = "END"), so the eight-byte sequence `END\r\n`
+    // appears only in the actual shell output — never in the kernel's
+    // cooked-mode echo of the line, which contains the literal
+    // backslash-digit source instead. Without this the drain races
+    // the pre-`set -o` echo of `EMACSDONE\r\n` and returns before the
+    // option query has run.
+    pty.send(b"set -o | grep -E '^(vi|emacs) '; printf '\\105\\116\\104\\012'\n");
+    let out = drain_until_contains(&mut pty, b"END\r\n");
     let _ = pty.exit_and_wait();
     let text = String::from_utf8_lossy(&out);
     assert!(

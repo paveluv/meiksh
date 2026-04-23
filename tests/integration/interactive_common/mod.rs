@@ -122,6 +122,12 @@ impl PtyChild {
         let _ = sys::set_nonblocking(fd, true);
         let mut buf = Vec::new();
         let mut chunk = [0u8; 4096];
+        // Short poll interval: PTY roundtrips commonly resolve in
+        // 100µs-5ms, so a 2ms sleep on WouldBlock keeps us within ~2ms
+        // of any arriving byte without busy-spinning the host. This
+        // directly trims multi-hundreds-of-milliseconds off a test
+        // suite of ~15 PTY roundtrips.
+        let poll_sleep = Duration::from_millis(2);
         while Instant::now() < deadline {
             match self.primary.read(&mut chunk) {
                 Ok(0) => break,
@@ -135,7 +141,7 @@ impl PtyChild {
                     if pred(&buf) {
                         break;
                     }
-                    thread::sleep(Duration::from_millis(10));
+                    thread::sleep(poll_sleep);
                 }
                 Err(_) => break,
             }
@@ -165,11 +171,35 @@ impl PtyChild {
         None
     }
 
-    /// Ask the shell to `exit` and wait for the child to finish.
-    pub fn exit_and_wait(mut self) -> ExitStatus {
+    /// Ask the shell to `exit` and wait for the child to finish,
+    /// with a bounded wall-clock budget so a misbehaving shell can't
+    /// stall the test suite forever. `timeout` applies to the
+    /// post-`exit` wait; exceeding it kills the child, reaps it, and
+    /// returns `None`.
+    pub fn exit_and_wait_with_timeout(mut self, timeout: Duration) -> Option<ExitStatus> {
         let _ = self.primary.write_all(b"exit\n");
         let _ = self.primary.flush();
-        self.child.wait().expect("wait for meiksh -i")
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            match self.child.try_wait() {
+                Ok(Some(status)) => return Some(status),
+                Ok(None) => thread::sleep(Duration::from_millis(10)),
+                Err(_) => return None,
+            }
+        }
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        None
+    }
+
+    /// Ask the shell to `exit` and wait for the child to finish.
+    /// Defaults to a 5-second budget — interactive shells respond to
+    /// EOF in milliseconds; anything longer indicates a test bug.
+    pub fn exit_and_wait(self) -> ExitStatus {
+        match self.exit_and_wait_with_timeout(Duration::from_secs(5)) {
+            Some(status) => status,
+            None => panic!("meiksh -i did not exit within 5s after receiving `exit\\n`"),
+        }
     }
 }
 
