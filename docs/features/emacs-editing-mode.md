@@ -380,7 +380,11 @@ The functions `dump-functions`, `dump-variables`, and `dump-macros` shall not be
 
 ### 15.11 8-Bit Meta Input
 
-Meiksh shall recognize meta only in its ESC-prefix form. The inputrc variables `input-meta`, `output-meta`, `convert-meta`, and `enable-meta-key` shall not be recognized. Terminals configured to transmit 8-bit meta (high-bit-set bytes) shall be interpreted as UTF-8 continuation bytes or `self-insert` of the raw byte, not as meta keys.
+Meiksh shall recognize meta only in its ESC-prefix form. Terminals configured to transmit 8-bit meta (high-bit-set bytes) shall be interpreted as UTF-8 continuation bytes or `self-insert` of the raw byte, not as meta keys.
+
+The inputrc variables `input-meta` (and its readline alias `meta-flag`) and `output-meta` shall be accepted by the parser without diagnostic and their values shall be stored on the editor context, but those values shall have no runtime effect: the ESC-prefix rule above is unconditional. Accepting these variables exists solely so that distribution-shipped inputrc files (notably `/etc/inputrc` on Debian and Fedora) load without spurious `unknown variable` warnings.
+
+The inputrc variables `convert-meta` and `enable-meta-key` shall not be recognized. See Appendix B, Package 12 for what it would take to give `input-meta` / `output-meta` / `convert-meta` / `enable-meta-key` real runtime effect.
 
 ### 15.12 Separate Keymaps
 
@@ -392,7 +396,9 @@ The following readline variables shall not be recognized by the inputrc parser o
 
 ### 15.14 `$if` Variants
 
-Only `$if mode=emacs` and `$if mode=vi` shall be recognized by the inputrc parser. The variants `$if term=<name>`, `$if application=<name>`, `$if variable=value`, and `$if version>=<n>` shall not be recognized and shall produce per-line diagnostics. See Appendix B, Package 12.
+The inputrc parser shall recognize `$if mode=emacs`, `$if mode=vi`, and `$if term=<name>`. The `term=<name>` test shall evaluate true when the `TERM` environment variable (captured at the time the inputrc was opened) equals `<name>` exactly or when the portion of `TERM` up to the first `-` equals `<name>`; otherwise it shall evaluate false. A well-formed `term=<name>` test that matches nothing shall not produce a diagnostic.
+
+The variants `$if application=<name>`, `$if variable=value`, and `$if version>=<n>` shall not be recognized and shall produce per-line diagnostics. See Appendix B, Package 12.
 
 ### 15.15 `bind` Flags Beyond The Kept Set
 
@@ -404,7 +410,7 @@ No inline cycling of completions. Listing occurs on a second `TAB` (or first, if
 
 ### 15.17 Per-Terminal Bindings
 
-Meiksh hardcodes the ANSI sequences emitted by xterm-class, screen-class, linux, and ansi terminals for arrow keys, `Home`, `End`, `Page Up`, `Page Down`, `Delete`, and F-keys. Terminals that emit different sequences shall require the user to rebind via inputrc. `$if term=` is not available; see Section 15.14.
+Meiksh hardcodes the ANSI sequences emitted by xterm-class, screen-class, linux, and ansi terminals for arrow keys, `Home`, `End`, `Page Up`, `Page Down`, `Delete`, and F-keys. Terminals that emit different sequences shall require the user to rebind via inputrc; `$if term=<name>` (Section 15.14) is available for gating such rebinds.
 
 ## Appendix A - Comparison And Samples
 
@@ -422,7 +428,7 @@ The table below summarizes the headline differences between meiksh emacs mode an
 | Incremental search `C-r` | Yes | Yes | Yes | Yes |
 | `history-search-backward` bindable | Yes (unbound by default) | Yes | No | Yes |
 | `bind -x` | Yes | Yes | No | No (uses widgets) |
-| `$if term=` | No | Yes | No | N/A |
+| `$if term=` | Yes | Yes | No | N/A |
 
 ### A.2 Sample `~/.inputrc`
 
@@ -517,7 +523,7 @@ Replace the current single-keymap dispatch with a keymap registry keyed by name.
 
 **Effort**: large. **Dependencies**: Package 11 for keymap-based `$if keymap=`.
 
-Add `$if term=`, `$if application=`, `$if variable=value`, and `$if version>=<n>`. Add all ~25 cut readline variables with their defaults and editor-side effects. Add 8-bit meta handling via `input-meta`, `output-meta`, `convert-meta`, `enable-meta-key`. Add `enable-keypad`. Add `isearch-terminators`. Add `show-mode-in-prompt` with `emacs-mode-string` / `vi-cmd-mode-string` / `vi-ins-mode-string`. Most variables require editor-side work, not just parsing. Cuts addressed: 15.11, 15.13, 15.14, 15.17.
+Add `$if application=`, `$if variable=value`, and `$if version>=<n>` (`$if term=` and `$if mode=` are already implemented). Add all ~25 cut readline variables with their defaults and editor-side effects. Give `input-meta`, `output-meta`, `convert-meta`, and `enable-meta-key` real runtime effect — today `input-meta` / `output-meta` are parsed and stored but ignored, and `convert-meta` / `enable-meta-key` are still unrecognized. Add `enable-keypad`. Add `isearch-terminators`. Add `show-mode-in-prompt` with `emacs-mode-string` / `vi-cmd-mode-string` / `vi-ins-mode-string`. Most variables require editor-side work, not just parsing. Cuts addressed: 15.11, 15.13, 15.14.
 
 ### B.13 Package 13 - Full `bind` Builtin
 
@@ -554,10 +560,10 @@ This appendix restates Section 15's cuts as a flat enumeration, cross-referenced
 | 15.8 | `tilde-expand` on `M-&`, `tab-insert` on `M-TAB`, `insert-completions` on `M-*`, `possible-completions` on `M-?` | Package 5 |
 | 15.9 | `character-search`, `character-search-backward` | Package 7 |
 | 15.10 | `dump-functions`, `dump-variables`, `dump-macros` | Package 9 |
-| 15.11 | 8-bit meta (`input-meta`, `output-meta`, `convert-meta`, `enable-meta-key`) | Package 12 |
+| 15.11 | 8-bit meta runtime effect for `input-meta`, `output-meta` (parsed but ignored); full `convert-meta`, `enable-meta-key` support | Package 12 |
 | 15.12 | `emacs-meta`, `emacs-ctlx` as user-visible keymaps, user-created keymaps | Package 11 |
 | 15.13 | ~25 obscure readline variables | Package 12 |
-| 15.14 | `$if term=`, `$if application=`, `$if variable=`, `$if version>=` | Package 12 |
+| 15.14 | `$if application=`, `$if variable=`, `$if version>=` (`$if term=` and `$if mode=` are implemented) | Package 12 |
 | 15.15 | `bind` flags `-m`, `-q`, `-u`, `-s`, `-S`, `-v`, `-V`, `-X`, `-P` | Packages 11, 13 |
 | 15.16 | Inline menu completion cycling | Package 5 |
-| 15.17 | `$if term=`-driven per-terminal bindings | Package 12 |
+| 15.17 | Per-terminal bindings via `$if term=` (implemented; terminals outside the xterm/screen/linux/ansi set still need explicit rebinds) | Package 12 |
