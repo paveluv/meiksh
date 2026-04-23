@@ -2077,6 +2077,116 @@ fn tab_completes_command_inside_command_substitution() {
     );
 }
 
+/// § 5.8: inside a still-open single-quoted string TAB shall not
+/// trigger completion — it must land as a literal TAB byte so quoted
+/// strings can contain tabs without clobbering them.
+#[test]
+fn tab_inside_single_quote_inserts_literal_tab() {
+    let Some(mut pty) = spawn_or_skip() else {
+        return;
+    };
+    enable_emacs(&mut pty);
+    // Type `printf '[%s]' 'he<TAB>llo'` and accept. The TAB lands
+    // inside the single-quoted argument, so printf receives the
+    // three bytes `h`, `e`, `\t`, `l`, `l`, `o` and emits them
+    // framed by square brackets.
+    pty.send(b"printf '[%s]' 'he\x09llo'");
+    let out = accept_then_drain_end(&mut pty);
+    let _ = pty.exit_and_wait();
+    assert!(
+        out.windows(b"[he\tllo]".len()).any(|w| w == b"[he\tllo]"),
+        "expected literal TAB inside single quote: {:?}",
+        String::from_utf8_lossy(&out)
+    );
+}
+
+/// § 5.8: inside a still-open `#` line comment TAB shall not trigger
+/// completion — the byte is just inserted literally and scrolled
+/// away by the subsequent newline.
+#[test]
+fn tab_inside_comment_inserts_literal_tab() {
+    let Some(mut pty) = spawn_or_skip() else {
+        return;
+    };
+    enable_emacs(&mut pty);
+    // `# foo<TAB>bar` — the whole line is a comment, so nothing runs
+    // and the follow-up sentinel command is all that should print.
+    pty.send(b"# foo\x09bar");
+    let out = accept_then_drain_end(&mut pty);
+    let _ = pty.exit_and_wait();
+    let text = String::from_utf8_lossy(&out);
+    // No completion candidate listing should have been printed (no
+    // stray filenames). Merely assert the comment never executed.
+    assert!(
+        !text.contains("command not found"),
+        "expected the comment to be a no-op, not a command dispatch: {text:?}"
+    );
+}
+
+/// § 5.8: after a trailing unquoted backslash the next keystroke is
+/// quoted, so TAB shall insert a literal TAB byte rather than running
+/// completion on the partial word before the backslash.
+#[test]
+fn tab_after_trailing_backslash_inserts_literal_tab() {
+    let Some(mut pty) = spawn_or_skip() else {
+        return;
+    };
+    enable_emacs(&mut pty);
+    // `printf '[%s]' foo\<TAB>bar` — the `\` quotes the TAB, so
+    // `printf` receives one argument `foo\tbar`.
+    pty.send(b"printf '[%s]' foo\\\x09bar");
+    let out = accept_then_drain_end(&mut pty);
+    let _ = pty.exit_and_wait();
+    assert!(
+        out.windows(b"[foo\tbar]".len()).any(|w| w == b"[foo\tbar]"),
+        "expected literal TAB after trailing backslash: {:?}",
+        String::from_utf8_lossy(&out)
+    );
+}
+
+/// § 5.8: double-quoted strings are not "suppressed" — completion
+/// still fires, including command completion inside a
+/// double-quote-wrapped `$(...)` substitution.
+#[test]
+fn tab_inside_double_quote_still_completes_commands() {
+    let Some(mut pty) = spawn_or_skip() else {
+        return;
+    };
+    enable_emacs(&mut pty);
+    // `echo "$(ech<TAB> DONE)"` should resolve to `echo "$(echo DONE)"`
+    // and print `DONE`.
+    pty.send(b"echo \"$(ech\x09 DONE)\"");
+    let out = accept_then_drain_end(&mut pty);
+    let _ = pty.exit_and_wait();
+    let text = String::from_utf8_lossy(&out);
+    assert!(
+        text.contains("\r\nDONE") || text.contains("\nDONE"),
+        "expected command completion inside double-quoted `$(...)` to run `echo DONE`: {text:?}"
+    );
+}
+
+/// § 5.8: a single-quote inside a `$(...)` substitution inside a
+/// double-quoted string must still be detected as the top context —
+/// the literal TAB shall be inserted rather than a filename listing.
+#[test]
+fn tab_inside_nested_single_quote_inserts_literal_tab() {
+    let Some(mut pty) = spawn_or_skip() else {
+        return;
+    };
+    enable_emacs(&mut pty);
+    // `echo "$(printf '[%s]' 'he<TAB>llo')"` — innermost context at
+    // TAB is the single-quoted string, so TAB drops a literal tab
+    // and printf emits `[he\tllo]`.
+    pty.send(b"echo \"$(printf '[%s]' 'he\x09llo')\"");
+    let out = accept_then_drain_end(&mut pty);
+    let _ = pty.exit_and_wait();
+    assert!(
+        out.windows(b"[he\tllo]".len()).any(|w| w == b"[he\tllo]"),
+        "expected literal TAB in nested single quote: {:?}",
+        String::from_utf8_lossy(&out)
+    );
+}
+
 /// § 5.8 bullet 2: "if the cursor is on the first word of the command
 /// line, meiksh shall attempt command completion."
 #[test]

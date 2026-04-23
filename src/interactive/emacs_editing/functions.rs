@@ -13,6 +13,7 @@ use super::super::editor::history_search::{Direction, find_prefix};
 use super::super::editor::input::write_bytes;
 use super::super::editor::redraw::{char_len_at, display_width, prev_char_start};
 use super::super::editor::words::{WordClass, next_word_boundary, prev_word_boundary};
+use super::completion_context::{CompletionContext, classify_completion_context};
 use super::keymap::EmacsFn;
 use super::kill_buffer::KillDirection;
 use super::state::{EmacsState, YankArgState};
@@ -731,6 +732,23 @@ struct Candidate {
 }
 
 fn do_complete(shell: &mut Shell, state: &mut EmacsState, out: &mut Outcome) {
+    // Before touching the completion cascade, classify the lexical
+    // context to the left of the cursor. Inside a still-open single
+    // quote, a `#` line comment, or right after a trailing backslash
+    // the user's TAB should land as a literal TAB byte (matching
+    // `self-insert` on a plain character), not as a completion
+    // request. Double quotes and nested `$(...)` / `` `...` ``
+    // substitutions continue through the normal cascade.
+    match classify_completion_context(&state.buf, state.cursor) {
+        CompletionContext::InsideSingleQuote
+        | CompletionContext::InsideComment
+        | CompletionContext::AfterBackslash => {
+            state.insert_bytes_at_cursor(b"\t");
+            return;
+        }
+        CompletionContext::Normal | CompletionContext::InsideDoubleQuote => {}
+    }
+
     let word_start = find_completion_word_start(&state.buf, state.cursor);
     let prefix = state.buf[word_start..state.cursor].to_vec();
 
