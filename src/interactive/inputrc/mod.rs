@@ -85,21 +85,54 @@ pub(crate) enum Mode {
     Vi,
 }
 
+/// Runtime conditions consulted by `$if` tests (spec § 6.1).
+///
+/// * `mode` — the editing mode the parser is being driven in.
+/// * `term` — the value of the `TERM` environment variable at the
+///   time parsing started, used to evaluate `$if term=<name>`. An
+///   empty slice means `TERM` was unset, in which case every
+///   `term=...` test evaluates false.
+#[derive(Clone, Debug)]
+pub(crate) struct Conditions {
+    pub mode: Mode,
+    pub term: Vec<u8>,
+}
+
+impl Conditions {
+    pub(crate) fn new(mode: Mode, term: Vec<u8>) -> Self {
+        Self { mode, term }
+    }
+
+    /// Convenience constructor for sites that don't need `$if term=`
+    /// resolution (unit tests, the bind single-arg form when no
+    /// shell is available).
+    pub(crate) fn mode_only(mode: Mode) -> Self {
+        Self {
+            mode,
+            term: Vec::new(),
+        }
+    }
+}
+
 /// Read `path` and apply its directives to `ctx`. Diagnostics are
 /// returned in the [`Report`], with a one-based `line` number. The
 /// function takes care of writing the human-readable
 /// `meiksh: <path>: line <n>: <msg>` lines to stderr itself.
-pub(crate) fn load_from_path(path: &[u8], ctx: &mut EmacsContext, mode: Mode) -> Report {
+pub(crate) fn load_from_path(
+    path: &[u8],
+    ctx: &mut EmacsContext,
+    conditions: &Conditions,
+) -> Report {
     let mut guard = include::IncludeGuard::default();
     let mut report = Report::default();
-    load_with_guard(path, ctx, mode, &mut guard, &mut report);
+    load_with_guard(path, ctx, conditions, &mut guard, &mut report);
     report
 }
 
 /// Parse and apply a single inputrc line (used by `bind single-arg`).
-pub(crate) fn apply_line(line: &[u8], ctx: &mut EmacsContext, mode: Mode) -> Report {
+pub(crate) fn apply_line(line: &[u8], ctx: &mut EmacsContext, conditions: &Conditions) -> Report {
     let mut report = Report::default();
-    let mut state = conditional::ParserState::new(mode);
+    let mut state = conditional::ParserState::new(conditions);
     parse_line(line, 1, ctx, &mut state, &mut report, None);
     report
 }
@@ -124,7 +157,11 @@ pub(crate) fn ensure_startup_loaded(shell: &crate::shell::state::Shell) {
         return;
     }
     ctx.startup_loaded = true;
-    let mode = Mode::Emacs;
+    let term = shell
+        .get_var(b"TERM")
+        .map(|b| b.to_vec())
+        .unwrap_or_default();
+    let conditions = Conditions::new(Mode::Emacs, term);
     let mut load = |path: Vec<u8>| -> bool {
         if path.is_empty() {
             return false;
@@ -132,7 +169,7 @@ pub(crate) fn ensure_startup_loaded(shell: &crate::shell::state::Shell) {
         if !sys::fs::file_exists(&path) {
             return false;
         }
-        let report = load_from_path(&path, &mut ctx, mode);
+        let report = load_from_path(&path, &mut ctx, &conditions);
         report_diagnostics(&path, &report);
         true
     };
@@ -157,7 +194,7 @@ pub(crate) fn ensure_startup_loaded(shell: &crate::shell::state::Shell) {
 pub(crate) fn load_with_guard(
     path: &[u8],
     ctx: &mut EmacsContext,
-    mode: Mode,
+    conditions: &Conditions,
     guard: &mut include::IncludeGuard,
     report: &mut Report,
 ) {
@@ -183,7 +220,7 @@ pub(crate) fn load_with_guard(
             return;
         }
     };
-    let mut state = conditional::ParserState::new(mode);
+    let mut state = conditional::ParserState::new(conditions);
     for (lineno, raw) in content.split(|b| *b == b'\n').enumerate() {
         parse_line(
             raw,
@@ -233,7 +270,8 @@ fn parse_line(
                     }
                 };
                 let resolved = include::resolve(host, &path);
-                load_with_guard(&resolved, ctx, state.mode(), guard, report);
+                let nested = Conditions::new(state.mode(), state.term().to_vec());
+                load_with_guard(&resolved, ctx, &nested, guard, report);
                 return;
             }
             conditional::DirectiveOutcome::NotRecognized => {
@@ -321,7 +359,11 @@ mod tests {
     fn apply_line_set_known_bool() {
         assert_no_syscalls(|| {
             let mut ctx = EmacsContext::default();
-            let _ = apply_line(b"set completion-ignore-case on", &mut ctx, Mode::Emacs);
+            let _ = apply_line(
+                b"set completion-ignore-case on",
+                &mut ctx,
+                &Conditions::mode_only(Mode::Emacs),
+            );
             assert!(ctx.vars.completion_ignore_case);
         });
     }
@@ -330,7 +372,11 @@ mod tests {
     fn apply_line_unknown_var_diagnoses() {
         assert_no_syscalls(|| {
             let mut ctx = EmacsContext::default();
-            let report = apply_line(b"set who-knows hello", &mut ctx, Mode::Emacs);
+            let report = apply_line(
+                b"set who-knows hello",
+                &mut ctx,
+                &Conditions::mode_only(Mode::Emacs),
+            );
             // emit_diagnostic was called with a write to stderr; we
             // can't see that, but the report should contain the
             // diagnostic.
@@ -343,7 +389,11 @@ mod tests {
     fn apply_line_binds_function_form() {
         assert_no_syscalls(|| {
             let mut ctx = EmacsContext::default();
-            let _ = apply_line(b"\"\\C-a\": end-of-line", &mut ctx, Mode::Emacs);
+            let _ = apply_line(
+                b"\"\\C-a\": end-of-line",
+                &mut ctx,
+                &Conditions::mode_only(Mode::Emacs),
+            );
             use crate::interactive::emacs_editing::keymap::{EmacsFn, Resolved};
             assert_eq!(
                 ctx.keymap.resolve(b"\x01"),
@@ -356,8 +406,12 @@ mod tests {
     /// as [`load_from_path`] but without touching the filesystem, so
     /// the unit tests stay `assert_no_syscalls`-clean.
     fn parse_source(src: &[u8], ctx: &mut EmacsContext, mode: Mode) -> Report {
+        parse_source_with(src, ctx, &Conditions::mode_only(mode))
+    }
+
+    fn parse_source_with(src: &[u8], ctx: &mut EmacsContext, conditions: &Conditions) -> Report {
         let mut report = Report::default();
-        let mut state = conditional::ParserState::new(mode);
+        let mut state = conditional::ParserState::new(conditions);
         for (lineno, raw) in src.split(|b| *b == b'\n').enumerate() {
             parse_line(raw, lineno + 1, ctx, &mut state, &mut report, None);
         }
@@ -425,7 +479,11 @@ mod tests {
         assert_no_syscalls(|| {
             use crate::interactive::emacs_editing::keymap::Resolved;
             let mut ctx = EmacsContext::default();
-            let _ = apply_line(b"\"\\C-xg\": \"git status\"", &mut ctx, Mode::Emacs);
+            let _ = apply_line(
+                b"\"\\C-xg\": \"git status\"",
+                &mut ctx,
+                &Conditions::mode_only(Mode::Emacs),
+            );
             match ctx.keymap.resolve(b"\x18g") {
                 Resolved::Macro(bytes) => assert_eq!(bytes, b"git status"),
                 other => panic!("expected macro, got {other:?}"),

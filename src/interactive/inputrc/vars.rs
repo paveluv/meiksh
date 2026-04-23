@@ -4,6 +4,14 @@
 
 /// Typed snapshot of the inputrc variables meiksh honors. Defaults
 /// match spec § 5.1.
+///
+/// `input_meta` and `output_meta` are accepted by the parser so that
+/// shipped `/etc/inputrc` files load without spurious "unknown
+/// variable" warnings, but meiksh's editor does not act on them: meta
+/// is only recognized in its ESC-prefix form (spec § 4). They are
+/// stored here so that future work (see Appendix B, Package 12 of
+/// [emacs-editing-mode.md](../../../docs/features/emacs-editing-mode.md))
+/// can tie them to real behavior without another parser change.
 #[derive(Clone, Debug)]
 pub(crate) struct InputrcVars {
     pub bell_style: BellStyle,
@@ -18,6 +26,8 @@ pub(crate) struct InputrcVars {
     pub colored_stats: bool,
     pub keyseq_timeout_ms: u32,
     pub comment_begin: Vec<u8>,
+    pub input_meta: bool,
+    pub output_meta: bool,
 }
 
 impl Default for InputrcVars {
@@ -35,6 +45,10 @@ impl Default for InputrcVars {
             colored_stats: false,
             keyseq_timeout_ms: 500,
             comment_begin: b"#".to_vec(),
+            // Readline defaults: both off. Meiksh ignores these
+            // values at runtime; see the struct-level docstring.
+            input_meta: false,
+            output_meta: false,
         }
     }
 }
@@ -100,6 +114,12 @@ pub(crate) fn parse_assignment(line: &[u8], vars: &mut InputrcVars) -> Result<()
             vars.comment_begin = val.to_vec();
             Ok(())
         }
+        // `input-meta` and `output-meta` are accepted for inputrc
+        // compatibility. Meiksh only recognizes meta in its
+        // ESC-prefix form, so these values are stored but currently
+        // have no runtime effect.
+        b"input-meta" | b"meta-flag" => set_bool(val, &mut vars.input_meta, name),
+        b"output-meta" => set_bool(val, &mut vars.output_meta, name),
         other => Err(format!(
             "unknown variable: {}",
             String::from_utf8_lossy(other)
@@ -218,6 +238,32 @@ mod tests {
             let mut v = InputrcVars::default();
             parse_assignment(b"comment-begin //", &mut v).unwrap();
             assert_eq!(v.comment_begin, b"//");
+        });
+    }
+
+    #[test]
+    fn input_meta_and_meta_flag_accepted() {
+        assert_no_syscalls(|| {
+            let mut v = InputrcVars::default();
+            parse_assignment(b"input-meta on", &mut v).unwrap();
+            assert!(v.input_meta);
+            // `meta-flag` is a readline alias for `input-meta`.
+            let mut v2 = InputrcVars::default();
+            parse_assignment(b"meta-flag yes", &mut v2).unwrap();
+            assert!(v2.input_meta);
+            parse_assignment(b"input-meta off", &mut v2).unwrap();
+            assert!(!v2.input_meta);
+        });
+    }
+
+    #[test]
+    fn output_meta_accepted() {
+        assert_no_syscalls(|| {
+            let mut v = InputrcVars::default();
+            parse_assignment(b"output-meta on", &mut v).unwrap();
+            assert!(v.output_meta);
+            parse_assignment(b"output-meta off", &mut v).unwrap();
+            assert!(!v.output_meta);
         });
     }
 }

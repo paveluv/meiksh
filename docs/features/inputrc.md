@@ -175,6 +175,8 @@ where `<name>` is one of the recognized variable names below and `<value>` is pa
 | `colored-stats` | Boolean | `off` | When on, completion listings shall color filenames by type using the same rules as `ls --color`. |
 | `keyseq-timeout` | Integer (milliseconds) | 500 | After receiving an ambiguous prefix (for example, bare `ESC`), the editor shall wait up to this many milliseconds for additional bytes before treating the prefix as a complete key sequence. A value of 0 shall disable the timeout (treat every ambiguous prefix as complete immediately). |
 | `comment-begin` | String | `#` | The string inserted by `insert-comment` (not bound by default; provided only for inputrc compatibility). |
+| `input-meta` / `meta-flag` | Boolean | `off` | Accepted for inputrc compatibility so that shipped distribution inputrc files load without diagnostics. Meiksh recognizes meta only in its ESC-prefix form (see [emacs-editing-mode.md Section 4](emacs-editing-mode.md)); the value is stored but has no runtime effect. |
+| `output-meta` | Boolean | `off` | Accepted for inputrc compatibility; stored without runtime effect. See `input-meta`. |
 
 ### 5.2 Unrecognized Variables
 
@@ -198,11 +200,14 @@ The `$if <test>` directive begins a conditional block terminated by `$endif`, wi
 |---|---|
 | `mode=emacs` | The inputrc file is being parsed in the context of emacs editing mode. |
 | `mode=vi` | The inputrc file is being parsed in the context of vi editing mode. |
+| `term=<name>` | The `TERM` environment variable (captured at the time parsing began) equals `<name>`, OR the portion of `TERM` up to the first `-` equals `<name>`. If `TERM` is unset or empty the test evaluates false. Matching is byte-exact; there is no case folding. |
 
-No other `$if` test is recognized. `$if term=<name>`, `$if application=<name>`, `$if variable=value`, and `$if version>=<n>` are non-goals (see [emacs-editing-mode.md Sections 15.14 and 15.17](emacs-editing-mode.md)). An unrecognized test shall:
+No other `$if` test is recognized. `$if application=<name>`, `$if variable=value`, and `$if version>=<n>` are non-goals (see [emacs-editing-mode.md Section 15.14](emacs-editing-mode.md)). An unrecognized test shall:
 
 - Produce a per-line diagnostic.
 - Treat the block as if the test evaluated to false. The `$else` branch, if present, shall be parsed.
+
+A well-formed `term=<name>` test that simply evaluates false (because the terminal does not match) shall **not** produce a diagnostic; only unrecognized test forms do.
 
 ### 6.2 `$include`
 
@@ -279,7 +284,18 @@ $if mode=vi
 $endif
 ```
 
-### 9.5 Including A Shared File
+### 9.5 Per-Terminal Bindings
+
+```text
+# rxvt-family terminals emit a slightly different sequence for
+# Ctrl-Right; rebind only when the shell is running under one.
+$if term=rxvt
+  "\eOc": forward-word
+  "\eOd": backward-word
+$endif
+```
+
+### 9.6 Including A Shared File
 
 ```text
 # At the top of ~/.inputrc:

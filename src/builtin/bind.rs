@@ -12,9 +12,20 @@
 
 use super::{BuiltinOutcome, write_stdout_line};
 use crate::interactive::emacs_editing::keymap::{ALL_FUNCTIONS, EmacsFn, KeymapEntry};
-use crate::interactive::inputrc::{self, EmacsContext, Mode};
+use crate::interactive::inputrc::{self, Conditions, EmacsContext, Mode};
 use crate::shell::error::ShellError;
 use crate::shell::state::Shell;
+
+/// Build the [`Conditions`] used when a `bind`-family call needs to
+/// run the inputrc parser. Meiksh always targets the emacs keymap,
+/// and `$if term=` tests resolve against the current `$TERM`.
+fn conditions_for(shell: &Shell) -> Conditions {
+    let term = shell
+        .get_var(b"TERM")
+        .map(|b| b.to_vec())
+        .unwrap_or_default();
+    Conditions::new(Mode::Emacs, term)
+}
 
 pub(super) fn bind(shell: &mut Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutcome, ShellError> {
     let mut args = argv[1..].iter();
@@ -37,7 +48,7 @@ pub(super) fn bind(shell: &mut Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutcome
                 Some(f) => f,
                 None => return Err(shell.diagnostic(1, b"bind: -f requires a filename")),
             };
-            do_load_file(file)
+            do_load_file(shell, file)
         }
         b"-x" => {
             let spec = match args.next() {
@@ -55,7 +66,7 @@ pub(super) fn bind(shell: &mut Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutcome
         // Single-argument form: treat as one inputrc line.
         _ => {
             let line = first.clone();
-            do_apply_line(&line)
+            do_apply_line(shell, &line)
         }
     }
 }
@@ -97,12 +108,13 @@ fn do_remove(key: &[u8]) -> Result<BuiltinOutcome, ShellError> {
     }
 }
 
-fn do_load_file(file: &[u8]) -> Result<BuiltinOutcome, ShellError> {
+fn do_load_file(shell: &Shell, file: &[u8]) -> Result<BuiltinOutcome, ShellError> {
+    let conditions = conditions_for(shell);
     let mut ctx = match inputrc::global().lock() {
         Ok(g) => g,
         Err(p) => p.into_inner(),
     };
-    let report = inputrc::load_from_path(file, &mut ctx, Mode::Emacs);
+    let report = inputrc::load_from_path(file, &mut ctx, &conditions);
     inputrc::report_diagnostics(file, &report);
     if report.applied_lines == 0 && !report.diagnostics.is_empty() {
         Ok(BuiltinOutcome::Status(1))
@@ -128,12 +140,13 @@ fn do_bind_x(_shell: &mut Shell, spec: &[u8]) -> Result<BuiltinOutcome, ShellErr
     Ok(BuiltinOutcome::Status(0))
 }
 
-fn do_apply_line(line: &[u8]) -> Result<BuiltinOutcome, ShellError> {
+fn do_apply_line(shell: &Shell, line: &[u8]) -> Result<BuiltinOutcome, ShellError> {
+    let conditions = conditions_for(shell);
     let mut ctx = match inputrc::global().lock() {
         Ok(g) => g,
         Err(p) => p.into_inner(),
     };
-    let report = inputrc::apply_line(line, &mut ctx, Mode::Emacs);
+    let report = inputrc::apply_line(line, &mut ctx, &conditions);
     inputrc::report_diagnostics(b"-", &report);
     if report.applied_lines == 0 {
         Ok(BuiltinOutcome::Status(1))

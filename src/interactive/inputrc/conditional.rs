@@ -3,12 +3,15 @@
 
 #![allow(dead_code)]
 
-use super::{Diagnostic, Mode, Report};
+use super::{Conditions, Diagnostic, Mode, Report};
 
-/// Per-file parser state: a stack of `$if` frames.
+/// Per-file parser state: a stack of `$if` frames plus the runtime
+/// conditions (mode + `$TERM`) that `$if` tests are evaluated
+/// against.
 #[derive(Clone, Debug)]
 pub(crate) struct ParserState {
     mode: Mode,
+    term: Vec<u8>,
     stack: Vec<Frame>,
 }
 
@@ -21,15 +24,20 @@ enum Frame {
 }
 
 impl ParserState {
-    pub(crate) fn new(mode: Mode) -> Self {
+    pub(crate) fn new(conditions: &Conditions) -> Self {
         Self {
-            mode,
+            mode: conditions.mode,
+            term: conditions.term.clone(),
             stack: Vec::new(),
         }
     }
 
     pub(crate) fn mode(&self) -> Mode {
         self.mode
+    }
+
+    pub(crate) fn term(&self) -> &[u8] {
+        &self.term
     }
 
     /// True when directives on the current line should be applied
@@ -59,7 +67,7 @@ pub(crate) fn dispatch_directive(
 ) -> DirectiveOutcome {
     if let Some(test) = rest_after_dollar.strip_prefix(b"if ") {
         let test = trim_ws(test);
-        let active = evaluate_if(test, state.mode);
+        let active = evaluate_if(test, state.mode, &state.term);
         let active_in_context = state.is_active() && active;
         state.stack.push(if active_in_context {
             Frame::IfActive
@@ -135,16 +143,40 @@ impl ParserState {
     }
 }
 
-fn evaluate_if(test: &[u8], mode: Mode) -> bool {
+fn evaluate_if(test: &[u8], mode: Mode, term: &[u8]) -> bool {
     match test {
         b"mode=emacs" => matches!(mode, Mode::Emacs),
         b"mode=vi" => matches!(mode, Mode::Vi),
-        _ => false,
+        _ => {
+            if let Some(want) = test.strip_prefix(b"term=") {
+                term_matches(want, term)
+            } else {
+                false
+            }
+        }
     }
 }
 
 fn is_recognized_test(test: &[u8]) -> bool {
-    matches!(test, b"mode=emacs" | b"mode=vi")
+    matches!(test, b"mode=emacs" | b"mode=vi") || test.starts_with(b"term=")
+}
+
+/// Evaluate `$if term=<want>` per the readline rule: the word on the
+/// right side of `=` is tested against both the full value of `$TERM`
+/// and the portion of `$TERM` before the first `-`. An empty `term`
+/// never matches anything.
+fn term_matches(want: &[u8], term: &[u8]) -> bool {
+    if term.is_empty() {
+        return false;
+    }
+    if want == term {
+        return true;
+    }
+    let head = match term.iter().position(|b| *b == b'-') {
+        Some(i) => &term[..i],
+        None => term,
+    };
+    want == head
 }
 
 fn trim_ws(bytes: &[u8]) -> &[u8] {
@@ -164,10 +196,18 @@ mod tests {
     use super::*;
     use crate::sys::test_support::assert_no_syscalls;
 
+    fn emacs_mode_no_term() -> Conditions {
+        Conditions::mode_only(Mode::Emacs)
+    }
+
+    fn emacs_with_term(term: &[u8]) -> Conditions {
+        Conditions::new(Mode::Emacs, term.to_vec())
+    }
+
     #[test]
     fn if_emacs_active_in_emacs_mode() {
         assert_no_syscalls(|| {
-            let mut state = ParserState::new(Mode::Emacs);
+            let mut state = ParserState::new(&emacs_mode_no_term());
             let mut report = Report::default();
             let r = dispatch_directive(b"if mode=emacs", 1, &mut state, &mut report);
             assert!(matches!(r, DirectiveOutcome::Handled));
@@ -179,7 +219,7 @@ mod tests {
     #[test]
     fn if_vi_inactive_in_emacs_mode() {
         assert_no_syscalls(|| {
-            let mut state = ParserState::new(Mode::Emacs);
+            let mut state = ParserState::new(&emacs_mode_no_term());
             let mut report = Report::default();
             dispatch_directive(b"if mode=vi", 1, &mut state, &mut report);
             assert!(!state.is_active());
@@ -189,7 +229,7 @@ mod tests {
     #[test]
     fn else_flips_active_branch() {
         assert_no_syscalls(|| {
-            let mut state = ParserState::new(Mode::Emacs);
+            let mut state = ParserState::new(&emacs_mode_no_term());
             let mut report = Report::default();
             dispatch_directive(b"if mode=vi", 1, &mut state, &mut report);
             assert!(!state.is_active());
@@ -203,7 +243,7 @@ mod tests {
     #[test]
     fn include_returns_path() {
         assert_no_syscalls(|| {
-            let mut state = ParserState::new(Mode::Emacs);
+            let mut state = ParserState::new(&emacs_mode_no_term());
             let mut report = Report::default();
             match dispatch_directive(b"include /etc/xyz", 1, &mut state, &mut report) {
                 DirectiveOutcome::Include(path) => assert_eq!(path, b"/etc/xyz"),
@@ -215,9 +255,9 @@ mod tests {
     #[test]
     fn unknown_test_diagnosed_and_inactive() {
         assert_no_syscalls(|| {
-            let mut state = ParserState::new(Mode::Emacs);
+            let mut state = ParserState::new(&emacs_mode_no_term());
             let mut report = Report::default();
-            dispatch_directive(b"if term=xterm", 1, &mut state, &mut report);
+            dispatch_directive(b"if application=bash", 1, &mut state, &mut report);
             assert!(!state.is_active());
             assert_eq!(report.diagnostics.len(), 1);
         });
@@ -226,10 +266,61 @@ mod tests {
     #[test]
     fn endif_without_if_is_diagnostic() {
         assert_no_syscalls(|| {
-            let mut state = ParserState::new(Mode::Emacs);
+            let mut state = ParserState::new(&emacs_mode_no_term());
             let mut report = Report::default();
             dispatch_directive(b"endif", 1, &mut state, &mut report);
             assert_eq!(report.diagnostics.len(), 1);
+        });
+    }
+
+    #[test]
+    fn term_exact_match() {
+        assert_no_syscalls(|| {
+            let mut state = ParserState::new(&emacs_with_term(b"rxvt"));
+            let mut report = Report::default();
+            dispatch_directive(b"if term=rxvt", 1, &mut state, &mut report);
+            assert!(state.is_active());
+            assert!(report.diagnostics.is_empty());
+        });
+    }
+
+    #[test]
+    fn term_prefix_before_dash_matches() {
+        assert_no_syscalls(|| {
+            // $TERM=xterm-256color must match `term=xterm`.
+            let mut state = ParserState::new(&emacs_with_term(b"xterm-256color"));
+            let mut report = Report::default();
+            dispatch_directive(b"if term=xterm", 1, &mut state, &mut report);
+            assert!(state.is_active());
+            assert!(report.diagnostics.is_empty());
+        });
+    }
+
+    #[test]
+    fn term_mismatch_is_silent_and_inactive() {
+        assert_no_syscalls(|| {
+            // An unmatched but recognized `term=` test must NOT emit
+            // an "unknown $if test" diagnostic — the test is
+            // well-formed, it simply evaluated false.
+            let mut state = ParserState::new(&emacs_with_term(b"xterm"));
+            let mut report = Report::default();
+            dispatch_directive(b"if term=rxvt", 1, &mut state, &mut report);
+            assert!(!state.is_active());
+            assert!(
+                report.diagnostics.is_empty(),
+                "term= mismatch must be silent, not diagnosed: {report:?}"
+            );
+        });
+    }
+
+    #[test]
+    fn term_unset_never_matches() {
+        assert_no_syscalls(|| {
+            let mut state = ParserState::new(&emacs_mode_no_term());
+            let mut report = Report::default();
+            dispatch_directive(b"if term=xterm", 1, &mut state, &mut report);
+            assert!(!state.is_active());
+            assert!(report.diagnostics.is_empty());
         });
     }
 }
