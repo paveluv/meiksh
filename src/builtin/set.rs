@@ -219,6 +219,7 @@ mod tests {
         run_trace(
             trace_entries![
                 write(fd(1), bytes(b"allexport off\n")) -> auto,
+                write(fd(1), bytes(b"emacs off\n")) -> auto,
                 write(fd(1), bytes(b"errexit off\n")) -> auto,
                 write(fd(1), bytes(b"hashall off\n")) -> auto,
                 write(fd(1), bytes(b"monitor off\n")) -> auto,
@@ -229,6 +230,7 @@ mod tests {
                 write(fd(1), bytes(b"nounset off\n")) -> auto,
                 write(fd(1), bytes(b"pipefail off\n")) -> auto,
                 write(fd(1), bytes(b"verbose off\n")) -> auto,
+                write(fd(1), bytes(b"vi off\n")) -> auto,
                 write(fd(1), bytes(b"xtrace off\n")) -> auto,
             ],
             || {
@@ -277,6 +279,7 @@ mod tests {
         run_trace(
             trace_entries![
                 write(fd(1), bytes(b"set +o allexport\n")) -> auto,
+                write(fd(1), bytes(b"set +o emacs\n")) -> auto,
                 write(fd(1), bytes(b"set +o errexit\n")) -> auto,
                 write(fd(1), bytes(b"set +o hashall\n")) -> auto,
                 write(fd(1), bytes(b"set +o monitor\n")) -> auto,
@@ -287,6 +290,7 @@ mod tests {
                 write(fd(1), bytes(b"set +o nounset\n")) -> auto,
                 write(fd(1), bytes(b"set +o pipefail\n")) -> auto,
                 write(fd(1), bytes(b"set +o verbose\n")) -> auto,
+                write(fd(1), bytes(b"set +o vi\n")) -> auto,
                 write(fd(1), bytes(b"set +o xtrace\n")) -> auto,
             ],
             || {

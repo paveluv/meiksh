@@ -79,7 +79,9 @@ pub(super) fn run_loop(shell: &mut Shell) -> Result<i32, ShellError> {
         };
         write_prompt(&prompt_str).map_err(|e| shell.diagnostic_syserr(1, &e))?;
 
-        let line = match if shell.options.vi_mode {
+        let line = match if shell.options.emacs_mode {
+            super::emacs_editing::read_line(shell, &prompt_str)
+        } else if shell.options.vi_mode {
             vi_editing::read_line(shell, &prompt_str)
         } else {
             read_line()

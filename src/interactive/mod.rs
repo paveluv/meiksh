@@ -2,8 +2,11 @@ use crate::shell::error::ShellError;
 use crate::shell::state::Shell;
 use crate::sys;
 
+mod editor;
+pub(crate) mod emacs_editing;
 mod env_file;
 mod history;
+pub(crate) mod inputrc;
 mod mail;
 mod prompt;
 mod repl;

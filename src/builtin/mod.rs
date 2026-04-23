@@ -158,6 +158,7 @@ pub(crate) fn lookup(name: &[u8]) -> Option<&'static BuiltinEntry> {
 }
 
 mod alias;
+mod bind;
 mod cd;
 mod command;
 mod dot;
@@ -182,6 +183,7 @@ mod umask;
 mod vars;
 
 use alias::{alias, unalias};
+use bind::bind;
 use cd::cd;
 use command::{command, hash, type_builtin};
 use dot::dot;
@@ -397,6 +399,14 @@ fn h_bg(
     bg(shell, argv)
 }
 
+fn h_bind(
+    shell: &mut Shell,
+    argv: &[Vec<u8>],
+    _ca: &[(Vec<u8>, Vec<u8>)],
+) -> Result<BuiltinOutcome, ShellError> {
+    bind(shell, argv)
+}
+
 fn h_wait(
     shell: &mut Shell,
     argv: &[Vec<u8>],
@@ -564,6 +574,11 @@ const BUILTINS_B: &[BuiltinEntry] = &[
         name: b"bg",
         kind: Reg,
         handler: h_bg,
+    },
+    BuiltinEntry {
+        name: b"bind",
+        kind: Reg,
+        handler: h_bind,
     },
     BuiltinEntry {
         name: b"break",

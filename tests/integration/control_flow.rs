@@ -1,5 +1,5 @@
 use super::common::*;
-use libc;
+use super::sys;
 use std::fs;
 use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
@@ -486,20 +486,9 @@ fn errexit_suppressed_in_negated_pipeline() {
 #[test]
 fn pipeline_with_pty_exercises_terminal_foreground_control() {
     use std::os::unix::io::FromRawFd;
-    let mut primary: i32 = -1;
-    let mut secondary: i32 = -1;
-    let ret = unsafe {
-        libc::openpty(
-            &mut primary,
-            &mut secondary,
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-        )
-    };
-    if ret != 0 {
+    let Some((primary, secondary)) = sys::open_pty_pair() else {
         return;
-    }
+    };
 
     let secondary_fd = secondary;
     let output = unsafe {
@@ -507,19 +496,12 @@ fn pipeline_with_pty_exercises_terminal_foreground_control() {
         cmd.args(["-c", "printf a | cat; printf ok"])
             .stdin(Stdio::from_raw_fd(secondary_fd))
             .stdout(Stdio::piped());
-        cmd.pre_exec(move || {
-            libc::setsid();
-            libc::ioctl(secondary_fd, libc::TIOCSCTTY as _, 0);
-            libc::dup2(secondary_fd, 2);
-            Ok(())
-        });
+        cmd.pre_exec(move || sys::make_controlling_tty_in_child(secondary_fd, true));
         cmd.output().expect("run meiksh")
     };
 
-    unsafe {
-        libc::close(primary);
-        libc::close(secondary);
-    }
+    sys::close_fd(primary);
+    sys::close_fd(secondary);
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(

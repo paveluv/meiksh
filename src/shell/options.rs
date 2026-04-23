@@ -20,6 +20,7 @@ pub(crate) struct ShellOptions {
     pub(crate) shell_name_override: Option<Box<[u8]>>,
     pub(crate) positional: Vec<Vec<u8>>,
     pub(crate) vi_mode: bool,
+    pub(crate) emacs_mode: bool,
 }
 
 const REPORTABLE_OPTION_NAMES: [(&[u8], u8); 11] = [
@@ -67,6 +68,20 @@ impl ShellOptions {
         }
         if name == b"vi" {
             self.vi_mode = enabled;
+            // The emacs and vi editing modes are mutually exclusive,
+            // per emacs-editing-mode.md § 2.2. Flipping one on flips
+            // the other off; flipping either off leaves the other
+            // alone.
+            if enabled {
+                self.emacs_mode = false;
+            }
+            return Ok(());
+        }
+        if name == b"emacs" {
+            self.emacs_mode = enabled;
+            if enabled {
+                self.vi_mode = false;
+            }
             return Ok(());
         }
         let Some((_, letter)) = REPORTABLE_OPTION_NAMES
@@ -78,9 +93,10 @@ impl ShellOptions {
         self.set_short_option(*letter, enabled)
     }
 
-    pub(crate) fn reportable_options(&self) -> [(&'static [u8], bool); 12] {
+    pub(crate) fn reportable_options(&self) -> [(&'static [u8], bool); 14] {
         [
             (b"allexport" as &[u8], self.allexport),
+            (b"emacs", self.emacs_mode),
             (b"errexit", self.errexit),
             (b"hashall", self.hashall),
             (b"monitor", self.monitor),
@@ -91,6 +107,7 @@ impl ShellOptions {
             (b"nounset", self.nounset),
             (b"pipefail", self.pipefail),
             (b"verbose", self.verbose),
+            (b"vi", self.vi_mode),
             (b"xtrace", self.xtrace),
         ]
     }
@@ -157,6 +174,50 @@ mod tests {
         assert!(opts.vi_mode);
         opts.set_named_option(b"vi", false).expect("vi off");
         assert!(!opts.vi_mode);
+    }
+
+    #[test]
+    fn set_named_option_emacs_flips_vi() {
+        let mut opts = ShellOptions::default();
+        opts.set_named_option(b"vi", true).expect("vi on");
+        assert!(opts.vi_mode);
+        assert!(!opts.emacs_mode);
+        opts.set_named_option(b"emacs", true).expect("emacs on");
+        assert!(opts.emacs_mode);
+        assert!(!opts.vi_mode);
+    }
+
+    #[test]
+    fn set_named_option_vi_flips_emacs() {
+        let mut opts = ShellOptions::default();
+        opts.set_named_option(b"emacs", true).expect("emacs on");
+        assert!(opts.emacs_mode);
+        opts.set_named_option(b"vi", true).expect("vi on");
+        assert!(opts.vi_mode);
+        assert!(!opts.emacs_mode);
+    }
+
+    #[test]
+    fn set_named_option_off_leaves_other_mode_alone() {
+        let mut opts = ShellOptions::default();
+        opts.set_named_option(b"emacs", true).expect("emacs on");
+        opts.set_named_option(b"emacs", false).expect("emacs off");
+        assert!(!opts.emacs_mode);
+        assert!(!opts.vi_mode);
+    }
+
+    #[test]
+    fn reportable_options_lists_both_editing_modes() {
+        let mut opts = ShellOptions::default();
+        opts.emacs_mode = true;
+        let reported = opts.reportable_options();
+        let names: Vec<&[u8]> = reported.iter().map(|(n, _)| *n).collect();
+        assert!(names.contains(&b"emacs".as_slice()));
+        assert!(names.contains(&b"vi".as_slice()));
+        let emacs = reported.iter().find(|(n, _)| *n == b"emacs").unwrap();
+        assert!(emacs.1);
+        let vi = reported.iter().find(|(n, _)| *n == b"vi").unwrap();
+        assert!(!vi.1);
     }
 
     #[test]

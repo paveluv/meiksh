@@ -2,108 +2,14 @@ use crate::bstr::{self, ByteWriter};
 use crate::shell::state::Shell;
 use crate::sys;
 
-struct RawMode {
-    saved: sys::types::Termios,
-}
-
-impl RawMode {
-    fn enter() -> sys::error::SysResult<Self> {
-        let saved = sys::tty::get_terminal_attrs(sys::constants::STDIN_FILENO)?;
-        let mut raw = saved;
-        raw.c_lflag &= !(sys::constants::ICANON | sys::constants::ECHO | sys::constants::ISIG);
-        raw.c_cc[sys::constants::VMIN] = 1;
-        raw.c_cc[sys::constants::VTIME] = 0;
-        sys::tty::set_terminal_attrs(sys::constants::STDIN_FILENO, &raw)?;
-        Ok(Self { saved })
-    }
-}
-
-impl Drop for RawMode {
-    fn drop(&mut self) {
-        let _ = sys::tty::set_terminal_attrs(sys::constants::STDIN_FILENO, &self.saved);
-    }
-}
-
-fn read_byte() -> sys::error::SysResult<Option<u8>> {
-    let mut buf = [0u8; 1];
-    match sys::fd_io::read_fd(sys::constants::STDIN_FILENO, &mut buf) {
-        Ok(0) => Ok(None),
-        Ok(_) => Ok(Some(buf[0])),
-        Err(e) => Err(e),
-    }
-}
-
-fn write_bytes(data: &[u8]) {
-    let _ = sys::fd_io::write_all_fd(sys::constants::STDOUT_FILENO, data);
-}
-
-fn bell() {
-    write_bytes(b"\x07");
-}
-
-fn display_width(line: &[u8]) -> usize {
-    let mut w = 0;
-    let mut i = 0;
-    while i < line.len() {
-        let (wc, len) = sys::locale::decode_char(&line[i..]);
-        let step = if len == 0 { 1 } else { len };
-        w += sys::locale::char_width(wc);
-        i += step;
-    }
-    w
-}
-
-fn display_width_range(line: &[u8], from: usize, to: usize) -> usize {
-    if to <= from {
-        return 0;
-    }
-    display_width(&line[from..to])
-}
-
-fn char_len_at(line: &[u8], pos: usize) -> usize {
-    if pos >= line.len() {
-        return 0;
-    }
-    let (_, len) = sys::locale::decode_char(&line[pos..]);
-    if len == 0 { 1 } else { len }
-}
-
-fn prev_char_start(line: &[u8], pos: usize) -> usize {
-    if pos == 0 {
-        return 0;
-    }
-    let mut p = pos - 1;
-    while p > 0 && (line[p] & 0xC0) == 0x80 {
-        p -= 1;
-    }
-    p
-}
-
-fn redraw(line: &[u8], cursor: usize, prompt: &[u8]) {
-    write_bytes(b"\r\x1b[K");
-    let _ = sys::fd_io::write_all_fd(sys::constants::STDERR_FILENO, prompt);
-    let mut buf = Vec::with_capacity(line.len() + 20);
-    buf.extend_from_slice(line);
-    let cursor_back = display_width_range(line, cursor, line.len());
-    if cursor_back > 0 {
-        buf.extend_from_slice(b"\x1b[");
-        bstr::push_u64(&mut buf, cursor_back as u64);
-        buf.push(b'D');
-    }
-    write_bytes(&buf);
-}
-
-fn is_word_char_wc(wc: u32) -> bool {
-    if wc == b'_' as u32 {
-        return true;
-    }
-    sys::locale::classify_char(b"alnum", wc)
-}
-
-#[allow(dead_code)]
-fn is_word_char(c: u8) -> bool {
-    is_word_char_wc(c as u32)
-}
+use super::editor::input::{bell, read_byte, write_bytes};
+use super::editor::raw_mode::RawMode;
+use super::editor::redraw::{
+    char_len_at, display_width_range, last_char_start, prev_char_start, redraw,
+};
+use super::editor::words::{
+    WordClass, is_word_char_at, is_ws_at, is_ws_before, next_word_boundary, prev_word_boundary,
+};
 
 fn expected_utf8_len(first_byte: u8) -> usize {
     if first_byte < 0x80 {
@@ -119,73 +25,12 @@ fn expected_utf8_len(first_byte: u8) -> usize {
     }
 }
 
-fn last_char_start(line: &[u8]) -> usize {
-    if line.is_empty() {
-        return 0;
-    }
-    prev_char_start(line, line.len())
-}
-
-fn is_word_char_at(line: &[u8], pos: usize) -> bool {
-    let (wc, _) = sys::locale::decode_char(&line[pos..]);
-    is_word_char_wc(wc)
-}
-
-fn is_ws_at(line: &[u8], pos: usize) -> bool {
-    let b = line[pos];
-    b == b' ' || b == b'\t' || b == b'\n'
-}
-
-fn is_word_char_before(line: &[u8], pos: usize) -> bool {
-    is_word_char_at(line, prev_char_start(line, pos))
-}
-
-fn is_ws_before(line: &[u8], pos: usize) -> bool {
-    is_ws_at(line, prev_char_start(line, pos))
-}
-
 fn word_forward(line: &[u8], pos: usize) -> usize {
-    let mut p = pos;
-    let len = line.len();
-    if p >= len {
-        return p;
-    }
-    if is_word_char_at(line, p) {
-        while p < len && is_word_char_at(line, p) {
-            p += char_len_at(line, p);
-        }
-    } else if !is_ws_at(line, p) {
-        while p < len && !is_word_char_at(line, p) && !is_ws_at(line, p) {
-            p += char_len_at(line, p);
-        }
-    }
-    while p < len && is_ws_at(line, p) {
-        p += char_len_at(line, p);
-    }
-    p
+    next_word_boundary(line, pos, WordClass::AlnumUnderscore)
 }
 
 fn word_backward(line: &[u8], pos: usize) -> usize {
-    if pos == 0 {
-        return 0;
-    }
-    let mut p = pos;
-    while p > 0 && is_ws_before(line, p) {
-        p = prev_char_start(line, p);
-    }
-    if p == 0 {
-        return 0;
-    }
-    if is_word_char_before(line, p) {
-        while p > 0 && is_word_char_before(line, p) {
-            p = prev_char_start(line, p);
-        }
-    } else {
-        while p > 0 && !is_word_char_before(line, p) && !is_ws_before(line, p) {
-            p = prev_char_start(line, p);
-        }
-    }
-    p
+    prev_word_boundary(line, pos, WordClass::AlnumUnderscore)
 }
 
 fn bigword_forward(line: &[u8], pos: usize) -> usize {
@@ -1338,13 +1183,14 @@ pub(super) fn read_line(
                         .or_else(|| shell.get_var(b"EDITOR"))
                         .unwrap_or(b"vi")
                         .to_vec();
-                    let _ = sys::tty::set_terminal_attrs(sys::constants::STDIN_FILENO, &_raw.saved);
+                    let _ =
+                        sys::tty::set_terminal_attrs(sys::constants::STDIN_FILENO, _raw.saved());
                     write_bytes(b"\r\n");
                     let mut edit_cmd = editor;
                     edit_cmd.push(b' ');
                     edit_cmd.extend_from_slice(&tmp_path);
                     let _ = shell.execute_string(&edit_cmd);
-                    let mut raw_restored = _raw.saved;
+                    let mut raw_restored = *_raw.saved();
                     raw_restored.c_lflag &=
                         !(sys::constants::ICANON | sys::constants::ECHO | sys::constants::ISIG);
                     raw_restored.c_cc[sys::constants::VMIN] = 1;
@@ -1661,9 +1507,18 @@ mod tests {
     mod vi_tests {
         use super::super::{
             PendingInput, ViAction, ViState, bigword_backward, bigword_end, bigword_forward,
-            do_find, glob_expand, is_word_char, last_char_start, replay_cmd, resolve_motion,
-            word_backward, word_end, word_forward,
+            do_find, glob_expand, last_char_start, replay_cmd, resolve_motion, word_backward,
+            word_end, word_forward,
         };
+        use crate::interactive::editor::words::{
+            WordClass, is_word_char_at as editor_is_word_char_at,
+        };
+
+        fn is_word_char(c: u8) -> bool {
+            editor_is_word_char_at(&[c], 0)
+        }
+        #[allow(dead_code)]
+        const _WORD_CLASS_REF: WordClass = WordClass::AlnumUnderscore;
         use super::{feed_bytes, get_return, has_bell, has_return};
         use crate::sys;
         use crate::sys::test_support::{assert_no_syscalls, run_trace, set_test_locale_utf8};
