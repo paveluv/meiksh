@@ -68,6 +68,27 @@ pub fn spawn_meiksh_pty(extra_env: &[(&str, &str)]) -> Option<PtyChild> {
     cmd.arg("-i")
         .env("TERM", "dumb")
         .env("LC_ALL", "C.UTF-8")
+        // POSIX `sh`/`meiksh -i` sources `$ENV` (commonly
+        // `~/.shrc` on FreeBSD). Inheriting that from the developer
+        // running the suite makes every test dependent on whichever
+        // rebinds, aliases, or prompts the user happens to have
+        // configured — most notably, editline-style `bind ^[[A ...`
+        // lines that shadow the default emacs keymap and break tests
+        // that assume the documented defaults. Scrub it by default;
+        // tests that exercise ENV startup can re-inject it via
+        // `extra_env`.
+        .env_remove("ENV")
+        // Steer the inputrc lookup away from the developer's personal
+        // `~/.inputrc` AND away from system `/etc/inputrc`. The
+        // latter commonly rebinds PageUp/PageDown to
+        // `history-search-backward`/`forward` (so tests asserting the
+        // documented `beginning-of-history`/`end-of-history` defaults
+        // would fail). Point INPUTRC at the empty character device
+        // `/dev/null`: meiksh loads it successfully (zero bytes) and
+        // therefore does NOT fall through to `$HOME/.inputrc` or
+        // `/etc/inputrc`. Tests that specifically exercise inputrc
+        // loading override this via `extra_env`.
+        .env("INPUTRC", "/dev/null")
         .stdin(unsafe { Stdio::from_raw_fd(secondary_fd) })
         .stdout(unsafe { Stdio::from_raw_fd(stdout_fd) })
         .stderr(unsafe { Stdio::from_raw_fd(stderr_fd) });

@@ -2070,9 +2070,17 @@ fn ctrl_g_without_composite_action_rings_bell() {
 /// and verify the shell executes it.
 #[test]
 fn ctrl_x_ctrl_e_edits_and_executes_via_visual() {
+    // The VISUAL command must end in a placeholder that sh treats as
+    // `$0` — meiksh appends ` <tmp_path>` so `$1` inside the script
+    // resolves to the transfer file. Using `--` here is tempting
+    // (bash-as-sh happily accepts it and treats it as `$0`) but
+    // FreeBSD's native `/bin/sh` rejects `--` with "Illegal option
+    // --", which is exactly what POSIX `sh` is allowed to do.
+    // Use the neutral argv-0 marker `_` instead: portable and
+    // unambiguous across sh implementations.
     let Some(mut pty) = spawn_meiksh_pty(&[(
         "VISUAL",
-        "/bin/sh -c 'printf \"printf CXCEOUT\" > \"$1\"' --",
+        "/bin/sh -c 'printf \"printf CXCEOUT\" > \"$1\"' _",
     )]) else {
         return;
     };
