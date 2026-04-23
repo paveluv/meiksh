@@ -670,6 +670,26 @@ fn is_completion_delim(b: u8) -> bool {
     )
 }
 
+/// True iff `word_start` begins a command (argv[0]) position in the
+/// buffer. A command position is either the start of the buffer or
+/// preceded (after skipping runs of SPACE / TAB) by one of the
+/// command-starting bytes: `;`, `&`, `|`, `(`, `` ` ``, or NEWLINE.
+/// This catches `; cmd`, `&& cmd`, `| cmd`, `(subshell`, `` `cmd` ``,
+/// and command-substitution openers like `$(cmd`, where the `(` is
+/// the nearest non-whitespace predecessor.
+fn is_command_position(buf: &[u8], word_start: usize) -> bool {
+    let mut i = word_start;
+    while i > 0 {
+        let b = buf[i - 1];
+        if b == b' ' || b == b'\t' {
+            i -= 1;
+            continue;
+        }
+        return matches!(b, b';' | b'&' | b'|' | b'(' | b'`' | b'\n');
+    }
+    true
+}
+
 /// Find the start of the completion-word containing `cursor`, walking
 /// backwards across non-delimiter bytes per spec § 5.8.
 fn find_completion_word_start(buf: &[u8], cursor: usize) -> usize {
@@ -714,10 +734,7 @@ fn do_complete(shell: &mut Shell, state: &mut EmacsState, out: &mut Outcome) {
     let word_start = find_completion_word_start(&state.buf, state.cursor);
     let prefix = state.buf[word_start..state.cursor].to_vec();
 
-    let before = &state.buf[..word_start];
-    let is_first_word = before
-        .iter()
-        .all(|&b| b == b' ' || b == b'\t' || b == b';' || b == b'&' || b == b'|' || b == b'(');
+    let is_first_word = is_command_position(&state.buf, word_start);
 
     let (mut candidates, kind) = gather_candidates(shell, &prefix, is_first_word);
     if candidates.is_empty() {

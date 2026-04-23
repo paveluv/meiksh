@@ -2054,6 +2054,29 @@ fn tab_twice_lists_candidates_in_multi_column_grid() {
     );
 }
 
+/// § 5.8: command completion applies in every argv[0] position, not
+/// only at the start of the buffer. Inside a `$(...)` command
+/// substitution the cursor is on argv[0] of a fresh command context,
+/// so TAB must complete against commands rather than falling through
+/// to filename completion.
+#[test]
+fn tab_completes_command_inside_command_substitution() {
+    let Some(mut pty) = spawn_or_skip() else {
+        return;
+    };
+    enable_emacs(&mut pty);
+    // `echo $(ech<TAB> DONE)` should become `echo $(echo DONE)` →
+    // prints `DONE` after accept-line.
+    pty.send(b"echo $(ech\x09 DONE)");
+    let out = accept_then_drain_end(&mut pty);
+    let _ = pty.exit_and_wait();
+    let text = String::from_utf8_lossy(&out);
+    assert!(
+        text.contains("\r\nDONE") || text.contains("\nDONE"),
+        "expected command completion inside `$(...)` to run `echo DONE`: {text:?}"
+    );
+}
+
 /// § 5.8 bullet 2: "if the cursor is on the first word of the command
 /// line, meiksh shall attempt command completion."
 #[test]
