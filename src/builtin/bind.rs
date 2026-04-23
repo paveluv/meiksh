@@ -12,6 +12,9 @@
 
 use super::{BuiltinOutcome, write_stdout_line};
 use crate::interactive::emacs_editing::keymap::{ALL_FUNCTIONS, EmacsFn, KeymapEntry};
+use crate::interactive::inputrc::editline::{
+    EditlineLookup, decode_editline_keyseq, translate_editline_function,
+};
 use crate::interactive::inputrc::{self, Conditions, EmacsContext, Mode};
 use crate::shell::error::ShellError;
 use crate::shell::state::Shell;
@@ -63,10 +66,99 @@ pub(super) fn bind(shell: &mut Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutcome
             let _ = shell.diagnostic(2, &msg);
             Ok(BuiltinOutcome::Status(2))
         }
-        // Single-argument form: treat as one inputrc line.
+        // Positional form: either readline-style (one or more
+        // `keyseq:function` strings) or editline-style (`keyseq
+        // function-name`, two positional args, common on FreeBSD
+        // `~/.shrc`). See `docs/features/emacs-editing-mode.md` § 14.5.
         _ => {
-            let line = first.clone();
-            do_apply_line(shell, &line)
+            let positional: Vec<&[u8]> = argv[1..].iter().map(|v| v.as_slice()).collect();
+            dispatch_positional(shell, &positional)
+        }
+    }
+}
+
+/// Choose between the readline-style multi-arg form and the
+/// editline/tcsh-style positional form, then delegate. See the
+/// dispatch flowchart in `docs/features/emacs-editing-mode.md`
+/// § 14.5.
+fn dispatch_positional(
+    shell: &mut Shell,
+    positional: &[&[u8]],
+) -> Result<BuiltinOutcome, ShellError> {
+    if positional.is_empty() {
+        return dump_bindings();
+    }
+    // Any `:` in a positional argument forces the readline-style
+    // branch (bash handles each arg independently in this case).
+    let any_colon = positional.iter().any(|a| a.contains(&b':'));
+    if any_colon {
+        return do_apply_lines(shell, positional);
+    }
+    // Without a colon, only the two-arg editline form is meaningful.
+    if positional.len() == 2 {
+        return do_apply_editline(shell, positional[0], positional[1]);
+    }
+    // Fallback: surface the error with readline's diagnostic wording
+    // so we match bash's observable behaviour on malformed input.
+    let line = positional[0].to_vec();
+    do_apply_line(shell, &line)
+}
+
+/// Readline multi-arg form: `bind 'k1:f1' 'k2:f2' ...`. Each arg is
+/// fed independently to [`inputrc::apply_line`]. Bash returns status
+/// 0 here even when individual arguments produced diagnostics, so we
+/// match that to keep parity with existing scripts.
+fn do_apply_lines(shell: &Shell, args: &[&[u8]]) -> Result<BuiltinOutcome, ShellError> {
+    let conditions = conditions_for(shell);
+    let mut ctx = match inputrc::global().lock() {
+        Ok(g) => g,
+        Err(p) => p.into_inner(),
+    };
+    for arg in args {
+        let report = inputrc::apply_line(arg, &mut ctx, &conditions);
+        inputrc::report_diagnostics(b"-", &report);
+    }
+    Ok(BuiltinOutcome::Status(0))
+}
+
+/// Editline/tcsh positional form: `bind <keyseq> <function-name>`.
+/// Decodes the keyseq with editline's relaxed grammar (`^X`, `\E`
+/// accepted alongside the standard readline escapes) and maps the
+/// function name through the editline→readline translation table.
+fn do_apply_editline(
+    shell: &Shell,
+    keyseq_arg: &[u8],
+    func_arg: &[u8],
+) -> Result<BuiltinOutcome, ShellError> {
+    let seq = match decode_editline_keyseq(keyseq_arg) {
+        Ok(bytes) => bytes,
+        Err(msg) => {
+            let mut full = b"bind: ".to_vec();
+            full.extend_from_slice(msg.as_bytes());
+            let _ = shell.diagnostic(1, &full);
+            return Ok(BuiltinOutcome::Status(1));
+        }
+    };
+    match translate_editline_function(func_arg) {
+        EditlineLookup::Mapped(func) => {
+            let mut ctx = match inputrc::global().lock() {
+                Ok(g) => g,
+                Err(p) => p.into_inner(),
+            };
+            ctx.keymap.bind(&seq, KeymapEntry::Func(func));
+            Ok(BuiltinOutcome::Status(0))
+        }
+        EditlineLookup::Unsupported => {
+            let mut msg = b"bind: unsupported editline function: ".to_vec();
+            msg.extend_from_slice(func_arg);
+            let _ = shell.diagnostic(1, &msg);
+            Ok(BuiltinOutcome::Status(1))
+        }
+        EditlineLookup::Unknown => {
+            let mut msg = b"bind: unknown function: ".to_vec();
+            msg.extend_from_slice(func_arg);
+            let _ = shell.diagnostic(1, &msg);
+            Ok(BuiltinOutcome::Status(1))
         }
     }
 }
@@ -233,7 +325,46 @@ fn _keep_emacs_context_live(_: &EmacsContext) {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sys::test_support::assert_no_syscalls;
+    use crate::builtin::test_support::{invoke, test_shell};
+    use crate::interactive::emacs_editing::keymap::Resolved;
+    use crate::sys::test_support::{assert_no_syscalls, run_trace};
+    use crate::trace_entries;
+
+    /// Snapshot + restore the global emacs context. Unit tests below
+    /// mutate the global keymap through the real builtin path; resetting
+    /// afterwards keeps subsequent tests in this module reading a
+    /// deterministic table. A module-private mutex serialises the
+    /// save/run/restore trio so parallel test threads don't stomp on
+    /// each other's in-flight mutations.
+    fn with_fresh_ctx<F: FnOnce()>(f: F) {
+        use std::sync::Mutex;
+        static SERIAL: Mutex<()> = Mutex::new(());
+        let _lock = match SERIAL.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        let saved = {
+            let guard = match inputrc::global().lock() {
+                Ok(g) => g,
+                Err(p) => p.into_inner(),
+            };
+            guard.keymap.clone()
+        };
+        f();
+        let mut guard = match inputrc::global().lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        guard.keymap = saved;
+    }
+
+    fn lookup(seq: &[u8]) -> Resolved {
+        let guard = match inputrc::global().lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        guard.keymap.resolve(seq)
+    }
 
     #[test]
     fn parse_bind_x_spec_accepts_quoted_key() {
@@ -256,6 +387,129 @@ mod tests {
         assert_no_syscalls(|| {
             assert_eq!(parse_key_argument(b"\"\\C-a\"").unwrap(), vec![0x01]);
             assert_eq!(parse_key_argument(b"C-a").unwrap(), vec![0x01]);
+        });
+    }
+
+    #[test]
+    fn editline_form_installs_binding() {
+        assert_no_syscalls(|| {
+            with_fresh_ctx(|| {
+                let mut shell = test_shell();
+                let outcome = invoke(
+                    &mut shell,
+                    &[
+                        b"bind".to_vec(),
+                        b"^[[A".to_vec(),
+                        b"ed-search-prev-history".to_vec(),
+                    ],
+                )
+                .expect("bind editline");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+                assert!(matches!(
+                    lookup(&[0x1b, b'[', b'A']),
+                    Resolved::Function(EmacsFn::HistorySearchBackward)
+                ));
+            });
+        });
+    }
+
+    #[test]
+    fn editline_form_accepts_mixed_readline_name() {
+        assert_no_syscalls(|| {
+            with_fresh_ctx(|| {
+                let mut shell = test_shell();
+                let outcome = invoke(
+                    &mut shell,
+                    &[
+                        b"bind".to_vec(),
+                        b"\\e[B".to_vec(),
+                        b"history-search-forward".to_vec(),
+                    ],
+                )
+                .expect("bind editline mixed");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+                assert!(matches!(
+                    lookup(&[0x1b, b'[', b'B']),
+                    Resolved::Function(EmacsFn::HistorySearchForward)
+                ));
+            });
+        });
+    }
+
+    #[test]
+    fn editline_unsupported_function_returns_status_1() {
+        with_fresh_ctx(|| {
+            run_trace(
+                trace_entries![write(
+                    fd(crate::sys::constants::STDERR_FILENO),
+                    bytes(b"meiksh: bind: unsupported editline function: vi-cmd-mode\n"),
+                ) -> auto,],
+                || {
+                    let mut shell = test_shell();
+                    let outcome = invoke(
+                        &mut shell,
+                        &[b"bind".to_vec(), b"^[qz".to_vec(), b"vi-cmd-mode".to_vec()],
+                    )
+                    .expect("bind editline unsupported");
+                    assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+                    // Unsupported function must not install a binding
+                    // (pick a sequence that is unbound by default).
+                    assert!(matches!(lookup(&[0x1b, b'q', b'z']), Resolved::Unbound));
+                },
+            );
+        });
+    }
+
+    #[test]
+    fn editline_unknown_function_returns_status_1() {
+        with_fresh_ctx(|| {
+            run_trace(
+                trace_entries![write(
+                    fd(crate::sys::constants::STDERR_FILENO),
+                    bytes(b"meiksh: bind: unknown function: totally-made-up\n"),
+                ) -> auto,],
+                || {
+                    let mut shell = test_shell();
+                    let outcome = invoke(
+                        &mut shell,
+                        &[
+                            b"bind".to_vec(),
+                            b"^[[A".to_vec(),
+                            b"totally-made-up".to_vec(),
+                        ],
+                    )
+                    .expect("bind editline unknown");
+                    assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+                },
+            );
+        });
+    }
+
+    #[test]
+    fn multi_arg_readline_applies_each() {
+        assert_no_syscalls(|| {
+            with_fresh_ctx(|| {
+                let mut shell = test_shell();
+                let outcome = invoke(
+                    &mut shell,
+                    &[
+                        b"bind".to_vec(),
+                        b"\"\\C-xa\": accept-line".to_vec(),
+                        b"\"\\C-xb\": beginning-of-line".to_vec(),
+                    ],
+                )
+                .expect("bind multi");
+                // Bash returns 0 even on per-arg errors; we match.
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+                assert!(matches!(
+                    lookup(&[0x18, b'a']),
+                    Resolved::Function(EmacsFn::AcceptLine)
+                ));
+                assert!(matches!(
+                    lookup(&[0x18, b'b']),
+                    Resolved::Function(EmacsFn::BeginningOfLine)
+                ));
+            });
         });
     }
 }

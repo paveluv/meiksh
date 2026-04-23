@@ -302,8 +302,12 @@ When emacs mode is enabled in an interactive shell, meiksh shall consult at most
 ### 14.1 Synopsis
 
 ```
-bind [-lpr] [-f filename] [-r keyseq] [-x keyseq:shell-command] [keyseq:function-name]
+bind [-lpr] [-f filename] [-r keyseq] [-x keyseq:shell-command]
+     [keyseq:function-name ...]
+     [keyseq function-name]
 ```
+
+The final two positional forms are mutually exclusive and are disambiguated per Section 14.5.
 
 ### 14.2 Description
 
@@ -318,18 +322,81 @@ The `bind` builtin shall inspect and modify the key-to-function bindings of the 
 - **`-f filename`**: read `filename` and apply its bindings as if each line were a `bind` argument. The file shall be parsed with the same grammar as `$HOME/.inputrc` (see [inputrc.md](inputrc.md)). Parse errors shall be reported as in Section 13.2 and shall not abort parsing.
 - **`-x keyseq:shell-command`**: bind `keyseq` such that pressing the key sequence runs `shell-command` through `execute_string` in the current shell environment. The current buffer shall be saved before execution and restored afterwards; `shell-command` may read and modify the special variables `READLINE_LINE` and `READLINE_POINT` to interact with the editor state. Upon return, the editor shall redraw based on `READLINE_LINE` and `READLINE_POINT`. This form is required for `fzf`-style integrations.
 
-### 14.4 Single-Argument Form
+### 14.4 Single-Argument And Multi-Argument Readline Form
 
 - `bind keyseq:function-name` shall bind `keyseq` to the named bindable function.
 - `bind "string"` (where `string` uses inputrc quoting) shall be parsed as a single inputrc line and applied.
+- `bind arg1 arg2 ...` where every positional argument contains at least one `:` shall be processed by applying each argument independently as a separate inputrc line. Per-argument diagnostics shall be emitted in the `meiksh: -: line 1: ...` format. The overall exit status shall be 0 regardless of per-argument errors; this matches bash's observable behaviour.
 
-### 14.5 Exit Status
+### 14.5 Editline-Style Positional Form (portability)
 
-- 0: requested operation completed successfully.
-- 1: `-r` attempted to remove a non-existent binding, or a malformed `keyseq` was supplied, or `-f` encountered only errors, or an unknown function name was used.
+For compatibility with `~/.shrc` files written for shells that use the editline/libedit line editor (notably FreeBSD `/bin/sh` and tcsh), `bind` shall additionally accept the two-positional-argument form
+
+```
+bind <keyseq> <function-name>
+```
+
+when **neither** positional argument contains `:`. This form applies only to the `bind` builtin invocation; inputrc files (Section 13, [inputrc.md](inputrc.md) § 4) continue to use the readline `keyseq: function-name` grammar exclusively and shall not recognize any of the editline function names below.
+
+#### 14.5.1 Key sequence decoding
+
+The `<keyseq>` argument shall accept, in addition to the escapes enumerated in [inputrc.md](inputrc.md) § 4.5:
+
+- `^<c>` — control-letter notation. `^a`/`^A` → `0x01`, `^[` → `0x1b` (ESC), `^?` → `0x7f` (DEL). Any ASCII byte `c` is accepted and mapped by `c & 0x1f` after uppercasing, with `^?` as the special case for DEL.
+- `\E` — ESC (`0x1b`). Editline accepts either `\e` or `\E`; readline-proper only accepts `\e`. `bind` accepts both.
+
+A trailing `^` with no following byte, or a trailing `\` with no following byte, shall produce a `bind: dangling ... in key sequence` diagnostic and exit status 1.
+
+#### 14.5.2 Function name translation
+
+The `<function-name>` argument shall be resolved in the following order:
+
+1. If the name is a readline canonical bindable-function name (see Section 5), it resolves to that function. This lets mixed-dialect input (`bind ^[[A previous-history`) work without surprise.
+2. If the name is one of the editline function names in Table 14.5.2, it resolves to the mapped function.
+3. If the name is a known editline-only function with no readline analogue, exit status 1 and diagnostic `bind: unsupported editline function: <name>`.
+4. Otherwise, exit status 1 and diagnostic `bind: unknown function: <name>` (same wording as the readline path).
+
+##### Table 14.5.2 — editline → readline function mapping
+
+| Editline name | Readline function |
+|---|---|
+| `ed-search-prev-history` | `history-search-backward` |
+| `ed-search-next-history` | `history-search-forward` |
+| `ed-prev-history` | `previous-history` |
+| `ed-next-history` | `next-history` |
+| `em-inc-search-prev` | `reverse-search-history` |
+| `em-inc-search-next` | `forward-search-history` |
+| `ed-prev-char` | `backward-char` |
+| `ed-next-char` | `forward-char` |
+| `em-next-word` / `ed-next-word` | `forward-word` |
+| `ed-prev-word` | `backward-word` |
+| `ed-move-to-beg` | `beginning-of-line` |
+| `ed-move-to-end` | `end-of-line` |
+| `ed-delete-prev-char` | `backward-delete-char` |
+| `ed-delete-next-char` | `delete-char` |
+| `ed-delete-prev-word` / `em-delete-prev-word` | `backward-kill-word` |
+| `em-kill-line` | `unix-line-discard` |
+| `ed-kill-line` | `kill-line` |
+| `em-yank` | `yank` |
+| `ed-transpose-chars` | `transpose-chars` |
+| `em-upper-case` | `upcase-word` |
+| `em-lower-case` | `downcase-word` |
+| `em-capitol-case` | `capitalize-word` |
+| `ed-quoted-insert` | `quoted-insert` |
+| `ed-clear-screen` | `clear-screen` |
+| `ed-newline` | `accept-line` |
+| `ed-insert` | `self-insert` |
+| `em-undo` | `undo` |
+
+Editline functions that are deliberately unsupported (diagnostic "unsupported editline function"): `vi-cmd-mode`, `vi-insert` (mid-line mode switching is a non-goal, Section 15.7); `em-set-mark`, `em-exchange-mark`, `em-kill-region`, `em-copy-region`, `em-copy-prev-word` (region/marks are a non-goal, Section 15.3); `em-toggle-overwrite` (Section 15.4); `em-universal-argument`, `em-argument-digit`, `em-meta-next` (numeric arguments are a non-goal, Section 15.5); `ed-redisplay`, `ed-refresh`, `ed-start-over` (no bindable redraw functions); `ed-list-choices`, `em-delete-or-list` (expanded completion set is a non-goal, Section 15.8); `ed-end-of-file`; every `ed-tty-*` signal passthrough (handled via native signal dispatch).
+
+### 14.6 Exit Status
+
+- 0: requested operation completed successfully, or multi-argument readline form (regardless of per-argument errors).
+- 1: `-r` attempted to remove a non-existent binding, or a malformed `keyseq` was supplied, or `-f` encountered only errors, or an unknown function name was used, or the editline positional form failed to decode its keyseq / resolve its function name.
 - 2: invalid option.
 
-### 14.6 Notes
+### 14.7 Notes
 
 - Options not listed here (`-m`, `-q`, `-u`, `-s`, `-S`, `-v`, `-V`, `-X`, `-P`) are not accepted and shall produce exit status 2 with an "invalid option" diagnostic. Appendix B, Package 13 describes the work to add them.
 - There is only a single keymap (`emacs`); `bind` shall not accept the `-m` option to target a specific keymap.
@@ -402,7 +469,7 @@ The variants `$if application=<name>`, `$if variable=value`, and `$if version>=<
 
 ### 15.15 `bind` Flags Beyond The Kept Set
 
-See Section 14.6.
+See Section 14.7.
 
 ### 15.16 Menu Completion
 
@@ -429,6 +496,7 @@ The table below summarizes the headline differences between meiksh emacs mode an
 | `history-search-backward` bindable | Yes (unbound by default) | Yes | No | Yes |
 | `bind -x` | Yes | Yes | No | No (uses widgets) |
 | `$if term=` | Yes | Yes | No | N/A |
+| `bind` positional dialect | Readline-style and editline-style (`bind ^[[A ed-search-prev-history`) both accepted | Readline-style only | Readline-style only | N/A (uses `bindkey`) |
 
 ### A.2 Sample `~/.inputrc`
 

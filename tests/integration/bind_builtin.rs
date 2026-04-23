@@ -168,5 +168,55 @@ fn bind_builtin_covers_all_options() {
     let out = send_cmd_with_tag(&mut pty, "BU", "bind -Z");
     assert_eq!(parse_status_tag(&out, "BU"), Some(2));
 
+    // Editline positional form with caret notation: FreeBSD `~/.shrc`
+    // convention — must install a binding on the rxvt/xterm
+    // up-arrow sequence and report status 0. Covers the primary user-
+    // reported regression.
+    let out = send_cmd_with_tag(&mut pty, "BEL1", "bind ^[[A ed-search-prev-history");
+    assert_eq!(
+        parse_status_tag(&out, "BEL1"),
+        Some(0),
+        "BEL1 output: {:?}",
+        String::from_utf8_lossy(&out)
+    );
+
+    // Confirm the installed sequence shows up in `bind -p`.
+    let out = send_cmd_with_tag(
+        &mut pty,
+        "BELD1",
+        "bind -p | grep -cE '^\"\\\\e\\[A\"[[:space:]]*:[[:space:]]*history-search-backward$'",
+    );
+    assert_eq!(parse_status_tag(&out, "BELD1"), Some(0));
+
+    // Editline positional form with backslash notation and quoted arg.
+    let out = send_cmd_with_tag(&mut pty, "BEL2", "bind '\\e[1;5C' em-next-word");
+    assert_eq!(parse_status_tag(&out, "BEL2"), Some(0));
+
+    // Editline positional form with an unsupported function name
+    // (mode-switcher, non-goal in the spec) must return status 1.
+    let out = send_cmd_with_tag(&mut pty, "BELU", "bind ^[qz vi-cmd-mode");
+    assert_eq!(
+        parse_status_tag(&out, "BELU"),
+        Some(1),
+        "BELU output: {:?}",
+        String::from_utf8_lossy(&out)
+    );
+
+    // Bash-style multi-arg readline form: multiple `keyseq:function`
+    // strings on a single invocation. Status 0 per bash compat.
+    let out = send_cmd_with_tag(
+        &mut pty,
+        "BMA",
+        "bind '\"\\C-xm\": accept-line' '\"\\C-xn\": beginning-of-line'",
+    );
+    assert_eq!(parse_status_tag(&out, "BMA"), Some(0));
+    let out = send_cmd_with_tag(
+        &mut pty,
+        "BMAD",
+        "bind -p | grep -cE '^\"\\\\C-xm\"[[:space:]]*:[[:space:]]*accept-line$|\
+         ^\"\\\\C-xn\"[[:space:]]*:[[:space:]]*beginning-of-line$'",
+    );
+    assert_eq!(parse_status_tag(&out, "BMAD"), Some(0));
+
     let _ = pty.exit_and_wait();
 }

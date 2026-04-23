@@ -132,6 +132,8 @@ Inside a double-quoted string (both on the left-hand side of a key-sequence form
 
 Any other `\`-prefixed byte shall be an error.
 
+Note: the `bind` builtin (see [emacs-editing-mode.md § 14.5](emacs-editing-mode.md)) additionally tolerates `\E` (uppercase) as a synonym for `\e`, and `^<x>` caret notation, when invoked in its editline-compatibility positional form. Those tolerances are builtin-scoped; inputrc files shall use the escape table above and reject `\E` / `^X` as errors.
+
 ### 4.6 Macro Right-Hand Side
 
 A double-quoted string on the right-hand side is a macro. When the bound key sequence is received, meiksh shall feed the bytes of the macro string through the editor dispatch loop one at a time, as if the user had typed them.
