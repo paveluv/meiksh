@@ -1,6 +1,6 @@
 use libc::c_int;
 
-use super::constants::TCSADRAIN;
+use super::constants::TCSANOW;
 use super::error::SysResult;
 use super::interface::{self, last_error};
 use super::types::Pid;
@@ -46,7 +46,7 @@ pub(crate) fn get_terminal_attrs(fd: c_int) -> SysResult<libc::termios> {
 }
 
 pub(crate) fn set_terminal_attrs(fd: c_int, termios: &libc::termios) -> SysResult<()> {
-    let result = interface::tcsetattr(fd, TCSADRAIN, termios);
+    let result = interface::tcsetattr(fd, TCSANOW, termios);
     if result == 0 {
         Ok(())
     } else {
@@ -107,7 +107,7 @@ mod tests {
             trace_entries![
                 ..vec![t(
                     "tcsetattr",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(TCSADRAIN as i64)],
+                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(TCSANOW as i64)],
                     TraceResult::Int(0),
                 )]
             ],
@@ -120,7 +120,7 @@ mod tests {
             trace_entries![
                 ..vec![t(
                     "tcsetattr",
-                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(TCSADRAIN as i64)],
+                    vec![ArgMatcher::Fd(0), ArgMatcher::Int(TCSANOW as i64)],
                     TraceResult::Err(libc::EIO),
                 )]
             ],

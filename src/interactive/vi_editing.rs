@@ -4390,13 +4390,13 @@ mod tests {
         run_trace(
             trace_entries![
                 tcgetattr(fd(STDIN_FILENO)) -> 0,
-                tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
+                tcsetattr(fd(STDIN_FILENO), int(0)) -> 0,
                 tcgetattr(fd(STDIN_FILENO)) -> 0,
                 read(fd(STDIN_FILENO), _) -> bytes([b'h']),
                 write(fd(STDOUT_FILENO), bytes([b'h'])) -> auto,
                 read(fd(STDIN_FILENO), _) -> bytes([b'\n']),
                 write(fd(STDOUT_FILENO), bytes(b"\r\n")) -> auto,
-                tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
+                tcsetattr(fd(STDIN_FILENO), int(0)) -> 0,
             ],
             || {
                 let mut shell = test_shell();
@@ -4411,11 +4411,11 @@ mod tests {
         run_trace(
             trace_entries![
                 tcgetattr(fd(STDIN_FILENO)) -> 0,
-                tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
+                tcsetattr(fd(STDIN_FILENO), int(0)) -> 0,
                 tcgetattr(fd(STDIN_FILENO)) -> 0,
                 read(fd(STDIN_FILENO), _) -> bytes(b""),
                 write(fd(STDOUT_FILENO), bytes(b"\r\n")) -> auto,
-                tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
+                tcsetattr(fd(STDIN_FILENO), int(0)) -> 0,
             ],
             || {
                 let mut shell = test_shell();
@@ -4430,7 +4430,7 @@ mod tests {
         run_trace(
             trace_entries![
                 tcgetattr(fd(STDIN_FILENO)) -> 0,
-                tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
+                tcsetattr(fd(STDIN_FILENO), int(0)) -> 0,
                 tcgetattr(fd(STDIN_FILENO)) -> 0,
                 read(fd(STDIN_FILENO), _) -> bytes([b'a']),
                 write(fd(STDOUT_FILENO), bytes([b'a'])) -> auto,
@@ -4440,7 +4440,7 @@ mod tests {
                 write(fd(STDOUT_FILENO), bytes(b"\x07")) -> auto,
                 read(fd(STDIN_FILENO), _) -> bytes([b'\r']),
                 write(fd(STDOUT_FILENO), bytes(b"\r\n")) -> auto,
-                tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
+                tcsetattr(fd(STDIN_FILENO), int(0)) -> 0,
             ],
             || {
                 let mut shell = test_shell();
@@ -4455,7 +4455,7 @@ mod tests {
         run_trace(
             trace_entries![
                 tcgetattr(fd(STDIN_FILENO)) -> 0,
-                tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
+                tcsetattr(fd(STDIN_FILENO), int(0)) -> 0,
                 tcgetattr(fd(STDIN_FILENO)) -> 0,
                 read(fd(STDIN_FILENO), _) -> bytes([b'a']),
                 write(fd(STDOUT_FILENO), bytes([b'a'])) -> auto,
@@ -4467,7 +4467,7 @@ mod tests {
                 write(fd(STDOUT_FILENO), bytes(b"\x1b[1D")) -> auto,
                 read(fd(STDIN_FILENO), _) -> bytes([b'\r']),
                 write(fd(STDOUT_FILENO), bytes(b"\r\n")) -> auto,
-                tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
+                tcsetattr(fd(STDIN_FILENO), int(0)) -> 0,
             ],
             || {
                 let mut shell = test_shell();
@@ -4482,14 +4482,14 @@ mod tests {
         run_trace(
             trace_entries![
                 tcgetattr(fd(STDIN_FILENO)) -> 0,
-                tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
+                tcsetattr(fd(STDIN_FILENO), int(0)) -> 0,
                 tcgetattr(fd(STDIN_FILENO)) -> 0,
                 read(fd(STDIN_FILENO), _) -> bytes([b'x']),
                 write(fd(STDOUT_FILENO), bytes([b'x'])) -> auto,
                 read(fd(STDIN_FILENO), _) -> bytes(b""),
                 read(fd(STDIN_FILENO), _) -> bytes([b'\n']),
                 write(fd(STDOUT_FILENO), bytes(b"\r\n")) -> auto,
-                tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
+                tcsetattr(fd(STDIN_FILENO), int(0)) -> 0,
             ],
             || {
                 let mut shell = test_shell();
@@ -4504,11 +4504,11 @@ mod tests {
         run_trace(
             trace_entries![
                 tcgetattr(fd(STDIN_FILENO)) -> 0,
-                tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
+                tcsetattr(fd(STDIN_FILENO), int(0)) -> 0,
                 tcgetattr(fd(STDIN_FILENO)) -> err(sys::constants::EINVAL),
                 read(fd(STDIN_FILENO), _) -> bytes([b'\n']),
                 write(fd(STDOUT_FILENO), bytes(b"\r\n")) -> auto,
-                tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
+                tcsetattr(fd(STDIN_FILENO), int(0)) -> 0,
             ],
             || {
                 let mut shell = test_shell();
@@ -4538,7 +4538,7 @@ mod tests {
         run_trace(
             trace_entries![
                 tcgetattr(fd(STDIN_FILENO)) -> 0,
-                tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
+                tcsetattr(fd(STDIN_FILENO), int(0)) -> 0,
                 tcgetattr(fd(STDIN_FILENO)) -> 0,
                 read(fd(STDIN_FILENO), _) -> bytes([b'a']),
                 write(fd(STDOUT_FILENO), bytes([b'a'])) -> auto,
@@ -4551,7 +4551,7 @@ mod tests {
                 write(fd(STDOUT_FILENO), bytes(b"ab\x1b[2D")) -> auto,
                 read(fd(STDIN_FILENO), _) -> bytes([b'\r']),
                 write(fd(STDOUT_FILENO), bytes(b"\r\n")) -> auto,
-                tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
+                tcsetattr(fd(STDIN_FILENO), int(0)) -> 0,
             ],
             || {
                 let mut shell = test_shell();
@@ -4566,10 +4566,10 @@ mod tests {
         run_trace(
             trace_entries![
                 tcgetattr(fd(STDIN_FILENO)) -> 0,
-                tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
+                tcsetattr(fd(STDIN_FILENO), int(0)) -> 0,
                 tcgetattr(fd(STDIN_FILENO)) -> 0,
                 read(fd(STDIN_FILENO), _) -> err(sys::constants::EIO),
-                tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
+                tcsetattr(fd(STDIN_FILENO), int(0)) -> 0,
             ],
             || {
                 let mut shell = test_shell();
@@ -4584,7 +4584,7 @@ mod tests {
         run_trace(
             trace_entries![
                 tcgetattr(fd(STDIN_FILENO)) -> 0,
-                tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
+                tcsetattr(fd(STDIN_FILENO), int(0)) -> 0,
                 tcgetattr(fd(STDIN_FILENO)) -> 0,
                 read(fd(STDIN_FILENO), _) -> bytes([b'a']),
                 write(fd(STDOUT_FILENO), bytes([b'a'])) -> auto,
@@ -4595,7 +4595,7 @@ mod tests {
                 write(fd(STDOUT_FILENO), bytes(b"\x07")) -> auto,
                 read(fd(STDIN_FILENO), _) -> bytes([b'\r']),
                 write(fd(STDOUT_FILENO), bytes(b"\r\n")) -> auto,
-                tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
+                tcsetattr(fd(STDIN_FILENO), int(0)) -> 0,
             ],
             || {
                 let mut shell = test_shell();
@@ -4610,13 +4610,13 @@ mod tests {
         run_trace(
             trace_entries![
                 tcgetattr(fd(STDIN_FILENO)) -> 0,
-                tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
+                tcsetattr(fd(STDIN_FILENO), int(0)) -> 0,
                 tcgetattr(fd(STDIN_FILENO)) -> 0,
                 read(fd(STDIN_FILENO), _) -> bytes([0x1b]),
                 read(fd(STDIN_FILENO), _) -> bytes([b'i']),
                 read(fd(STDIN_FILENO), _) -> bytes([b'\r']),
                 write(fd(STDOUT_FILENO), bytes(b"\r\n")) -> auto,
-                tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
+                tcsetattr(fd(STDIN_FILENO), int(0)) -> 0,
             ],
             || {
                 let mut shell = test_shell();
@@ -4631,7 +4631,7 @@ mod tests {
         run_trace(
             trace_entries![
                 tcgetattr(fd(STDIN_FILENO)) -> 0,
-                tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
+                tcsetattr(fd(STDIN_FILENO), int(0)) -> 0,
                 tcgetattr(fd(STDIN_FILENO)) -> 0,
                 read(fd(STDIN_FILENO), _) -> bytes([b'a']),
                 write(fd(STDOUT_FILENO), bytes([b'a'])) -> auto,
@@ -4644,7 +4644,7 @@ mod tests {
                 write(fd(STDOUT_FILENO), bytes(b"a\x1b[1D")) -> auto,
                 read(fd(STDIN_FILENO), _) -> bytes([b'\r']),
                 write(fd(STDOUT_FILENO), bytes(b"\r\n")) -> auto,
-                tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
+                tcsetattr(fd(STDIN_FILENO), int(0)) -> 0,
             ],
             || {
                 let mut shell = test_shell();
@@ -4659,7 +4659,7 @@ mod tests {
         run_trace(
             trace_entries![
                 tcgetattr(fd(STDIN_FILENO)) -> 0,
-                tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
+                tcsetattr(fd(STDIN_FILENO), int(0)) -> 0,
                 tcgetattr(fd(STDIN_FILENO)) -> 0,
                 read(fd(STDIN_FILENO), _) -> bytes([0x1b]),
                 read(fd(STDIN_FILENO), _) -> bytes([b'v']),
@@ -4667,15 +4667,15 @@ mod tests {
                 open(_, _, _) -> 10,
                 write(fd(10), bytes(b"\n")) -> auto,
                 close(fd(10)) -> 0,
-                tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
+                tcsetattr(fd(STDIN_FILENO), int(0)) -> 0,
                 write(fd(STDOUT_FILENO), bytes(b"\r\n")) -> auto,
-                tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
+                tcsetattr(fd(STDIN_FILENO), int(0)) -> 0,
                 open(_, _, _) -> err(sys::constants::ENOENT),
                 unlink(_) -> 0,
                 write(fd(STDOUT_FILENO), bytes(b"\r\x1b[K")) -> auto,
                 read(fd(STDIN_FILENO), _) -> bytes([b'\r']),
                 write(fd(STDOUT_FILENO), bytes(b"\r\n")) -> auto,
-                tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
+                tcsetattr(fd(STDIN_FILENO), int(0)) -> 0,
             ],
             || {
                 let mut shell = test_shell();
@@ -4691,7 +4691,7 @@ mod tests {
         run_trace(
             trace_entries![
                 tcgetattr(fd(STDIN_FILENO)) -> 0,
-                tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
+                tcsetattr(fd(STDIN_FILENO), int(0)) -> 0,
                 tcgetattr(fd(STDIN_FILENO)) -> 0,
                 read(fd(STDIN_FILENO), _) -> bytes([0x1b]),
                 read(fd(STDIN_FILENO), _) -> bytes([b'v']),
@@ -4699,9 +4699,9 @@ mod tests {
                 open(_, _, _) -> 10,
                 write(fd(10), bytes(b"\n")) -> auto,
                 close(fd(10)) -> 0,
-                tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
+                tcsetattr(fd(STDIN_FILENO), int(0)) -> 0,
                 write(fd(STDOUT_FILENO), bytes(b"\r\n")) -> auto,
-                tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
+                tcsetattr(fd(STDIN_FILENO), int(0)) -> 0,
                 open(_, _, _) -> 11,
                 read(fd(11), _) -> bytes(b"\n"),
                 read(fd(11), _) -> 0,
@@ -4710,7 +4710,7 @@ mod tests {
                 write(fd(STDOUT_FILENO), bytes(b"\r\x1b[K")) -> auto,
                 read(fd(STDIN_FILENO), _) -> bytes([b'\r']),
                 write(fd(STDOUT_FILENO), bytes(b"\r\n")) -> auto,
-                tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
+                tcsetattr(fd(STDIN_FILENO), int(0)) -> 0,
             ],
             || {
                 let mut shell = test_shell();
@@ -4726,7 +4726,7 @@ mod tests {
         run_trace(
             trace_entries![
                 tcgetattr(fd(STDIN_FILENO)) -> 0,
-                tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
+                tcsetattr(fd(STDIN_FILENO), int(0)) -> 0,
                 tcgetattr(fd(STDIN_FILENO)) -> 0,
                 read(fd(STDIN_FILENO), _) -> bytes([0x1b]),
                 read(fd(STDIN_FILENO), _) -> bytes([b'v']),
@@ -4734,16 +4734,16 @@ mod tests {
                 open(_, _, _) -> 10,
                 write(fd(10), bytes(b"\n")) -> auto,
                 close(fd(10)) -> 0,
-                tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
+                tcsetattr(fd(STDIN_FILENO), int(0)) -> 0,
                 write(fd(STDOUT_FILENO), bytes(b"\r\n")) -> auto,
-                tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
+                tcsetattr(fd(STDIN_FILENO), int(0)) -> 0,
                 open(_, _, _) -> 11,
                 read(fd(11), _) -> bytes(b"edited\n"),
                 read(fd(11), _) -> 0,
                 close(fd(11)) -> 0,
                 unlink(_) -> 0,
                 write(fd(STDOUT_FILENO), bytes(b"\r\n")) -> auto,
-                tcsetattr(fd(STDIN_FILENO), int(1)) -> 0,
+                tcsetattr(fd(STDIN_FILENO), int(0)) -> 0,
             ],
             || {
                 let mut shell = test_shell();

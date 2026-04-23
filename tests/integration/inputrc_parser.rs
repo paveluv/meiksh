@@ -37,10 +37,23 @@ fn inputrc_recursion_guard_reports_diagnostic() {
     };
     let _ = drain_until_contains(&mut pty, b"$ ");
     pty.send(b"set -o emacs\n");
+    // Sync on the bracketed-paste enable sequence `\x1b[?2004h` that
+    // `emacs_editing::read_line` emits on entry — that comes strictly
+    // AFTER `ensure_startup_loaded`, so when we see it the inputrc
+    // diagnostic has definitely already been written. If we instead
+    // raced ahead to typing `echo RCDONE\n`, the kernel-echoed copy of
+    // those bytes could satisfy `drain_until_contains(b"RCDONE\r\n")`
+    // before the diagnostic lands, producing a flaky false negative.
+    // Capture this preamble and carry it forward so the assertion
+    // inspects the full transcript (diagnostic + post-emacs-mode
+    // output), not just the final echo tail.
+    let preamble = drain_until_contains(&mut pty, b"\x1b[?2004h");
     pty.send(b"echo RCDONE\n");
-    let out = drain_until_contains(&mut pty, b"RCDONE\r\n");
+    let tail = drain_until_contains(&mut pty, b"RCDONE\r\n");
     let _ = pty.exit_and_wait();
     let _ = std::fs::remove_file(&path);
+    let mut out = preamble;
+    out.extend_from_slice(&tail);
     let text = String::from_utf8_lossy(&out);
     assert!(
         text.contains("recursive $include"),
@@ -60,8 +73,17 @@ fn inputrc_unknown_variable_reports_but_does_not_abort() {
     // Startup inputrc is consulted on first emacs-mode read_line.
     let _ = drain_until_contains(&mut pty, b"$ ");
     pty.send(b"set -o emacs\n");
+    // Sync on the bracketed-paste enable sequence `\x1b[?2004h`
+    // emitted by `emacs_editing::read_line` on entry — it lands
+    // strictly AFTER the inputrc diagnostic. See
+    // `inputrc_recursion_guard_reports_diagnostic` for the full
+    // race analysis. Preserve the preamble so the assertion inspects
+    // the complete transcript, not just the final echo tail.
+    let preamble = drain_until_contains(&mut pty, b"\x1b[?2004h");
     pty.send(b"echo DONEMARK\n");
-    let out = drain_until_contains(&mut pty, b"DONEMARK\r\n");
+    let tail = drain_until_contains(&mut pty, b"DONEMARK\r\n");
+    let mut out = preamble;
+    out.extend_from_slice(&tail);
     let _ = pty.exit_and_wait();
     let _ = std::fs::remove_file(&path);
     let text = String::from_utf8_lossy(&out);

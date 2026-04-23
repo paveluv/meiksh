@@ -62,7 +62,18 @@ pub(crate) const SIG_DFL_HANDLER: libc::sighandler_t = libc::SIG_DFL;
 pub(crate) const SIG_IGN_HANDLER: libc::sighandler_t = libc::SIG_IGN;
 pub(crate) const SIG_ERR_HANDLER: libc::sighandler_t = libc::SIG_ERR;
 
-pub(crate) const TCSADRAIN: c_int = libc::TCSADRAIN;
+/// `tcsetattr` action: apply changes immediately without waiting for
+/// the output queue to drain.
+///
+/// The shell uses `TCSANOW` (rather than `TCSADRAIN`) when toggling the
+/// terminal in and out of raw mode because the shell itself is the
+/// writer. With `TCSADRAIN`, a mode restore on a PTY with unread
+/// output queued blocks in the kernel (`tty_drain`) until the reader
+/// consumes the bytes — a deadlock when the reader is slow, absent, or
+/// dead (most notably, in integration tests that stop reading before
+/// sending `exit`). `readline`/`bash` use the same `TCSANOW` discipline
+/// for exactly this reason.
+pub(crate) const TCSANOW: c_int = libc::TCSANOW;
 
 pub(crate) const O_RDONLY: c_int = libc::O_RDONLY;
 pub(crate) const O_WRONLY: c_int = libc::O_WRONLY;
@@ -90,6 +101,18 @@ pub(crate) const ESRCH: c_int = libc::ESRCH;
 pub(crate) const ICANON: libc::tcflag_t = libc::ICANON;
 pub(crate) const ECHO: libc::tcflag_t = libc::ECHO;
 pub(crate) const ISIG: libc::tcflag_t = libc::ISIG;
+/// Input extended functions (BSD/POSIX): when set, the tty driver
+/// treats `VLNEXT` (default `^V`, octal 026) as "literal next", eating
+/// it and passing the following byte through raw. Interactive line
+/// editors must clear `IEXTEN` so they can implement their own
+/// `quoted-insert` binding on `^V`/`^Q`.
+pub(crate) const IEXTEN: libc::tcflag_t = libc::IEXTEN;
+/// Input flag: XON/XOFF flow control on output. When set, the tty
+/// driver consumes `VSTART` (default `^Q`, 0x11) and `VSTOP`
+/// (default `^S`, 0x13) instead of delivering them to the process.
+/// Interactive editors must clear it so `^Q` reaches `quoted-insert`
+/// and `^S` reaches `forward-search-history`.
+pub(crate) const IXON: libc::tcflag_t = libc::IXON;
 pub(crate) const VMIN: usize = libc::VMIN;
 pub(crate) const VTIME: usize = libc::VTIME;
 pub(crate) const VERASE: usize = libc::VERASE;

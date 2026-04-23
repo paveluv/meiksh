@@ -503,11 +503,11 @@ mod tests {
             trace_entries![
                 write(fd(sys::constants::STDERR_FILENO), bytes(b"$ ")) -> auto,
                 tcgetattr(fd(sys::constants::STDIN_FILENO)) -> 0,
-                tcsetattr(fd(sys::constants::STDIN_FILENO), int(1)) -> 0,
+                tcsetattr(fd(sys::constants::STDIN_FILENO), int(0)) -> 0,
                 tcgetattr(fd(sys::constants::STDIN_FILENO)) -> 0,
                 read(fd(sys::constants::STDIN_FILENO), _) -> bytes(b""),
                 write(fd(sys::constants::STDOUT_FILENO), bytes(b"\r\n")) -> auto,
-                tcsetattr(fd(sys::constants::STDIN_FILENO), int(1)) -> 0,
+                tcsetattr(fd(sys::constants::STDIN_FILENO), int(0)) -> 0,
             ],
             || {
                 let mut shell = test_shell();
