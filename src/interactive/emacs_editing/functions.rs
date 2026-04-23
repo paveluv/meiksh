@@ -691,6 +691,10 @@ enum CompletionKind {
     Path,
     /// Shell variable (`$NAME`). Inserted as-is.
     Variable,
+    /// Brace-wrapped shell variable (`${NAME`). A unique match closes
+    /// the expansion with `}`; multi-match LCP replacement leaves the
+    /// brace open so the user can keep typing.
+    BraceVariable,
     /// First-word command completion (builtins, aliases, functions,
     /// PATH executables). Inserted as-is.
     Command,
@@ -772,12 +776,15 @@ fn replace_prefix_with(
 }
 
 /// Append the per-candidate terminator (spec § 5.8): `/` for a
-/// directory match in [`CompletionKind::Path`]; nothing for anything
-/// else. We intentionally do not auto-insert a space after file /
-/// command names — the user is free to continue typing flags / paths.
+/// directory match in [`CompletionKind::Path`]; `}` to close a
+/// brace-wrapped variable expansion; nothing for anything else. We
+/// intentionally do not auto-insert a space after file / command
+/// names — the user is free to continue typing flags / paths.
 fn append_terminator(full: &mut Vec<u8>, cand: &Candidate, kind: CompletionKind) {
-    if matches!(kind, CompletionKind::Path) && is_dir_candidate(&cand.word) {
-        full.push(b'/');
+    match kind {
+        CompletionKind::Path if is_dir_candidate(&cand.word) => full.push(b'/'),
+        CompletionKind::BraceVariable => full.push(b'}'),
+        _ => {}
     }
 }
 
@@ -864,6 +871,19 @@ fn gather_candidates(
     prefix: &[u8],
     is_first_word: bool,
 ) -> (Vec<Candidate>, CompletionKind) {
+    if let Some(stripped) = prefix.strip_prefix(b"${") {
+        let mut cands: Vec<Candidate> = Vec::new();
+        for (name, _) in shell.env().iter() {
+            if name.starts_with(stripped) {
+                let mut word = b"${".to_vec();
+                word.extend_from_slice(name);
+                let display = name.to_vec();
+                cands.push(Candidate { word, display });
+            }
+        }
+        return (cands, CompletionKind::BraceVariable);
+    }
+
     if let Some(stripped) = prefix.strip_prefix(b"$") {
         let mut cands: Vec<Candidate> = Vec::new();
         for (name, _) in shell.env().iter() {
