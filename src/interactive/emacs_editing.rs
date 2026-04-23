@@ -256,8 +256,15 @@ fn run_incremental_search(
                     state.cursor = state.buf.len();
                 }
                 state.undo.clear();
+                // Redraw so the user's transcript shows the accepted
+                // line sitting on the regular prompt (rather than in
+                // the `(reverse-i-search...)` mini-buffer), then
+                // terminate the read loop as if `accept-line` had
+                // fired — per spec § 7.2.
                 redraw(&state.buf, state.cursor, prompt);
-                return Ok(None);
+                let mut line = std::mem::take(&mut state.buf);
+                line.push(b'\n');
+                return Ok(Some(Some(line)));
             }
             SearchOutcome::Abort => {
                 state.buf = saved_buf;
