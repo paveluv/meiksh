@@ -8,6 +8,17 @@ use super::types::Pid;
 pub(crate) fn is_interactive_fd(fd: c_int) -> bool {
     interface::isatty(fd) == 1
 }
+
+/// Basename of the controlling terminal for `fd`, if known.
+/// Used by `\l` in prompt expansion.
+pub(crate) fn tty_basename(fd: c_int) -> Option<Vec<u8>> {
+    let full = interface::ttyname_of_fd(fd)?;
+    let slash = full.iter().rposition(|b| *b == b'/').map(|i| i + 1);
+    match slash {
+        Some(i) if i <= full.len() => Some(full[i..].to_vec()),
+        _ => Some(full),
+    }
+}
 pub(crate) fn current_foreground_pgrp(fd: c_int) -> SysResult<Pid> {
     let result = interface::tcgetpgrp(fd);
     if result >= 0 {

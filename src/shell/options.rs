@@ -1,5 +1,22 @@
 use crate::bstr::ByteWriter;
 
+/// Exclusive "compat mode" slot. At most one mode may be active at any
+/// time; `Posix` means no compat extensions are enabled. Future values
+/// (for example `Zsh`, `Ksh`) slot in here and inherit the mutual
+/// exclusion rule for free.
+///
+/// See `docs/features/ps1-prompt-extensions.md` § 2.2.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum CompatMode {
+    /// Strict POSIX. This is the meiksh default: a fresh interactive or
+    /// non-interactive shell starts in this mode.
+    #[default]
+    Posix,
+    /// Bash-compatible prompt expansion (and, in the future, other
+    /// bash-specific extensions). Enabled via `set -o bash_compat`.
+    Bash,
+}
+
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ShellOptions {
     pub(crate) allexport: bool,
@@ -21,6 +38,10 @@ pub(crate) struct ShellOptions {
     pub(crate) positional: Vec<Vec<u8>>,
     pub(crate) vi_mode: bool,
     pub(crate) emacs_mode: bool,
+    /// Current compat-mode selection (default `Posix`). `set -o
+    /// bash_compat` / `set +o bash_compat` move this between `Posix`
+    /// and `Bash`.
+    pub(crate) compat_mode: CompatMode,
 }
 
 const REPORTABLE_OPTION_NAMES: [(&[u8], u8); 11] = [
@@ -84,6 +105,19 @@ impl ShellOptions {
             }
             return Ok(());
         }
+        if name == b"bash_compat" {
+            // The compat-mode slot is a single-valued selector. Enabling
+            // `bash_compat` sets it to `Bash`; disabling it returns the
+            // selector to `Posix`. Per ps1-prompt-extensions.md § 2.2,
+            // disabling the currently-active compat option does NOT
+            // reactivate a previously-selected sibling.
+            self.compat_mode = if enabled {
+                CompatMode::Bash
+            } else {
+                CompatMode::Posix
+            };
+            return Ok(());
+        }
         let Some((_, letter)) = REPORTABLE_OPTION_NAMES
             .iter()
             .find(|(option_name, _)| *option_name == name)
@@ -93,9 +127,10 @@ impl ShellOptions {
         self.set_short_option(*letter, enabled)
     }
 
-    pub(crate) fn reportable_options(&self) -> [(&'static [u8], bool); 14] {
+    pub(crate) fn reportable_options(&self) -> [(&'static [u8], bool); 15] {
         [
             (b"allexport" as &[u8], self.allexport),
+            (b"bash_compat", matches!(self.compat_mode, CompatMode::Bash)),
             (b"emacs", self.emacs_mode),
             (b"errexit", self.errexit),
             (b"hashall", self.hashall),
@@ -218,6 +253,37 @@ mod tests {
         assert!(emacs.1);
         let vi = reported.iter().find(|(n, _)| *n == b"vi").unwrap();
         assert!(!vi.1);
+    }
+
+    #[test]
+    fn bash_compat_named_option_toggles_selector() {
+        let mut opts = ShellOptions::default();
+        assert_eq!(opts.compat_mode, CompatMode::Posix);
+        opts.set_named_option(b"bash_compat", true)
+            .expect("bash_compat on");
+        assert_eq!(opts.compat_mode, CompatMode::Bash);
+        opts.set_named_option(b"bash_compat", false)
+            .expect("bash_compat off");
+        assert_eq!(opts.compat_mode, CompatMode::Posix);
+    }
+
+    #[test]
+    fn bash_compat_shows_up_in_reportable_options() {
+        let mut opts = ShellOptions::default();
+        let reported = opts.reportable_options();
+        let row = reported
+            .iter()
+            .find(|(n, _)| *n == b"bash_compat")
+            .expect("bash_compat row");
+        assert!(!row.1, "default bash_compat should be off");
+
+        opts.set_named_option(b"bash_compat", true).unwrap();
+        let reported = opts.reportable_options();
+        let row = reported
+            .iter()
+            .find(|(n, _)| *n == b"bash_compat")
+            .expect("bash_compat row");
+        assert!(row.1, "reported bash_compat should flip on");
     }
 
     #[test]

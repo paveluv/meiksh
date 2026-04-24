@@ -13,6 +13,65 @@ thread_local! {
     static TEST_PROCESS_IDS: RefCell<Option<(libc::uid_t, libc::uid_t, libc::gid_t, libc::gid_t)>> =
         const { RefCell::new(None) };
     static TEST_LOCALE: RefCell<TestLocale> = const { RefCell::new(TestLocale::C) };
+    static TEST_LOCAL_TIME: RefCell<Option<super::time::LocalTime>> = const { RefCell::new(None) };
+    static TEST_HOSTNAME: RefCell<Option<Vec<u8>>> = const { RefCell::new(None) };
+    static TEST_TTYNAME: RefCell<Option<Vec<u8>>> = const { RefCell::new(None) };
+    static TEST_EUID_IS_ROOT: RefCell<bool> = const { RefCell::new(false) };
+    static TEST_EUID_RAW: RefCell<u32> = const { RefCell::new(1000) };
+    static TEST_PWNAME_FOR_UID: RefCell<Option<Vec<u8>>> = const { RefCell::new(None) };
+}
+
+// Injection hooks for the sys-level prompt helpers are intentionally
+// omitted until a test needs them. The `TEST_HOSTNAME`, `TEST_TTYNAME`,
+// `TEST_EUID_IS_ROOT`, `TEST_EUID_RAW`, and `TEST_PWNAME_FOR_UID`
+// thread-locals default to benign values under `cargo test`.
+
+pub(super) fn trace_gethostname(buf: &mut [u8]) -> c_int {
+    TEST_HOSTNAME.with(|c| {
+        let opt = c.borrow();
+        let Some(name) = opt.as_ref() else {
+            set_test_errno(libc::EFAULT);
+            return -1;
+        };
+        let n = name.len().min(buf.len().saturating_sub(1));
+        buf[..n].copy_from_slice(&name[..n]);
+        if buf.len() > n {
+            buf[n] = 0;
+        }
+        0
+    })
+}
+
+pub(super) fn trace_ttyname_of_fd(_fd: c_int) -> Option<Vec<u8>> {
+    TEST_TTYNAME.with(|c| c.borrow().clone())
+}
+
+pub(super) fn trace_effective_uid_is_root() -> bool {
+    TEST_EUID_IS_ROOT.with(|c| *c.borrow())
+}
+
+pub(super) fn trace_effective_uid_raw() -> u32 {
+    TEST_EUID_RAW.with(|c| *c.borrow())
+}
+
+pub(super) fn trace_getpwuid_name(_uid: u32) -> Option<Vec<u8>> {
+    TEST_PWNAME_FOR_UID.with(|c| c.borrow().clone())
+}
+
+/// Test-support override for [`super::time::local_time_now`]. When set,
+/// `local_time_now` returns the provided broken-down time instead of
+/// consulting `libc::localtime_r`.
+pub(crate) fn set_test_local_time(tm: super::time::LocalTime) {
+    TEST_LOCAL_TIME.with(|cell| *cell.borrow_mut() = Some(tm));
+}
+
+/// Clear any override installed by [`set_test_local_time`].
+pub(crate) fn clear_test_local_time() {
+    TEST_LOCAL_TIME.with(|cell| *cell.borrow_mut() = None);
+}
+
+pub(crate) fn test_local_time() -> Option<super::time::LocalTime> {
+    TEST_LOCAL_TIME.with(|cell| *cell.borrow())
 }
 
 #[derive(Clone, Copy, PartialEq)]

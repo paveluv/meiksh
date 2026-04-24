@@ -2,7 +2,7 @@
 
 ## Status
 
-**Not implemented.** This document is a specification; no supporting code exists in meiksh yet. The `bash_compat` shell option is not accepted by `set -o`, the prompt variables (`PS1`, `PS2`, `PS3`, `PS4`) are today subject only to parameter expansion plus `!` history substitution via [src/interactive/prompt.rs](../../src/interactive/prompt.rs), and no backslash-escape decoder, no `\[`/`\]` invisible-region handling, and no per-session command counter are present. Implementation is planned as three stages (compat-mode plumbing, escape decoder, editor integration) but is not scheduled. User-visible behavior shall be verified by integration tests under [tests/integration/prompt.rs](../../tests/integration/prompt.rs) and by PTY-driven tests that assert cursor placement for prompts containing `\[...\]` sequences.
+**Implemented.** The `bash_compat` shell option is accepted by `set -o` / `set +o` ([src/shell/options.rs](../../src/shell/options.rs)) and is mutually exclusive with the implicit POSIX mode. The backslash-escape decoder, the `Prompt` type that carries an invisible mask for `\[...\]` regions, and the per-session command counter (`\#`) live in [src/interactive/prompt_expand.rs](../../src/interactive/prompt_expand.rs). PS1/PS2 expansion, PS4 xtrace expansion, and the line editor's cursor-column arithmetic consume the invisible mask via `display_width_visible` in [src/interactive/editor/redraw.rs](../../src/interactive/editor/redraw.rs). Locale-aware `\D{format}` uses the `strftime(3)` wrapper in [src/sys/time.rs](../../src/sys/time.rs). User-visible behavior is verified by unit tests colocated with the decoder and by integration tests in [tests/integration/prompt.rs](../../tests/integration/prompt.rs).
 
 ## 1. Scope
 

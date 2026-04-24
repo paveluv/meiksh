@@ -30,6 +30,31 @@ pub(crate) fn display_width(line: &[u8]) -> usize {
     w
 }
 
+/// Display width of `bytes` excluding any ranges in `invisible`.
+/// Each range is a half-open `[start, end)` byte offset into `bytes`.
+/// This implements the "visible-only" width calculation required by
+/// `docs/features/ps1-prompt-extensions.md` § 9.2 for prompts
+/// containing `\[...\]` non-printing regions.
+pub(crate) fn display_width_visible(bytes: &[u8], invisible: &[(usize, usize)]) -> usize {
+    if invisible.is_empty() {
+        return display_width(bytes);
+    }
+    let mut w = 0;
+    let mut i = 0;
+    while i < bytes.len() {
+        if invisible.iter().any(|(s, e)| i >= *s && i < *e) {
+            let (_, len) = sys::locale::decode_char(&bytes[i..]);
+            i += if len == 0 { 1 } else { len };
+            continue;
+        }
+        let (wc, len) = sys::locale::decode_char(&bytes[i..]);
+        let step = if len == 0 { 1 } else { len };
+        w += sys::locale::char_width(wc);
+        i += step;
+    }
+    w
+}
+
 /// Visual width of the slice `line[from..to]`. Used to compute
 /// cursor-back offsets after redraw.
 pub(crate) fn display_width_range(line: &[u8], from: usize, to: usize) -> usize {
@@ -148,6 +173,17 @@ mod tests {
             let (out_mid, err_mid) = redraw_sequence(b"abc", 1, b"$ ");
             assert_eq!(out_mid, b"\r\x1b[Kabc\x1b[2D");
             assert_eq!(err_mid, b"$ ");
+        });
+    }
+
+    #[test]
+    fn display_width_visible_skips_invisible_ranges() {
+        assert_no_syscalls(|| {
+            set_test_locale_c();
+            let bytes = b"\x1b[31mRED\x1b[0m";
+            let invisible = vec![(0, 5), (8, 12)];
+            assert_eq!(display_width_visible(bytes, &invisible), 3);
+            assert_eq!(display_width_visible(b"abc", &[]), 3);
         });
     }
 

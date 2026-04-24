@@ -219,6 +219,7 @@ mod tests {
         run_trace(
             trace_entries![
                 write(fd(1), bytes(b"allexport off\n")) -> auto,
+                write(fd(1), bytes(b"bash_compat off\n")) -> auto,
                 write(fd(1), bytes(b"emacs off\n")) -> auto,
                 write(fd(1), bytes(b"errexit off\n")) -> auto,
                 write(fd(1), bytes(b"hashall off\n")) -> auto,
@@ -279,6 +280,7 @@ mod tests {
         run_trace(
             trace_entries![
                 write(fd(1), bytes(b"set +o allexport\n")) -> auto,
+                write(fd(1), bytes(b"set +o bash_compat\n")) -> auto,
                 write(fd(1), bytes(b"set +o emacs\n")) -> auto,
                 write(fd(1), bytes(b"set +o errexit\n")) -> auto,
                 write(fd(1), bytes(b"set +o hashall\n")) -> auto,
