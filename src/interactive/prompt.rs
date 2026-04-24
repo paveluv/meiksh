@@ -256,4 +256,149 @@ mod tests {
             assert_eq!(expand_prompt_exclamation(b"no bang", 42), b"no bang");
         });
     }
+
+    /// § 7.1: "The resulting digits shall be emitted verbatim; the
+    /// history pass (Section 7.2) shall not re-scan those digits."
+    ///
+    /// We can't observe the full pipeline from a unit test without
+    /// spinning up a Shell, but the helper contract is that
+    /// `expand_prompt_exclamation` treats digits as plain bytes. The
+    /// only thing that triggers substitution is the `!` byte itself.
+    #[test]
+    fn history_pass_does_not_scan_plain_digits() {
+        assert_no_syscalls(|| {
+            // Digits passed in verbatim survive unchanged.
+            assert_eq!(expand_prompt_exclamation(b"12", 99), b"12");
+            // Digits that happen to equal the history number are
+            // still left alone — only `!` triggers substitution.
+            assert_eq!(expand_prompt_exclamation(b"42-99", 99), b"42-99");
+            // Digits adjacent to a `!` are still literal.
+            assert_eq!(expand_prompt_exclamation(b"7!9", 99), b"7999");
+        });
+    }
+
+    /// § 7.2: "A `!` introduced by parameter expansion shall be
+    /// subject to this pass exactly like a `!` written directly in
+    /// `PS1`". The helper sees whatever bytes pass 2 produced, so if
+    /// those bytes include a `!`, it is substituted.
+    #[test]
+    fn history_pass_scans_bang_irrespective_of_origin() {
+        assert_no_syscalls(|| {
+            // A literal `!` in the middle of surrounding text — the
+            // same shape that `expand_parameter_text` would produce
+            // when $VAR resolves to bytes containing `!`.
+            assert_eq!(expand_prompt_exclamation(b"x!y", 5), b"x5y");
+        });
+    }
+
+    // === Full-pipeline behavior (expand_full_prompt) ==================
+
+    /// § 5: the bash-compat pipeline runs escape → parameter →
+    /// history in order. With bash_compat off, none of those passes
+    /// decode `\u`; with bash_compat on, `\u` resolves to a username
+    /// or `?` and a literal `!` is replaced by the history number.
+    #[test]
+    fn expand_full_prompt_posix_mode_is_parameter_only() {
+        let mut shell = test_shell();
+        shell
+            .env_mut()
+            .insert(b"PS1".to_vec(), b"\\u@\\h:\\w!foo$ ".to_vec());
+        let out = expand_full_prompt(&mut shell, b"PS1", b"", PromptKind::Ps1Or2);
+        // Every backslash-pair survives; literal `!` stays literal.
+        assert_eq!(out.bytes, b"\\u@\\h:\\w!foo$ ");
+        assert!(out.invisible.is_empty());
+    }
+
+    /// § 5 + § 7.1: `\!` decodes during the escape pass to the
+    /// history number, and a subsequent literal `!` is independently
+    /// substituted by the history pass. The two mechanisms compose
+    /// without clobbering each other — the contract in § 7.1 third
+    /// bullet.
+    #[test]
+    fn expand_full_prompt_bash_mode_runs_all_three_passes() {
+        let mut shell = test_shell();
+        shell
+            .options
+            .set_named_option(b"bash_compat", true)
+            .expect("toggle bash_compat");
+        // Pre-populate PWD so `build_prompt_env` does not fall back
+        // to `getcwd(3)` (which would panic under the no-trace
+        // assertion of the test harness).
+        shell.env_mut().insert(b"PWD".to_vec(), b"/tmp".to_vec());
+        shell.env_mut().insert(b"PS1".to_vec(), b"\\!-!".to_vec());
+        // history_number() on a fresh shell equals 1.
+        let out = expand_full_prompt(&mut shell, b"PS1", b"", PromptKind::Ps1Or2);
+        assert_eq!(out.bytes, b"1-1");
+    }
+
+    /// § 3.6: "Prompt variables shall be re-expanded on every prompt
+    /// write. Meiksh shall not cache the expanded value." Two
+    /// consecutive expansions of `PS1='$TAG'` with the var mutated
+    /// in between must observe the new value.
+    #[test]
+    fn expand_full_prompt_reruns_parameter_pass_each_call() {
+        let mut shell = test_shell();
+        shell.env_mut().insert(b"PS1".to_vec(), b"$TAG".to_vec());
+        shell.env_mut().insert(b"TAG".to_vec(), b"first".to_vec());
+        let first = expand_full_prompt(&mut shell, b"PS1", b"", PromptKind::Ps1Or2);
+        assert_eq!(first.bytes, b"first");
+
+        shell.env_mut().insert(b"TAG".to_vec(), b"second".to_vec());
+        let second = expand_full_prompt(&mut shell, b"PS1", b"", PromptKind::Ps1Or2);
+        assert_eq!(second.bytes, b"second");
+    }
+
+    /// § 3.2: When `bash_compat` is on and `PS1` is unset, the
+    /// default expansion uses `\s-\v\$ ` (yielding `<shell>-<ver>$ `).
+    #[test]
+    fn expand_full_prompt_default_ps1_in_bash_mode_uses_s_v_dollar() {
+        let mut shell = test_shell();
+        shell
+            .options
+            .set_named_option(b"bash_compat", true)
+            .expect("toggle bash_compat");
+        shell.env_mut().insert(b"PWD".to_vec(), b"/tmp".to_vec());
+        shell.env_mut().remove(b"PS1".as_slice());
+        let out = expand_full_prompt(&mut shell, b"PS1", b"$ ", PromptKind::Ps1Or2);
+        // The rendered prompt ends with `$ ` (non-root) and contains
+        // a literal `-` between the shell name and version.
+        assert!(
+            out.bytes.ends_with(b"$ "),
+            "default PS1 must end in `$ `, got: {:?}",
+            out.bytes
+        );
+        assert!(
+            out.bytes.contains(&b'-'),
+            "default PS1 must contain the `-` joiner, got: {:?}",
+            out.bytes
+        );
+    }
+
+    /// § 3.2: When `bash_compat` is off and `PS1` is unset, the
+    /// default is the caller-supplied `"$ "` literal — no escape pass,
+    /// no transformation.
+    #[test]
+    fn expand_full_prompt_default_ps1_in_posix_mode_is_caller_default() {
+        let mut shell = test_shell();
+        shell.env_mut().remove(b"PS1".as_slice());
+        let out = expand_full_prompt(&mut shell, b"PS1", b"$ ", PromptKind::Ps1Or2);
+        assert_eq!(out.bytes, b"$ ");
+    }
+
+    /// § 3.1 table: `PS3` in bash mode skips the escape pass entirely.
+    #[test]
+    fn expand_full_prompt_ps3_skips_escape_pass_even_in_bash_mode() {
+        let mut shell = test_shell();
+        shell
+            .options
+            .set_named_option(b"bash_compat", true)
+            .expect("toggle bash_compat");
+        shell.env_mut().insert(b"PWD".to_vec(), b"/tmp".to_vec());
+        shell
+            .env_mut()
+            .insert(b"PS3".to_vec(), b"\\u pick: ".to_vec());
+        let out = expand_full_prompt(&mut shell, b"PS3", b"#? ", PromptKind::Ps3);
+        // `\u` is NOT decoded because the escape pass is skipped.
+        assert_eq!(out.bytes, b"\\u pick: ");
+    }
 }
