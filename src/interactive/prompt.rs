@@ -78,15 +78,10 @@ pub(crate) fn expand_full_prompt(
     default: &[u8],
     kind: PromptKind,
 ) -> Prompt {
-    let raw = shell.get_var(var).map(|v| v.to_vec()).unwrap_or_else(|| {
-        // If unset and bash_prompts is on, PS1 falls back to "\s-\v\$".
-        // See spec § 3.2. Other slots use their static default.
-        if var == b"PS1" && matches!(shell.options.prompts_mode, PromptsMode::Bash) {
-            b"\\s-\\v\\$ ".to_vec()
-        } else {
-            default.to_vec()
-        }
-    });
+    let raw = shell
+        .get_var(var)
+        .map(|v| v.to_vec())
+        .unwrap_or_else(|| default.to_vec());
     let mode = shell.options.prompts_mode;
     let histnum = shell.history_number();
 
@@ -346,10 +341,16 @@ mod tests {
         assert_eq!(second.bytes, b"second");
     }
 
-    /// § 3.2: When `bash_prompts` is on and `PS1` is unset, the
-    /// default expansion uses `\s-\v\$ ` (yielding `<shell>-<ver>$ `).
+    /// § 3.2: The default `PS1` value is the caller-supplied literal
+    /// regardless of `bash_prompts`. The `bash_prompts` option only
+    /// toggles escape-sequence decoding on the *configured* `PS1`
+    /// value; it never substitutes a different default. `PS1`'s
+    /// POSIX-spec default (`"$ "` or `"# "` for root) is instead
+    /// seeded by `load_startup_files`, so by the time `expand_full_prompt`
+    /// is reached with an unset `PS1`, the caller's static default is
+    /// the sole fallback.
     #[test]
-    fn expand_full_prompt_default_ps1_in_bash_mode_uses_s_v_dollar() {
+    fn expand_full_prompt_default_ps1_in_bash_mode_is_caller_default() {
         let mut shell = test_shell();
         shell
             .options
@@ -358,18 +359,10 @@ mod tests {
         shell.env_mut().insert(b"PWD".to_vec(), b"/tmp".to_vec());
         shell.env_mut().remove(b"PS1".as_slice());
         let out = expand_full_prompt(&mut shell, b"PS1", b"$ ", PromptKind::Ps1Or2);
-        // The rendered prompt ends with `$ ` (non-root) and contains
-        // a literal `-` between the shell name and version.
-        assert!(
-            out.bytes.ends_with(b"$ "),
-            "default PS1 must end in `$ `, got: {:?}",
-            out.bytes
-        );
-        assert!(
-            out.bytes.contains(&b'-'),
-            "default PS1 must contain the `-` joiner, got: {:?}",
-            out.bytes
-        );
+        // No `\s-\v\$` substitution, no transformation: the caller's
+        // default is returned unchanged because it contains no escape
+        // sequences or parameter expansions.
+        assert_eq!(out.bytes, b"$ ");
     }
 
     /// § 3.2: When `bash_prompts` is off and `PS1` is unset, the

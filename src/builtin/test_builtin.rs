@@ -16,22 +16,27 @@ pub(super) fn test_builtin(shell: &Shell, argv: &[Vec<u8>]) -> Result<BuiltinOut
     } else {
         &argv[1..]
     };
-    let result = match args.len() {
-        0 => Ok(false),
-        1 => Ok(!args[0].is_empty()),
-        2 => test_two_args(shell, &args[0], &args[1]),
-        3 => test_three_args(shell, &args[0], &args[1], &args[2]),
-        4 => {
-            if args[0] == b"!" {
+    // Compound expressions (XSI: `-a`, `-o`, `(`, `)`) always go through
+    // the recursive-descent evaluator. The Issue 7 basic-grammar fast
+    // paths (argc 0..=4 without any compound operator) stay on the
+    // direct helpers for both performance and message-compatibility with
+    // the existing unit tests.
+    let has_compound = args.iter().any(|a| {
+        let s = a.as_slice();
+        s == b"(" || s == b")" || s == b"-a" || s == b"-o"
+    });
+    let result = if has_compound {
+        compound::evaluate_compound(shell, args)
+    } else {
+        match args.len() {
+            0 => Ok(false),
+            1 => Ok(!args[0].is_empty()),
+            2 => test_two_args(shell, &args[0], &args[1]),
+            3 => test_three_args(shell, &args[0], &args[1], &args[2]),
+            4 if args[0] == b"!" => {
                 test_three_args(shell, &args[1], &args[2], &args[3]).map(|r| !r)
-            } else {
-                shell.diagnostic(2, b"test: too many arguments");
-                return Ok(BuiltinOutcome::Status(2));
             }
-        }
-        _ => {
-            shell.diagnostic(2, b"test: too many arguments");
-            return Ok(BuiltinOutcome::Status(2));
+            _ => compound::evaluate_compound(shell, args),
         }
     };
     match result {
@@ -203,6 +208,188 @@ pub(super) fn test_file_binary(left: &[u8], op: &[u8], right: &[u8]) -> Option<T
             }))
         }
         _ => None,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Compound expression parser (POSIX Issue 7 XSI semantics).
+//
+// Implements `-a`, `-o`, `!`, `(`, `)` exactly per the Issue 7
+// `test`/`[` RATIONALE
+// (<https://pubs.opengroup.org/onlinepubs/9699919799/utilities/test.html>).
+// Issue 8 removes the combinators from normative text but explicitly
+// permits implementation-defined operators of the form `-operator` and
+// classes >4-arg behavior as "unspecified", so providing Issue 7 XSI
+// semantics is conformant with Issue 8 while preserving compatibility
+// with the large body of Issue 7-era scripts (including Debian's
+// `/etc/profile.d/*.sh`).
+//
+// The six precedence rules, verbatim from Issue 7:
+//
+//   1. The unary primaries have higher precedence than the algebraic
+//      binary primaries.
+//   2. The unary primaries have lower precedence than the string binary
+//      primaries.
+//   3. The unary and binary primaries have higher precedence than the
+//      unary string primary.
+//   4. The `!` operator has higher precedence than the `-a` operator,
+//      and the `-a` operator has higher precedence than the `-o`
+//      operator.
+//   5. The `-a` and `-o` operators are left associative.
+//   6. The parentheses can be used to alter the normal precedence and
+//      associativity.
+//
+// Rules 1-3 describe the existing argc 0..=4 "basic grammar" dispatch
+// (via the `test_one_arg`-in-line / `test_two_args` / `test_three_args`
+// helpers). The parser here implements rules 4-6 on top of those
+// primitives: rule 4 fixes the outer-level precedence (`or_expr` /
+// `and_expr` / `not_expr` / `primary`); rule 5 is realized by the
+// iterative `( ... )*` form in `or_expr` and `and_expr`; rule 6 by the
+// `(` / `)` arm of `primary`.
+//
+// Issue 7 is silent on short-circuit evaluation. We choose short-circuit
+// — `-o` skips its RHS when the LHS is true, `-a` skips its RHS when the
+// LHS is false — because it is the only choice that gives deterministic
+// minimal syscall counts for file primaries (`-r`, `-w`, `-x`, `-e`,
+// `-f`, …). Both eager and short-circuit evaluation are Issue-7
+// conformant; the choice is locked in by the unit tests.
+// ---------------------------------------------------------------------------
+
+mod compound {
+    use super::{Shell, TestResult, test_three_args, test_two_args};
+
+    struct Parser<'a> {
+        args: &'a [Vec<u8>],
+        pos: usize,
+    }
+
+    pub(super) fn evaluate_compound(shell: &Shell, args: &[Vec<u8>]) -> TestResult {
+        let mut parser = Parser { args, pos: 0 };
+        let result = parser.parse_or(shell, false)?;
+        if parser.pos != args.len() {
+            let tok = &args[parser.pos];
+            if tok.as_slice() == b")" {
+                return Err(b"syntax error: unexpected ')'".to_vec());
+            }
+            let mut msg = b"syntax error: unexpected token '".to_vec();
+            msg.extend_from_slice(tok);
+            msg.push(b'\'');
+            return Err(msg);
+        }
+        Ok(result)
+    }
+
+    impl<'a> Parser<'a> {
+        fn peek(&self) -> Option<&'a [u8]> {
+            self.args.get(self.pos).map(|v| v.as_slice())
+        }
+
+        fn is_compound_op(tok: &[u8]) -> bool {
+            tok == b"(" || tok == b")" || tok == b"-a" || tok == b"-o"
+        }
+
+        fn can_start_primary(tok: Option<&[u8]>) -> bool {
+            match tok {
+                None => false,
+                Some(t) => t != b"-a" && t != b"-o" && t != b")",
+            }
+        }
+
+        fn parse_or(&mut self, shell: &Shell, skip: bool) -> TestResult {
+            let mut left = self.parse_and(shell, skip)?;
+            while self.peek() == Some(b"-o") {
+                self.pos += 1;
+                if !Self::can_start_primary(self.peek()) {
+                    return Err(b"syntax error: expected operand after -o".to_vec());
+                }
+                let right_skip = skip || left;
+                let right = self.parse_and(shell, right_skip)?;
+                if !skip && !left {
+                    left = right;
+                }
+            }
+            Ok(left)
+        }
+
+        fn parse_and(&mut self, shell: &Shell, skip: bool) -> TestResult {
+            let mut left = self.parse_not(shell, skip)?;
+            while self.peek() == Some(b"-a") {
+                self.pos += 1;
+                if !Self::can_start_primary(self.peek()) {
+                    return Err(b"syntax error: expected operand after -a".to_vec());
+                }
+                let right_skip = skip || !left;
+                let right = self.parse_not(shell, right_skip)?;
+                if !skip && left {
+                    left = right;
+                }
+            }
+            Ok(left)
+        }
+
+        fn parse_not(&mut self, shell: &Shell, skip: bool) -> TestResult {
+            if self.peek() == Some(b"!") {
+                self.pos += 1;
+                let inner = self.parse_not(shell, skip)?;
+                return Ok(!inner);
+            }
+            self.parse_primary(shell, skip)
+        }
+
+        fn parse_primary(&mut self, shell: &Shell, skip: bool) -> TestResult {
+            if self.peek() == Some(b"(") {
+                self.pos += 1;
+                let inner = self.parse_or(shell, skip)?;
+                if self.peek() != Some(b")") {
+                    return Err(b"syntax error: missing ')'".to_vec());
+                }
+                self.pos += 1;
+                return Ok(inner);
+            }
+            // Collect a run of up to 3 non-compound tokens and hand them
+            // to the Issue 7 basic-grammar dispatcher (rules 1-3).
+            let start = self.pos;
+            let mut end = start;
+            while end < self.args.len() && end - start < 3 {
+                if Self::is_compound_op(&self.args[end]) {
+                    break;
+                }
+                end += 1;
+            }
+            let run_len = end - start;
+            if run_len == 0 {
+                return match self.peek() {
+                    None => Err(b"syntax error: expected expression".to_vec()),
+                    Some(t) if t == b")" => Err(b"syntax error: expected expression".to_vec()),
+                    Some(t) if t == b"-o" || t == b"-a" => {
+                        let mut msg = b"syntax error: expected operand before ".to_vec();
+                        msg.extend_from_slice(t);
+                        Err(msg)
+                    }
+                    Some(t) => {
+                        let mut msg = b"syntax error: unexpected token '".to_vec();
+                        msg.extend_from_slice(t);
+                        msg.push(b'\'');
+                        Err(msg)
+                    }
+                };
+            }
+            self.pos = end;
+            if skip {
+                return Ok(false);
+            }
+            match run_len {
+                1 => Ok(!self.args[start].is_empty()),
+                2 => test_two_args(shell, &self.args[start], &self.args[start + 1]),
+                3 => test_three_args(
+                    shell,
+                    &self.args[start],
+                    &self.args[start + 1],
+                    &self.args[start + 2],
+                ),
+                _ => unreachable!(),
+            }
+        }
     }
 }
 
@@ -437,26 +624,28 @@ mod tests {
     }
 
     #[test]
-    fn test_five_args_too_many() {
-        let msg = diag(b"test: too many arguments");
-        run_trace(
-            trace_entries![write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto,],
-            || {
-                let mut shell = test_shell();
-                let outcome = invoke(
-                    &mut shell,
-                    &[
-                        b"test".to_vec(),
-                        b"a".to_vec(),
-                        b"b".to_vec(),
-                        b"c".to_vec(),
-                        b"d".to_vec(),
-                    ],
-                )
-                .expect("test a b c d");
-                assert!(matches!(outcome, BuiltinOutcome::Status(2)));
-            },
-        );
+    fn test_compound_or_true_right() {
+        // Issue 7 rule 4: `-o` is lowest-precedence, so `a = a -o b = c`
+        // parses as `(a = a) -o (b = c)` = true -o false = true. Pure
+        // string comparisons, no syscalls.
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let outcome = invoke(
+                &mut shell,
+                &[
+                    b"test".to_vec(),
+                    b"a".to_vec(),
+                    b"=".to_vec(),
+                    b"a".to_vec(),
+                    b"-o".to_vec(),
+                    b"b".to_vec(),
+                    b"=".to_vec(),
+                    b"c".to_vec(),
+                ],
+            )
+            .expect("test a = a -o b = c");
+            assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+        });
     }
 
     #[test]
@@ -755,8 +944,385 @@ mod tests {
     }
 
     #[test]
-    fn test_six_args_too_many() {
-        let msg = diag(b"test: too many arguments");
+    fn test_compound_and_binds_tighter_than_or() {
+        // Issue 7 rule 4: `-a` tighter than `-o`, so
+        // `a = a -a b = c -o d = d` parses as `(a=a -a b=c) -o d=d`
+        // = (true -a false) -o true = false -o true = true.
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let outcome = invoke(
+                &mut shell,
+                &[
+                    b"test".to_vec(),
+                    b"a".to_vec(),
+                    b"=".to_vec(),
+                    b"a".to_vec(),
+                    b"-a".to_vec(),
+                    b"b".to_vec(),
+                    b"=".to_vec(),
+                    b"c".to_vec(),
+                    b"-o".to_vec(),
+                    b"d".to_vec(),
+                    b"=".to_vec(),
+                    b"d".to_vec(),
+                ],
+            )
+            .expect("test a = a -a b = c -o d = d");
+            assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+        });
+    }
+
+    #[test]
+    fn test_compound_and_false_chain() {
+        // `a = b -a c = c` → (false -a true) = false. Locks in that `-a`
+        // evaluates both sides at its own precedence level.
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let outcome = invoke(
+                &mut shell,
+                &[
+                    b"test".to_vec(),
+                    b"a".to_vec(),
+                    b"=".to_vec(),
+                    b"b".to_vec(),
+                    b"-a".to_vec(),
+                    b"c".to_vec(),
+                    b"=".to_vec(),
+                    b"c".to_vec(),
+                ],
+            )
+            .expect("test a = b -a c = c");
+            assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+        });
+    }
+
+    #[test]
+    fn test_compound_or_left_associative() {
+        // Issue 7 rule 5: `-o` is left-associative, so
+        // `a = b -o c = d -o e = e` parses as `((a=b -o c=d) -o e=e)` =
+        // `(false -o false) -o true` = true.
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let outcome = invoke(
+                &mut shell,
+                &[
+                    b"test".to_vec(),
+                    b"a".to_vec(),
+                    b"=".to_vec(),
+                    b"b".to_vec(),
+                    b"-o".to_vec(),
+                    b"c".to_vec(),
+                    b"=".to_vec(),
+                    b"d".to_vec(),
+                    b"-o".to_vec(),
+                    b"e".to_vec(),
+                    b"=".to_vec(),
+                    b"e".to_vec(),
+                ],
+            )
+            .expect("test a = b -o c = d -o e = e");
+            assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+        });
+    }
+
+    #[test]
+    fn test_compound_parens_override_precedence() {
+        // Issue 7 rule 6: parentheses override the default precedence.
+        // Without them, `a = b -o a = a -a b = b` would parse as
+        // `a=b -o (a=a -a b=b)` = `false -o (true -a true)` = true.
+        // With `( a = b -o a = a ) -a b = b` we force the `-o` to bind
+        // tighter, yielding `(false -o true) -a true` = `true -a true`
+        // = true. Same result here is not the point — the point is that
+        // the parsing path goes through the `(`/`)` arm of `primary`
+        // with a nested `or_expr`.
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let outcome = invoke(
+                &mut shell,
+                &[
+                    b"test".to_vec(),
+                    b"(".to_vec(),
+                    b"a".to_vec(),
+                    b"=".to_vec(),
+                    b"b".to_vec(),
+                    b"-o".to_vec(),
+                    b"a".to_vec(),
+                    b"=".to_vec(),
+                    b"a".to_vec(),
+                    b")".to_vec(),
+                    b"-a".to_vec(),
+                    b"b".to_vec(),
+                    b"=".to_vec(),
+                    b"b".to_vec(),
+                ],
+            )
+            .expect("test ( a = b -o a = a ) -a b = b");
+            assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+        });
+    }
+
+    #[test]
+    fn test_compound_not_binds_tighter_than_and() {
+        // Issue 7 rule 4: `!` is tightest, so `! a = a -a b = b` parses
+        // as `(!(a=a)) -a (b=b)` = `false -a true` = false.
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let outcome = invoke(
+                &mut shell,
+                &[
+                    b"test".to_vec(),
+                    b"!".to_vec(),
+                    b"a".to_vec(),
+                    b"=".to_vec(),
+                    b"a".to_vec(),
+                    b"-a".to_vec(),
+                    b"b".to_vec(),
+                    b"=".to_vec(),
+                    b"b".to_vec(),
+                ],
+            )
+            .expect("test ! a = a -a b = b");
+            assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+        });
+    }
+
+    #[test]
+    fn test_compound_not_with_parenthesized_inner_or() {
+        // `! ( a = a -o a = b )` = `!(true -o false)` = `!true` = false.
+        // Forces both the parens arm of `primary` and the `!` arm of
+        // `not_expr` on the same parse path.
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let outcome = invoke(
+                &mut shell,
+                &[
+                    b"test".to_vec(),
+                    b"!".to_vec(),
+                    b"(".to_vec(),
+                    b"a".to_vec(),
+                    b"=".to_vec(),
+                    b"a".to_vec(),
+                    b"-o".to_vec(),
+                    b"a".to_vec(),
+                    b"=".to_vec(),
+                    b"b".to_vec(),
+                    b")".to_vec(),
+                ],
+            )
+            .expect("test ! ( a = a -o a = b )");
+            assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+        });
+    }
+
+    #[test]
+    fn test_compound_vte_regression() {
+        // Exactly the shape of `/etc/profile.d/vte-2.91.sh`'s guard with
+        // both variables unset: `[ -n "" -o -n "" ]` = false -o false
+        // = false. Locks in that the unary-in-compound 5-arg case parses
+        // via the 2-arg primary path, not the ill-fated "too many args"
+        // diagnostic that existed pre-Fix 2.
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let outcome = invoke(
+                &mut shell,
+                &[
+                    b"[".to_vec(),
+                    b"-n".to_vec(),
+                    b"".to_vec(),
+                    b"-o".to_vec(),
+                    b"-n".to_vec(),
+                    b"".to_vec(),
+                    b"]".to_vec(),
+                ],
+            )
+            .expect("[ -n '' -o -n '' ]");
+            assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+        });
+    }
+
+    #[test]
+    fn test_compound_bash_completion_regression() {
+        // Exactly the shape of Debian's `/etc/profile.d/bash_completion.sh`
+        // guard reduced to literal argv, with every shell-version variable
+        // unset (all empty strings). Issue 7 rule 4 precedence is
+        // `(z "" -a z "") -o (n "" -a n "")` = `(T -a T) -o (F -a F)` =
+        // `T -o F` = T. Hand-derivation from the six precedence rules;
+        // no external shell's evaluator is consulted.
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let outcome = invoke(
+                &mut shell,
+                &[
+                    b"[".to_vec(),
+                    b"-z".to_vec(),
+                    b"".to_vec(),
+                    b"-a".to_vec(),
+                    b"-z".to_vec(),
+                    b"".to_vec(),
+                    b"-o".to_vec(),
+                    b"-n".to_vec(),
+                    b"".to_vec(),
+                    b"-a".to_vec(),
+                    b"-n".to_vec(),
+                    b"".to_vec(),
+                    b"]".to_vec(),
+                ],
+            )
+            .expect("bash_completion shape");
+            assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+        });
+    }
+
+    #[test]
+    fn test_compound_or_short_circuits_on_true_lhs() {
+        // With `-o` short-circuit, the RHS `-r /no/such/path` must not
+        // trigger an access() syscall when the LHS `a = a` is already
+        // true. Locks in the chosen short-circuit semantics (Issue 7 is
+        // silent; both eager and short-circuit are conformant).
+        run_trace(trace_entries![], || {
+            let mut shell = test_shell();
+            let outcome = invoke(
+                &mut shell,
+                &[
+                    b"test".to_vec(),
+                    b"a".to_vec(),
+                    b"=".to_vec(),
+                    b"a".to_vec(),
+                    b"-o".to_vec(),
+                    b"-r".to_vec(),
+                    b"/no/such/path".to_vec(),
+                ],
+            )
+            .expect("test a = a -o -r /no/such/path");
+            assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+        });
+    }
+
+    #[test]
+    fn test_compound_and_short_circuits_on_false_lhs() {
+        // With `-a` short-circuit, the RHS `-r /no/such/path` must not
+        // trigger an access() syscall when the LHS `a = b` is already
+        // false.
+        run_trace(trace_entries![], || {
+            let mut shell = test_shell();
+            let outcome = invoke(
+                &mut shell,
+                &[
+                    b"test".to_vec(),
+                    b"a".to_vec(),
+                    b"=".to_vec(),
+                    b"b".to_vec(),
+                    b"-a".to_vec(),
+                    b"-r".to_vec(),
+                    b"/no/such/path".to_vec(),
+                ],
+            )
+            .expect("test a = b -a -r /no/such/path");
+            assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+        });
+    }
+
+    #[test]
+    fn test_compound_unbalanced_open_paren() {
+        // `test ( a = b` (argc 4) routes through the compound parser.
+        // Inside `primary`'s `(` arm, after the inner `or_expr` returns
+        // we expect `)`; finding end-of-input instead is a structural
+        // error with the canonical "missing ')'" wording.
+        let msg = diag(b"test: syntax error: missing ')'");
+        run_trace(
+            trace_entries![write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto],
+            || {
+                let mut shell = test_shell();
+                let outcome = invoke(
+                    &mut shell,
+                    &[
+                        b"test".to_vec(),
+                        b"(".to_vec(),
+                        b"a".to_vec(),
+                        b"=".to_vec(),
+                        b"b".to_vec(),
+                    ],
+                )
+                .expect("test ( a = b");
+                assert!(matches!(outcome, BuiltinOutcome::Status(2)));
+            },
+        );
+    }
+
+    #[test]
+    fn test_compound_unexpected_close_paren() {
+        // A `)` at the top level after a completed primary has nothing
+        // to match; the post-parse leftover-token check fires with the
+        // canonical "unexpected ')'" wording.
+        let msg = diag(b"test: syntax error: unexpected ')'");
+        run_trace(
+            trace_entries![write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto],
+            || {
+                let mut shell = test_shell();
+                let outcome = invoke(
+                    &mut shell,
+                    &[
+                        b"test".to_vec(),
+                        b"a".to_vec(),
+                        b"=".to_vec(),
+                        b"b".to_vec(),
+                        b")".to_vec(),
+                    ],
+                )
+                .expect("test a = b )");
+                assert!(matches!(outcome, BuiltinOutcome::Status(2)));
+            },
+        );
+    }
+
+    #[test]
+    fn test_compound_empty_parens() {
+        // `test ( )` has an empty primary inside the parens; `primary`
+        // collects a zero-length run and diagnoses with "expected
+        // expression".
+        let msg = diag(b"test: syntax error: expected expression");
+        run_trace(
+            trace_entries![write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto],
+            || {
+                let mut shell = test_shell();
+                let outcome = invoke(
+                    &mut shell,
+                    &[b"test".to_vec(), b"(".to_vec(), b")".to_vec()],
+                )
+                .expect("test ( )");
+                assert!(matches!(outcome, BuiltinOutcome::Status(2)));
+            },
+        );
+    }
+
+    #[test]
+    fn test_compound_dangling_or_operator() {
+        // `test a -o` has an `-o` with no RHS primary; the precondition
+        // check in `or_expr` right after consuming `-o` fires.
+        let msg = diag(b"test: syntax error: expected operand after -o");
+        run_trace(
+            trace_entries![write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto],
+            || {
+                let mut shell = test_shell();
+                let outcome = invoke(
+                    &mut shell,
+                    &[b"test".to_vec(), b"a".to_vec(), b"-o".to_vec()],
+                )
+                .expect("test a -o");
+                assert!(matches!(outcome, BuiltinOutcome::Status(2)));
+            },
+        );
+    }
+
+    #[test]
+    fn test_compound_unparseable_still_errors() {
+        // `test a b c d e` has no compound operators, so the dispatcher
+        // routes it to the compound parser via the fallback arm.
+        // `primary` greedily consumes `a b c`, `test_three_args` errors
+        // with the existing "unknown operator: b" wording (deterministic
+        // "first bad operator wins" style from the Issue 7 basic
+        // grammar).
+        let msg = diag(b"test: unknown operator: b");
         run_trace(
             trace_entries![write(fd(crate::sys::constants::STDERR_FILENO), bytes(&msg)) -> auto],
             || {

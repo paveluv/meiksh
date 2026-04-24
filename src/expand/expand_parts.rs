@@ -54,6 +54,19 @@ impl ExpandOutput {
         self.current.extend_from_slice(bytes);
     }
 
+    /// Mark the output as having seen quoted content without pushing any
+    /// bytes. POSIX §2.6.5 states that an input field containing any
+    /// quoting characters can never be empty after field splitting, so a
+    /// quoted expansion like `"${UNSET-}"` or `"${SET:+}"` must retain
+    /// one empty field even when the substituted value is the null word.
+    /// Used by `expand_braced` to guarantee the retention at the entry
+    /// point, before the operator-specific arms decide whether they emit
+    /// any bytes.
+    pub(super) fn mark_quoted(&mut self) {
+        self.had_quoted_content = true;
+        self.had_quoted_null_outside_at = true;
+    }
+
     fn push_current_field(&mut self) {
         let glob = self.current_has_glob;
         self.has_any_glob |= glob;
@@ -567,6 +580,15 @@ fn expand_braced<C: Context>(
             message: b"bad substitution".as_ref().into(),
         });
     }
+    // POSIX §2.6.5: a field containing any quoting characters can never
+    // be empty after field splitting. A quoted `${…}` expansion is such
+    // a field regardless of the substituted value, so retain a single
+    // empty argv entry even when every operator arm below produces no
+    // bytes (e.g. `"${UNSET-}"`, `"${SET:+}"`). This subsumes the old
+    // explicit `push_quoted(b"")` in the `Alt`/`AltColon` "no-word" arm.
+    if quoted {
+        output.mark_quoted();
+    }
     match op {
         BracedOp::Length => {
             let value = lookup_braced_param(ctx, raw, braced_name);
@@ -662,9 +684,10 @@ fn expand_braced<C: Context>(
             };
             if use_word {
                 expand_braced_word(ctx, raw, word_parts, quoted, single_field, output, scratch)?;
-            } else if quoted {
-                output.push_quoted(b"");
             }
+            // The "no-word" branch emits nothing; the top-of-function
+            // `mark_quoted` call already ensures a quoted empty result
+            // still produces one empty argv field.
         }
         BracedOp::TrimSuffix | BracedOp::TrimSuffixLong => {
             let value = lookup_braced_param(ctx, raw, braced_name);
@@ -1530,6 +1553,188 @@ mod tests {
                 output.current_has_glob,
                 "push_literal should observe `*` and flip current_has_glob",
             );
+        });
+    }
+
+    fn braced_word(name: &[u8], op: BracedOp, quoted: bool) -> (Vec<u8>, Vec<WordPart>) {
+        // Construct a single-`Expansion` word whose `raw` bytes are exactly
+        // the variable name. The BracedName ranges index into `raw`; the
+        // braced word body is empty (no default word), which is the exact
+        // shape `${VAR-}` / `${VAR:-}` / `${VAR:+}` reach after the parser.
+        let raw = name.to_vec();
+        let parts = vec![WordPart::Expansion {
+            kind: ExpansionKind::Braced {
+                name: BracedName::Var {
+                    start: 0,
+                    end: name.len(),
+                    cache: CachedVarBinding::default(),
+                },
+                op,
+                parts: Vec::new(),
+            },
+            quoted,
+        }];
+        (raw, parts)
+    }
+
+    #[test]
+    fn quoted_default_unset_preserves_empty_field() {
+        // `"${UNSET-}"` with UNSET absent from the environment must yield
+        // exactly one empty argv field (POSIX §2.6.5: a field containing
+        // any quoting characters cannot be empty at this point). Before
+        // Fix 1, `expand_braced`'s Default arm took the `use_word` branch,
+        // called `expand_braced_word` with an empty `word_parts` slice,
+        // pushed nothing onto `output`, and let `finish_into_impl`'s
+        // "current is empty and fields is empty" escape hatch drop the
+        // whole word — producing zero fields instead of one.
+        assert_no_syscalls(|| {
+            let mut ctx = FakeContext::new();
+            ctx.env.remove(b"UNSET".as_slice());
+            let (raw, parts) = braced_word(b"UNSET", BracedOp::Default, true);
+            let mut output = ExpandOutput::default();
+            let mut scratch = ExpandScratch::default();
+            expand_parts_into(&mut ctx, &raw, &parts, true, &mut output, &mut scratch)
+                .expect("expand");
+            let mut argv: Vec<Vec<u8>> = Vec::new();
+            output.finish_into_no_glob(&mut argv).expect("finish");
+            assert_eq!(argv, vec![Vec::<u8>::new()]);
+        });
+    }
+
+    #[test]
+    fn quoted_default_colon_unset_preserves_empty_field() {
+        // Same as above but with the `:-` variant, which also fires on a
+        // set-but-empty parameter. The colon arm uses the same empty
+        // `word_parts` path, so the fix must cover both `Default` and
+        // `DefaultColon` arms.
+        assert_no_syscalls(|| {
+            let mut ctx = FakeContext::new();
+            ctx.env.remove(b"UNSET".as_slice());
+            let (raw, parts) = braced_word(b"UNSET", BracedOp::DefaultColon, true);
+            let mut output = ExpandOutput::default();
+            let mut scratch = ExpandScratch::default();
+            expand_parts_into(&mut ctx, &raw, &parts, true, &mut output, &mut scratch)
+                .expect("expand");
+            let mut argv: Vec<Vec<u8>> = Vec::new();
+            output.finish_into_no_glob(&mut argv).expect("finish");
+            assert_eq!(argv, vec![Vec::<u8>::new()]);
+        });
+    }
+
+    #[test]
+    fn quoted_alt_colon_set_preserves_empty_field() {
+        // `"${X:+}"` with X set to a non-empty value takes the `AltColon`
+        // arm's "no-word" branch (use_word is true but `word_parts` is
+        // empty, so `expand_braced_word` pushes nothing). The top-of-
+        // function `mark_quoted` must still retain one empty field.
+        // `FakeContext` ships `X=fallback`, so the `use_word` predicate
+        // resolves to true and the empty-word branch fires.
+        assert_no_syscalls(|| {
+            let mut ctx = FakeContext::new();
+            let (raw, parts) = braced_word(b"X", BracedOp::AltColon, true);
+            let mut output = ExpandOutput::default();
+            let mut scratch = ExpandScratch::default();
+            expand_parts_into(&mut ctx, &raw, &parts, true, &mut output, &mut scratch)
+                .expect("expand");
+            let mut argv: Vec<Vec<u8>> = Vec::new();
+            output.finish_into_no_glob(&mut argv).expect("finish");
+            assert_eq!(argv, vec![Vec::<u8>::new()]);
+        });
+    }
+
+    #[test]
+    fn two_quoted_defaults_unset_concatenate_to_one_empty_field() {
+        // `"${UNSET-}${UNSET-}"` is one concatenated word. Each inner
+        // expansion must mark the field as quoted-content without
+        // splitting; the combined word must render as exactly one empty
+        // field, not two (which would indicate a spurious field break)
+        // nor zero (which would indicate the pre-Fix 1 drop).
+        assert_no_syscalls(|| {
+            let mut ctx = FakeContext::new();
+            ctx.env.remove(b"UNSET".as_slice());
+            let raw = b"UNSETUNSET";
+            let parts = vec![
+                WordPart::Expansion {
+                    kind: ExpansionKind::Braced {
+                        name: BracedName::Var {
+                            start: 0,
+                            end: 5,
+                            cache: CachedVarBinding::default(),
+                        },
+                        op: BracedOp::Default,
+                        parts: Vec::new(),
+                    },
+                    quoted: true,
+                },
+                WordPart::Expansion {
+                    kind: ExpansionKind::Braced {
+                        name: BracedName::Var {
+                            start: 5,
+                            end: 10,
+                            cache: CachedVarBinding::default(),
+                        },
+                        op: BracedOp::Default,
+                        parts: Vec::new(),
+                    },
+                    quoted: true,
+                },
+            ];
+            let mut output = ExpandOutput::default();
+            let mut scratch = ExpandScratch::default();
+            expand_parts_into(&mut ctx, raw, &parts, true, &mut output, &mut scratch)
+                .expect("expand");
+            let mut argv: Vec<Vec<u8>> = Vec::new();
+            output.finish_into_no_glob(&mut argv).expect("finish");
+            assert_eq!(argv, vec![Vec::<u8>::new()]);
+        });
+    }
+
+    #[test]
+    fn quoted_simple_var_unset_still_preserves_empty_field() {
+        // Regression guard: `"$UNSET"` goes through the `SimpleVar` arm
+        // of `expand_kind`, not `expand_braced`, so it must not depend on
+        // the new `mark_quoted` call. `require_set_parameter` already
+        // calls `push_quoted(b"")` when the value is empty in a quoted
+        // context, which sets `had_quoted_content` on its own.
+        assert_no_syscalls(|| {
+            let mut ctx = FakeContext::new();
+            ctx.env.remove(b"UNSET".as_slice());
+            let raw = b"UNSET";
+            let parts = vec![WordPart::Expansion {
+                kind: ExpansionKind::SimpleVar {
+                    start: 0,
+                    end: raw.len(),
+                    cache: CachedVarBinding::default(),
+                },
+                quoted: true,
+            }];
+            let mut output = ExpandOutput::default();
+            let mut scratch = ExpandScratch::default();
+            expand_parts_into(&mut ctx, raw, &parts, true, &mut output, &mut scratch)
+                .expect("expand");
+            let mut argv: Vec<Vec<u8>> = Vec::new();
+            output.finish_into_no_glob(&mut argv).expect("finish");
+            assert_eq!(argv, vec![Vec::<u8>::new()]);
+        });
+    }
+
+    #[test]
+    fn unquoted_default_unset_still_produces_no_fields() {
+        // Regression guard: the `mark_quoted` call is gated on the
+        // `quoted` flag, so an unquoted `${UNSET-}` with no default word
+        // must still expand to zero fields (POSIX §2.6.5's quote-retention
+        // rule does not apply without quoting characters).
+        assert_no_syscalls(|| {
+            let mut ctx = FakeContext::new();
+            ctx.env.remove(b"UNSET".as_slice());
+            let (raw, parts) = braced_word(b"UNSET", BracedOp::Default, false);
+            let mut output = ExpandOutput::default();
+            let mut scratch = ExpandScratch::default();
+            expand_parts_into(&mut ctx, &raw, &parts, false, &mut output, &mut scratch)
+                .expect("expand");
+            let mut argv: Vec<Vec<u8>> = Vec::new();
+            output.finish_into_no_glob(&mut argv).expect("finish");
+            assert!(argv.is_empty());
         });
     }
 }
