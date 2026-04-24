@@ -247,4 +247,67 @@ mod tests {
             assert_eq!(buf, b"hello");
         });
     }
+
+    #[test]
+    fn record_insert_empty_is_noop() {
+        // An empty-bytes record must not push an entry, otherwise
+        // `undo` would see a zero-width range to drain.
+        assert_no_syscalls(|| {
+            let mut s = UndoStack::new();
+            s.record_insert(0, Vec::new());
+            assert_eq!(s.len(), 0);
+        });
+    }
+
+    #[test]
+    fn undo_yanked_drains_span_and_resets_cursor() {
+        assert_no_syscalls(|| {
+            let mut s = UndoStack::new();
+            // Yank wrote `xy` at offset 2; buffer now holds "abxycd"
+            // (original was "abcd", cursor moved past the yank).
+            let mut buf = b"abxycd".to_vec();
+            let mut c = 4usize;
+            s.push(UndoEntry::Yanked { at: 2, len: 2 });
+            assert!(s.undo(&mut buf, &mut c));
+            assert_eq!(buf, b"abcd");
+            assert_eq!(c, 2);
+        });
+    }
+
+    #[test]
+    fn undo_paste_drains_inserted_bytes() {
+        assert_no_syscalls(|| {
+            let mut s = UndoStack::new();
+            let mut buf = b"[hi]".to_vec();
+            let mut c = 3usize;
+            s.push(UndoEntry::Paste {
+                at: 1,
+                bytes: b"hi".to_vec(),
+            });
+            assert!(s.undo(&mut buf, &mut c));
+            assert_eq!(buf, b"[]");
+            assert_eq!(c, 1);
+        });
+    }
+
+    #[test]
+    fn undo_transpose_words_rebuilds_left_gap_right() {
+        // Before transpose: "foo   bar"; after transpose: "bar   foo".
+        // The undo entry records the original left/gap/right lengths
+        // from before the swap. Undo must restore "foo   bar".
+        assert_no_syscalls(|| {
+            let mut s = UndoStack::new();
+            let mut buf = b"bar   foo".to_vec();
+            let mut c = buf.len();
+            s.push(UndoEntry::TransposeWords {
+                at: 0,
+                left_len: 3,  // "foo"
+                gap_len: 3,   // "   "
+                right_len: 3, // "bar"
+            });
+            assert!(s.undo(&mut buf, &mut c));
+            assert_eq!(buf, b"foo   bar");
+            assert_eq!(c, 9);
+        });
+    }
 }
