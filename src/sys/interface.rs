@@ -582,6 +582,62 @@ pub(super) fn getpwnam(name: &[u8]) -> Option<Vec<u8>> {
 }
 
 #[cfg(not(test))]
+pub(super) fn gethostname_raw(buf: &mut [u8]) -> c_int {
+    unsafe { libc::gethostname(buf.as_mut_ptr().cast(), buf.len()) }
+}
+#[cfg(test)]
+pub(super) fn gethostname_raw(buf: &mut [u8]) -> c_int {
+    super::test_support::trace_gethostname(buf)
+}
+
+#[cfg(not(test))]
+pub(super) fn effective_uid_is_root() -> bool {
+    unsafe { libc::geteuid() == 0 }
+}
+#[cfg(test)]
+pub(super) fn effective_uid_is_root() -> bool {
+    super::test_support::trace_effective_uid_is_root()
+}
+
+#[cfg(not(test))]
+pub(super) fn ttyname_of_fd(fd: c_int) -> Option<Vec<u8>> {
+    let mut buf = [0u8; 128];
+    let rc = unsafe { libc::ttyname_r(fd, buf.as_mut_ptr().cast(), buf.len()) };
+    if rc != 0 {
+        return None;
+    }
+    let end = buf.iter().position(|b| *b == 0).unwrap_or(buf.len());
+    Some(buf[..end].to_vec())
+}
+#[cfg(test)]
+pub(super) fn ttyname_of_fd(fd: c_int) -> Option<Vec<u8>> {
+    super::test_support::trace_ttyname_of_fd(fd)
+}
+
+#[cfg(not(test))]
+pub(super) fn getpwuid_name(uid: u32) -> Option<Vec<u8>> {
+    let pw = unsafe { libc::getpwuid(uid as libc::uid_t) };
+    if pw.is_null() {
+        return None;
+    }
+    let name = unsafe { CStr::from_ptr((*pw).pw_name) };
+    Some(crate::bstr::bytes_from_cstr(name))
+}
+#[cfg(test)]
+pub(super) fn getpwuid_name(uid: u32) -> Option<Vec<u8>> {
+    super::test_support::trace_getpwuid_name(uid)
+}
+
+#[cfg(not(test))]
+pub(super) fn effective_uid_raw() -> u32 {
+    unsafe { libc::geteuid() as u32 }
+}
+#[cfg(test)]
+pub(super) fn effective_uid_raw() -> u32 {
+    super::test_support::trace_effective_uid_raw()
+}
+
+#[cfg(not(test))]
 pub(super) fn monotonic_clock_ns() -> u64 {
     let mut ts = std::mem::MaybeUninit::<libc::timespec>::zeroed();
     unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, ts.as_mut_ptr()) };

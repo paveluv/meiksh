@@ -8,7 +8,8 @@ mod env_file;
 mod history;
 pub(crate) mod inputrc;
 mod mail;
-mod prompt;
+pub(crate) mod prompt;
+mod prompt_expand;
 mod repl;
 mod vi_editing;
 

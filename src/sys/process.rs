@@ -32,6 +32,37 @@ pub(crate) fn has_same_real_and_effective_ids() -> bool {
     unsafe { libc::getuid() == libc::geteuid() && libc::getgid() == libc::getegid() }
 }
 
+/// `true` iff `geteuid() == 0`. Used by `\$` prompt expansion to
+/// decide between `#` (root) and `$` (non-root).
+pub(crate) fn effective_uid_is_root() -> bool {
+    interface::effective_uid_is_root()
+}
+
+/// Effective user id as a `u32`. Used in combination with
+/// [`getpwuid_name`] to resolve a login name when `$USER` is unset.
+pub(crate) fn effective_uid_raw() -> u32 {
+    interface::effective_uid_raw()
+}
+
+/// Login name (`pw_name`) for `uid`. Returns `None` if the user is
+/// not found in `/etc/passwd` (or the equivalent NSS source).
+pub(crate) fn getpwuid_name(uid: u32) -> Option<Vec<u8>> {
+    interface::getpwuid_name(uid)
+}
+
+/// Host name via `gethostname(2)`. Returns `None` on failure.
+/// Unlike the raw syscall this drops any trailing NUL and returns
+/// only the populated prefix of the buffer.
+pub(crate) fn hostname_bytes() -> Option<Vec<u8>> {
+    let mut buf = [0u8; 256];
+    let rc = interface::gethostname_raw(&mut buf);
+    if rc != 0 {
+        return None;
+    }
+    let end = buf.iter().position(|b| *b == 0).unwrap_or(buf.len());
+    Some(buf[..end].to_vec())
+}
+
 pub(crate) fn wait_pid(pid: Pid, nohang: bool) -> SysResult<Option<WaitStatus>> {
     let mut status = 0;
     let options = if nohang { WNOHANG } else { 0 };

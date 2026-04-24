@@ -18,6 +18,7 @@ mod inputrc_parser;
 mod interactive;
 mod os_interface;
 mod parser_coverage;
+mod prompt;
 mod redirection;
 mod shell_options;
 

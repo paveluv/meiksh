@@ -85,6 +85,16 @@ pub(crate) struct Shell {
     pub(crate) pid: sys::types::Pid,
     pub(crate) lineno: usize,
     pub(crate) mail_last_check: u64,
+    /// Per-session counter of accepted, non-empty input lines. Starts
+    /// at `0`; incremented to `1` just before executing the first
+    /// command in the session, `2` before the second, and so on. See
+    /// `docs/features/ps1-prompt-extensions.md` § 6.1 (`\#`).
+    ///
+    /// This counter is session-local (not inherited by subshells) and
+    /// is *not* backed by `$HISTCMD`: it has its own lifecycle, it
+    /// keeps counting when history is disabled, and it is never
+    /// rewound by `history -c`.
+    pub(crate) session_command_counter: u64,
     /// Reusable scratch buffers for word expansion. Derived state - reset
     /// via `invalidate_ifs` on `IFS` mutation and (optionally) at subshell
     /// fork boundaries. Clone produces a semantically-equivalent but

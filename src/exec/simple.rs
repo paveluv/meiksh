@@ -298,8 +298,12 @@ fn write_xtrace_parts(shell: &mut Shell, assignments: &[(Vec<u8>, Vec<u8>)], arg
     if !shell.options.xtrace {
         return;
     }
-    let ps4_raw = shell.get_var(b"PS4").unwrap_or(b"+ ").to_vec();
-    let mut line = word::expand_parameter_text(shell, &ps4_raw).unwrap_or_else(|_| b"+ ".to_vec());
+    // PS4 goes through the full prompt expansion pipeline — including
+    // the backslash-escape pass when `bash_compat` is on — per
+    // ps1-prompt-extensions.md § 3.5 / § 9.4. The invisible-region
+    // mask is discarded because the xtrace writer is not
+    // cursor-positioned.
+    let mut line = crate::interactive::prompt::expand_ps4(shell);
     for (name, value) in assignments {
         line.extend_from_slice(name);
         line.push(b'=');
