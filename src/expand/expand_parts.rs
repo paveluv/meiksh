@@ -919,18 +919,20 @@ fn build_arithmetic_expr_text<C: Context>(
 /// Append the single-field flat form of `temp` into `out`, then reset
 /// `temp` in place. Avoids the per-call `Vec<u8>` materialization that
 /// `ExpandOutput::drain_single_vec` would otherwise produce.
+///
+/// Only called from the arithmetic sub-expansion path, which runs every
+/// inner `expand_kind` with `quoted=true, single_field=true`. Under that
+/// combination `push_value` always takes the `push_quoted` fast path and
+/// `$@` collapses to a single string via IFS[0], so no code path ever
+/// pushes into `temp.fields`. We assert the invariant in debug builds so
+/// a future regression fails loudly instead of silently losing bytes.
 fn append_drained_single(temp: &mut ExpandOutput, out: &mut Vec<u8>) {
-    if temp.fields.is_empty() {
-        out.extend_from_slice(&temp.current);
-        temp.current.clear();
-    } else {
-        for f in &temp.fields {
-            out.extend_from_slice(&f.text);
-        }
-        out.extend_from_slice(&temp.current);
-        temp.fields.clear();
-        temp.current.clear();
-    }
+    debug_assert!(
+        temp.fields.is_empty(),
+        "append_drained_single: arithmetic sub-expansion invariant violated",
+    );
+    out.extend_from_slice(&temp.current);
+    temp.current.clear();
 }
 
 /// Build the list of character-boundary byte offsets within `value`.
@@ -1076,6 +1078,7 @@ impl AsBytes for Cow<'_, [u8]> {
 mod tests {
     use super::*;
     use crate::expand::test_support::FakeContext;
+    use crate::shell::vars::CachedVarBinding;
     use crate::sys::test_support::{assert_no_syscalls, set_test_locale_c, set_test_locale_utf8};
 
     #[test]
@@ -1128,6 +1131,358 @@ mod tests {
             let mut argv: Vec<Vec<u8>> = Vec::new();
             output.finish_into_no_glob(&mut argv).expect("finish");
             assert_eq!(argv, vec![b"/home/slashuser/rest".to_vec()]);
+        });
+    }
+
+    #[test]
+    fn drain_single_vec_concatenates_fields_and_current() {
+        // `drain_single_vec` has two implementations depending on whether
+        // any prior field splitting happened.  The fast path when
+        // `fields` is empty is exercised all over the test suite; this
+        // test covers the concatenate-then-clear branch that only fires
+        // after `push_current_field` populates `self.fields`.
+        assert_no_syscalls(|| {
+            let mut output = ExpandOutput::default();
+            output.current.extend_from_slice(b"alpha");
+            output.push_current_field();
+            output.current.extend_from_slice(b"beta");
+            output.push_current_field();
+            output.current.extend_from_slice(b"tail");
+
+            let joined = output.drain_single_vec();
+            assert_eq!(joined, b"alphabetatail".to_vec());
+            assert!(output.fields.is_empty());
+            assert!(output.current.is_empty());
+        });
+    }
+
+    #[test]
+    fn drain_single_vec_pooled_concatenates_and_recycles_buffers() {
+        // The pooled drain must match the non-pooled drain bytewise when
+        // `fields` is non-empty *and* must leave a fresh pool-provided
+        // buffer in `self.current` so the next expansion skips the
+        // first-grow malloc. We stage a prepared buffer in the pool and
+        // assert it ends up as the new `self.current`.
+        assert_no_syscalls(|| {
+            let mut output = ExpandOutput::default();
+            output.current.extend_from_slice(b"alpha");
+            output.push_current_field();
+            output.current.extend_from_slice(b"beta");
+            output.push_current_field();
+            output.current.extend_from_slice(b"tail");
+
+            let mut pool = crate::exec::scratch::BytesPool::new();
+            let marker: *const u8 = {
+                let mut v: Vec<u8> = Vec::with_capacity(64);
+                v.extend_from_slice(b"marker");
+                v.clear();
+                let ptr = v.as_ptr();
+                pool.recycle(v);
+                ptr
+            };
+
+            let joined = output.drain_single_vec_pooled(&mut pool);
+            assert_eq!(joined, b"alphabetatail".to_vec());
+            assert!(output.fields.is_empty());
+            // The new `current` came from the pool; the first pooled
+            // buffer we recycled is claimed first (either as `result` or
+            // `current`).  Both slots were pool-sourced, so at least one
+            // of them must preserve our marker pointer.
+            let used_pool_buffer = joined.as_ptr() == marker || output.current.as_ptr() == marker;
+            assert!(used_pool_buffer, "expected a pool-provided buffer to be reused");
+        });
+    }
+
+    #[test]
+    fn expand_at_single_field_without_ifs_joins_with_space() {
+        // `$@` in a single-field context (e.g. `v=$@`) joins with IFS[0].
+        // When IFS is unset (not just empty), POSIX says "space is the
+        // default separator"; this exercises the `None => b" "` arm in
+        // `expand_special_var`.
+        assert_no_syscalls(|| {
+            let mut ctx = FakeContext::new();
+            ctx.env.remove(b"IFS".as_slice());
+            if let Some(s) = ctx.scratch.as_mut() {
+                s.invalidate_ifs();
+            }
+            let mut output = ExpandOutput::default();
+            let mut scratch = ExpandScratch::default();
+            expand_special_var(&mut ctx, b'@', true, true, &mut output, &mut scratch)
+                .expect("expand $@");
+            assert_eq!(output.current.as_slice(), b"alpha beta");
+        });
+    }
+
+    #[test]
+    fn expand_bang_without_background_job_falls_back_to_special_param() {
+        // `$!` uses the stack-buffer fast path when `special_param_int`
+        // returns `Some(_)`.  With no background job, the default trait
+        // method returns `None`, so we must fall through to
+        // `ctx.special_param` → `require_set_parameter`.  FakeContext
+        // returns `None` for `!`; with nounset disabled, we should get
+        // the empty string.
+        assert_no_syscalls(|| {
+            let mut ctx = FakeContext::new();
+            let mut output = ExpandOutput::default();
+            let mut scratch = ExpandScratch::default();
+            expand_special_var(&mut ctx, b'!', true, false, &mut output, &mut scratch)
+                .expect("expand $!");
+            assert!(output.current.is_empty());
+        });
+    }
+
+    #[test]
+    fn braced_none_with_word_parts_is_bad_substitution() {
+        // `BracedOp::None` means `${name}` with no operator body, so
+        // `word_parts` must be empty. Any bytes snuck in there indicate a
+        // parser or test invariant break and the expander must reject
+        // with "bad substitution" instead of silently dropping them.
+        assert_no_syscalls(|| {
+            let mut ctx = FakeContext::new();
+            let raw = b"X";
+            let kind = ExpansionKind::Braced {
+                name: BracedName::Var {
+                    start: 0,
+                    end: 1,
+                    cache: CachedVarBinding::default(),
+                },
+                op: BracedOp::None,
+                parts: vec![WordPart::Literal {
+                    start: 0,
+                    end: 1,
+                    has_glob: false,
+                    newlines: 0,
+                    assignment: false,
+                }],
+            };
+            let mut output = ExpandOutput::default();
+            let mut scratch = ExpandScratch::default();
+            let err = expand_kind(&mut ctx, raw, &kind, false, false, &mut output, &mut scratch)
+                .expect_err("expected bad substitution error");
+            assert_eq!(err.message.as_ref(), b"bad substitution");
+        });
+    }
+
+    #[test]
+    fn braced_assign_colon_with_invalid_name_errors() {
+        // `${1foo:=value}` cannot assign because `1foo` is not a POSIX
+        // NAME.  We surface the error with a "cannot assign in this way"
+        // suffix so the user understands why the assignment didn't take.
+        // `BracedName::Var` lets the test escape the parser's real NAME
+        // check and drive `expand_braced` with an intentionally invalid
+        // name.
+        assert_no_syscalls(|| {
+            let mut ctx = FakeContext::new();
+            let raw = b"1foo";
+            let kind = ExpansionKind::Braced {
+                name: BracedName::Var {
+                    start: 0,
+                    end: 4,
+                    cache: CachedVarBinding::default(),
+                },
+                op: BracedOp::AssignColon,
+                parts: vec![WordPart::Literal {
+                    start: 0,
+                    end: 4,
+                    has_glob: false,
+                    newlines: 0,
+                    assignment: false,
+                }],
+            };
+            let mut output = ExpandOutput::default();
+            let mut scratch = ExpandScratch::default();
+            let err = expand_kind(&mut ctx, raw, &kind, false, false, &mut output, &mut scratch)
+                .expect_err("expected cannot-assign error");
+            assert!(
+                err.message.starts_with(b"1foo: cannot assign in this way"),
+                "unexpected error bytes: {:?}",
+                err.message,
+            );
+        });
+    }
+
+    #[test]
+    fn pattern_segments_emit_tilde_with_trailing_literal_tail() {
+        // `~slashuser/rest` inside a pattern word goes through
+        // `build_pattern_segments`.  The known-user branch emits the
+        // resolved home as a `Quoted` segment; the `/rest` tail must then
+        // be appended as a `Literal` segment so the pattern matcher sees
+        // a literal slash followed by the literal `rest`.
+        assert_no_syscalls(|| {
+            let mut ctx = FakeContext::new();
+            let raw = b"~slashuser/rest";
+            let parts = [WordPart::TildeLiteral {
+                tilde_pos: 0,
+                user_end: 10,
+                end: 15,
+            }];
+            let mut segments = Vec::new();
+            let mut scratch = ExpandScratch::default();
+            build_pattern_segments(&mut ctx, raw, &parts, &mut segments, &mut scratch)
+                .expect("build segments");
+            assert_eq!(
+                segments,
+                vec![
+                    Segment::Text(b"/home/slashuser".to_vec(), QuoteState::Quoted),
+                    Segment::Text(b"/rest".to_vec(), QuoteState::Literal),
+                ],
+            );
+        });
+    }
+
+    #[test]
+    fn pattern_segments_plain_tilde_with_home_trims_trailing_slash() {
+        // `FakeContext` ships `HOME=/tmp/home`; augment it with a
+        // trailing slash to force the trim-slash branch in
+        // `expand_tilde_into_segments` when a `/` follows the tilde.
+        assert_no_syscalls(|| {
+            let mut ctx = FakeContext::new();
+            ctx.env.insert(b"HOME".to_vec(), b"/tmp/home/".to_vec());
+            let raw = b"~/rest";
+            let parts = [WordPart::TildeLiteral {
+                tilde_pos: 0,
+                user_end: 1,
+                end: 6,
+            }];
+            let mut segments = Vec::new();
+            let mut scratch = ExpandScratch::default();
+            build_pattern_segments(&mut ctx, raw, &parts, &mut segments, &mut scratch)
+                .expect("build segments");
+            assert_eq!(
+                segments,
+                vec![
+                    Segment::Text(b"/tmp/home".to_vec(), QuoteState::Quoted),
+                    Segment::Text(b"/rest".to_vec(), QuoteState::Literal),
+                ],
+            );
+        });
+    }
+
+    #[test]
+    fn pattern_segments_plain_tilde_with_empty_home_emits_empty_quoted() {
+        // An empty `HOME` environment variable collapses `~` to an empty
+        // quoted segment, preserving pattern structure so adjacent
+        // literals still match correctly.
+        assert_no_syscalls(|| {
+            let mut ctx = FakeContext::new();
+            ctx.env.insert(b"HOME".to_vec(), Vec::new());
+            let raw = b"~";
+            let parts = [WordPart::TildeLiteral {
+                tilde_pos: 0,
+                user_end: 1,
+                end: 1,
+            }];
+            let mut segments = Vec::new();
+            let mut scratch = ExpandScratch::default();
+            build_pattern_segments(&mut ctx, raw, &parts, &mut segments, &mut scratch)
+                .expect("build segments");
+            assert_eq!(
+                segments,
+                vec![Segment::Text(Vec::new(), QuoteState::Quoted)],
+            );
+        });
+    }
+
+    #[test]
+    fn pattern_segments_plain_tilde_with_unset_home_emits_literal_tilde() {
+        // With no `HOME` set at all, `~` must remain a literal tilde so
+        // the pattern matches the character itself (no expansion leaks).
+        assert_no_syscalls(|| {
+            let mut ctx = FakeContext::new();
+            ctx.env.remove(b"HOME".as_slice());
+            let raw = b"~";
+            let parts = [WordPart::TildeLiteral {
+                tilde_pos: 0,
+                user_end: 1,
+                end: 1,
+            }];
+            let mut segments = Vec::new();
+            let mut scratch = ExpandScratch::default();
+            build_pattern_segments(&mut ctx, raw, &parts, &mut segments, &mut scratch)
+                .expect("build segments");
+            assert_eq!(
+                segments,
+                vec![Segment::Text(b"~".to_vec(), QuoteState::Literal)],
+            );
+        });
+    }
+
+    #[test]
+    fn pattern_segments_known_user_tilde_without_trailing_slash() {
+        // `~testuser` with no trailing slash exercises the
+        // "known-user, no slash_follows" branch: the resolved home is
+        // emitted verbatim as a quoted segment.
+        assert_no_syscalls(|| {
+            let mut ctx = FakeContext::new();
+            let raw = b"~testuser";
+            let parts = [WordPart::TildeLiteral {
+                tilde_pos: 0,
+                user_end: 9,
+                end: 9,
+            }];
+            let mut segments = Vec::new();
+            let mut scratch = ExpandScratch::default();
+            build_pattern_segments(&mut ctx, raw, &parts, &mut segments, &mut scratch)
+                .expect("build segments");
+            assert_eq!(
+                segments,
+                vec![Segment::Text(b"/home/testuser".to_vec(), QuoteState::Quoted)],
+            );
+        });
+    }
+
+    #[test]
+    fn pattern_segments_known_user_tilde_with_trailing_slash_in_home_is_trimmed() {
+        // `~slashuser/rest` in pattern context: the resolved home has a
+        // trailing slash *and* `slash_follows` is true, so the trim-slash
+        // branch must fire.  The tail is then appended as a literal
+        // segment.
+        assert_no_syscalls(|| {
+            let mut ctx = FakeContext::new();
+            let raw = b"~slashuser/rest";
+            let parts = [WordPart::TildeLiteral {
+                tilde_pos: 0,
+                user_end: 10,
+                end: 15,
+            }];
+            let mut segments = Vec::new();
+            let mut scratch = ExpandScratch::default();
+            build_pattern_segments(&mut ctx, raw, &parts, &mut segments, &mut scratch)
+                .expect("build segments");
+            assert_eq!(
+                segments,
+                vec![
+                    Segment::Text(b"/home/slashuser".to_vec(), QuoteState::Quoted),
+                    Segment::Text(b"/rest".to_vec(), QuoteState::Literal),
+                ],
+            );
+        });
+    }
+
+    #[test]
+    fn pattern_segments_unknown_user_tilde_emits_literal_bytes() {
+        // With no such user, `~baduser` must fall back to two literal
+        // segments (the `~` and the user bytes) so the pattern matches
+        // the raw source exactly.
+        assert_no_syscalls(|| {
+            let mut ctx = FakeContext::new();
+            let raw = b"~baduser";
+            let parts = [WordPart::TildeLiteral {
+                tilde_pos: 0,
+                user_end: 8,
+                end: 8,
+            }];
+            let mut segments = Vec::new();
+            let mut scratch = ExpandScratch::default();
+            build_pattern_segments(&mut ctx, raw, &parts, &mut segments, &mut scratch)
+                .expect("build segments");
+            assert_eq!(
+                segments,
+                vec![
+                    Segment::Text(b"~".to_vec(), QuoteState::Literal),
+                    Segment::Text(b"baduser".to_vec(), QuoteState::Literal),
+                ],
+            );
         });
     }
 
