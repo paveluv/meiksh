@@ -4,10 +4,16 @@ use crate::shell::error::ShellError;
 use crate::shell::state::Shell;
 use crate::sys;
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(super) struct ReadOptions {
     pub(super) raw: bool,
     pub(super) delimiter: u8,
+    /// Optional `-p prompt` value. When `Some`, the literal bytes
+    /// are written to `stderr` exactly as supplied before any input
+    /// is read. Per `docs/features/ps1-prompt-extensions.md` § 12.3
+    /// this prompt is NOT subject to the backslash-escape pass that
+    /// `PS1` / `PS4` go through — it is a straight POSIX pass-through.
+    pub(super) prompt: Option<Vec<u8>>,
 }
 
 pub(super) fn read(shell: &mut Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutcome, ShellError> {
@@ -30,7 +36,17 @@ pub(super) fn read_with_input(
         vars
     };
 
-    let (pieces, hit_delimiter) = match read_logical_line(shell, options, input_fd) {
+    // Per ps1-prompt-extensions.md § 12.3, `read -p <prompt>` writes
+    // the prompt bytes verbatim to stderr before any input is read.
+    // The escape pass is intentionally skipped: users who want
+    // variable expansion in the prompt can embed `$(...)` via the
+    // caller's own quoting. The write is best-effort — a failure
+    // here does not abort the read, matching bash.
+    if let Some(prompt) = options.prompt.as_deref() {
+        let _ = sys::fd_io::write_all_fd(sys::constants::STDERR_FILENO, prompt);
+    }
+
+    let (pieces, hit_delimiter) = match read_logical_line(shell, options.clone(), input_fd) {
         Ok(result) => result,
         Err(error) => {
             let msg = ByteWriter::new()
@@ -50,11 +66,18 @@ pub(super) fn read_with_input(
     Ok(BuiltinOutcome::Status(if hit_delimiter { 0 } else { 1 }))
 }
 
+impl Default for ReadOptions {
+    fn default() -> Self {
+        Self {
+            raw: false,
+            delimiter: b'\n',
+            prompt: None,
+        }
+    }
+}
+
 pub(super) fn parse_read_options(argv: &[Vec<u8>]) -> Option<(ReadOptions, Vec<Vec<u8>>)> {
-    let mut options = ReadOptions {
-        raw: false,
-        delimiter: b'\n',
-    };
+    let mut options = ReadOptions::default();
     let mut index = 1usize;
     while let Some(arg) = argv.get(index) {
         match arg.as_slice() {
@@ -76,6 +99,19 @@ pub(super) fn parse_read_options(argv: &[Vec<u8>]) -> Option<(ReadOptions, Vec<V
                     return None;
                 };
                 index += 2;
+            }
+            b"-p" => {
+                // `-p <prompt>` — two-argument form. A missing
+                // operand is a usage error. The prompt may be empty.
+                let prompt = argv.get(index + 1)?;
+                options.prompt = Some(prompt.clone());
+                index += 2;
+            }
+            // Joined short-option form like `-pfoo`: consume the
+            // remainder of the token as the prompt value.
+            _ if arg.len() > 2 && arg.starts_with(b"-p") => {
+                options.prompt = Some(arg[2..].to_vec());
+                index += 1;
             }
             _ if arg.first() == Some(&b'-') && arg != b"-" => return None,
             _ => break,
@@ -552,6 +588,77 @@ mod tests {
         });
     }
 
+    /// Spec: `docs/features/ps1-prompt-extensions.md` § 12.3 — the
+    /// `-p prompt` option is parsed in both the separated-operand
+    /// form (`-p PROMPT`) and the joined short-form (`-pPROMPT`).
+    /// The prompt bytes are stored verbatim, and a missing operand
+    /// in the separated form is a usage error.
+    #[test]
+    fn parse_read_options_dash_p_separated_and_joined_forms() {
+        assert_no_syscalls(|| {
+            // Separated form.
+            let (opts, vars) = parse_read_options(&[
+                b"read".to_vec(),
+                b"-p".to_vec(),
+                b"prompt:> ".to_vec(),
+                b"VAR".to_vec(),
+            ])
+            .expect("parse -p separated");
+            assert_eq!(opts.prompt.as_deref(), Some(b"prompt:> ".as_slice()));
+            assert_eq!(vars, vec![b"VAR".to_vec()]);
+
+            // Joined form.
+            let (opts, vars) =
+                parse_read_options(&[b"read".to_vec(), b"-phello> ".to_vec(), b"DEST".to_vec()])
+                    .expect("parse -p joined");
+            assert_eq!(opts.prompt.as_deref(), Some(b"hello> ".as_slice()));
+            assert_eq!(vars, vec![b"DEST".to_vec()]);
+
+            // Empty prompt in separated form is legal (matches bash).
+            let (opts, _) = parse_read_options(&[
+                b"read".to_vec(),
+                b"-p".to_vec(),
+                b"".to_vec(),
+                b"X".to_vec(),
+            ])
+            .expect("parse -p empty");
+            assert_eq!(opts.prompt.as_deref(), Some(b"".as_slice()));
+
+            // Missing operand in separated form → usage error (None).
+            assert!(parse_read_options(&[b"read".to_vec(), b"-p".to_vec()]).is_none());
+        });
+    }
+
+    /// § 12.3: `read -p <prompt>` writes the prompt bytes verbatim
+    /// to stderr before consuming any input. Verify via a faked
+    /// read trace that the write happens exactly once, with the
+    /// exact bytes supplied.
+    #[test]
+    fn read_with_input_dash_p_writes_prompt_to_stderr_before_read() {
+        let reads = byte_reads(42, b"x\n");
+        run_trace(
+            trace_entries![
+                write(fd(crate::sys::constants::STDERR_FILENO), bytes(b"<type>")) -> auto,
+                ..reads,
+            ],
+            || {
+                let mut shell = test_shell();
+                let result = read_with_input(
+                    &mut shell,
+                    &[
+                        b"read".to_vec(),
+                        b"-p".to_vec(),
+                        b"<type>".to_vec(),
+                        b"VAR".to_vec(),
+                    ],
+                    42,
+                );
+                assert!(matches!(result, Ok(BuiltinOutcome::Status(0))));
+                assert_eq!(shell.get_var(b"VAR"), Some(b"x".as_slice()));
+            },
+        );
+    }
+
     #[test]
     fn parse_read_options_delimiter_multi_byte_none() {
         assert_no_syscalls(|| {
@@ -652,6 +759,7 @@ mod tests {
             let options = ReadOptions {
                 raw: false,
                 delimiter: b'\n',
+                ..Default::default()
             };
             let (pieces, hit_delim) = read_logical_line(&shell, options, 42).expect("read");
             assert!(!hit_delim);
@@ -668,6 +776,7 @@ mod tests {
             let options = ReadOptions {
                 raw: false,
                 delimiter: b'\n',
+                ..Default::default()
             };
             let (pieces, hit_delim) = read_logical_line(&shell, options, 42).expect("read");
             assert!(hit_delim);
@@ -684,6 +793,7 @@ mod tests {
             let options = ReadOptions {
                 raw: false,
                 delimiter: b'\n',
+                ..Default::default()
             };
             let (pieces, hit_delim) = read_logical_line(&shell, options, 42).expect("read");
             assert!(hit_delim);
@@ -712,6 +822,7 @@ mod tests {
             let options = ReadOptions {
                 raw: false,
                 delimiter: b'\n',
+                ..Default::default()
             };
             let (pieces, hit_delim) = read_logical_line(&shell, options, 42).expect("read");
             assert!(!hit_delim);
@@ -728,6 +839,7 @@ mod tests {
             let options = ReadOptions {
                 raw: true,
                 delimiter: b'\n',
+                ..Default::default()
             };
             let (pieces, hit_delim) = read_logical_line(&shell, options, 42).expect("read");
             assert!(hit_delim);
@@ -790,6 +902,7 @@ mod tests {
                 let options = ReadOptions {
                     raw: false,
                     delimiter: b'\n',
+                    ..Default::default()
                 };
                 let (pieces, hit_delim) = read_logical_line(&shell, options, 42).expect("read");
                 assert!(hit_delim);
@@ -853,6 +966,7 @@ mod tests {
             let options = ReadOptions {
                 raw: false,
                 delimiter: b'\n',
+                ..Default::default()
             };
             let (pieces, hit_delim) = read_logical_line(&shell, options, 42).expect("read");
             assert!(hit_delim);
@@ -899,6 +1013,7 @@ mod tests {
             let options = ReadOptions {
                 raw: false,
                 delimiter: b'\n',
+                ..Default::default()
             };
             let (pieces, hit_delim) = read_logical_line(&shell, options, 42).expect("read");
             assert!(hit_delim);

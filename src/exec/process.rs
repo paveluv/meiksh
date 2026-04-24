@@ -152,6 +152,8 @@ pub(super) fn run_prepared_process(
             let mut child_shell = shell.clone();
             child_shell.owns_terminal = false;
             child_shell.in_subshell = true;
+            child_shell.subshell_nesting_level =
+                child_shell.subshell_nesting_level.saturating_add(1);
             let _ = child_shell.reset_traps_for_subshell();
             child_shell.shell_name = prepared.argv[0].clone();
             child_shell.positional = prepared.argv[1..].iter().map(|s| s.to_vec()).collect();
