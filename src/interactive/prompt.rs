@@ -49,7 +49,7 @@ pub(crate) fn expand_ps4(shell: &mut Shell) -> Vec<u8> {
 }
 
 /// Which prompt slot is being expanded. Controls whether the history
-/// pass runs and whether the escape pass runs in `bash_compat` mode.
+/// pass runs and whether the escape pass runs in `bash_prompts` mode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PromptKind {
     /// `PS1` or `PS2`: escape pass + history pass (in bash mode).
@@ -79,7 +79,7 @@ pub(crate) fn expand_full_prompt(
     kind: PromptKind,
 ) -> Prompt {
     let raw = shell.get_var(var).map(|v| v.to_vec()).unwrap_or_else(|| {
-        // If unset and bash_compat is on, PS1 falls back to "\s-\v\$ ".
+        // If unset and bash_prompts is on, PS1 falls back to "\s-\v\$".
         // See spec § 3.2. Other slots use their static default.
         if var == b"PS1" && matches!(shell.options.compat_mode, CompatMode::Bash) {
             b"\\s-\\v\\$ ".to_vec()
@@ -294,8 +294,8 @@ mod tests {
     // === Full-pipeline behavior (expand_full_prompt) ==================
 
     /// § 5: the bash-compat pipeline runs escape → parameter →
-    /// history in order. With bash_compat off, none of those passes
-    /// decode `\u`; with bash_compat on, `\u` resolves to a username
+    /// history in order. With bash_prompts off, none of those passes
+    /// decode `\u`; with bash_prompts on, `\u` resolves to a username
     /// or `?` and a literal `!` is replaced by the history number.
     #[test]
     fn expand_full_prompt_posix_mode_is_parameter_only() {
@@ -319,8 +319,8 @@ mod tests {
         let mut shell = test_shell();
         shell
             .options
-            .set_named_option(b"bash_compat", true)
-            .expect("toggle bash_compat");
+            .set_named_option(b"bash_prompts", true)
+            .expect("toggle bash_prompts");
         // Pre-populate PWD so `build_prompt_env` does not fall back
         // to `getcwd(3)` (which would panic under the no-trace
         // assertion of the test harness).
@@ -348,15 +348,15 @@ mod tests {
         assert_eq!(second.bytes, b"second");
     }
 
-    /// § 3.2: When `bash_compat` is on and `PS1` is unset, the
+    /// § 3.2: When `bash_prompts` is on and `PS1` is unset, the
     /// default expansion uses `\s-\v\$ ` (yielding `<shell>-<ver>$ `).
     #[test]
     fn expand_full_prompt_default_ps1_in_bash_mode_uses_s_v_dollar() {
         let mut shell = test_shell();
         shell
             .options
-            .set_named_option(b"bash_compat", true)
-            .expect("toggle bash_compat");
+            .set_named_option(b"bash_prompts", true)
+            .expect("toggle bash_prompts");
         shell.env_mut().insert(b"PWD".to_vec(), b"/tmp".to_vec());
         shell.env_mut().remove(b"PS1".as_slice());
         let out = expand_full_prompt(&mut shell, b"PS1", b"$ ", PromptKind::Ps1Or2);
@@ -374,7 +374,7 @@ mod tests {
         );
     }
 
-    /// § 3.2: When `bash_compat` is off and `PS1` is unset, the
+    /// § 3.2: When `bash_prompts` is off and `PS1` is unset, the
     /// default is the caller-supplied `"$ "` literal — no escape pass,
     /// no transformation.
     #[test]
@@ -391,8 +391,8 @@ mod tests {
         let mut shell = test_shell();
         shell
             .options
-            .set_named_option(b"bash_compat", true)
-            .expect("toggle bash_compat");
+            .set_named_option(b"bash_prompts", true)
+            .expect("toggle bash_prompts");
         shell.env_mut().insert(b"PWD".to_vec(), b"/tmp".to_vec());
         shell
             .env_mut()

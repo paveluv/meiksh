@@ -49,4 +49,4 @@ Each spec declares its own implementation status in a `Status` section at the to
 |---|---|
 | [emacs-editing-mode.md](emacs-editing-mode.md) - Emacs-style interactive line-editing mode enabled by `set -o emacs`, including the `bind` builtin. A pragmatic subset of GNU Readline's emacs mode. | Implemented |
 | [inputrc.md](inputrc.md) - The `inputrc` configuration file format used by the `bind -f` builtin and read at startup from `$INPUTRC`, `$HOME/.inputrc`, or `/etc/inputrc`. | Implemented |
-| [ps1-prompt-extensions.md](ps1-prompt-extensions.md) - Bash-compatible backslash-escape prompt language for `PS1`, `PS2`, `PS4`, non-printing `\[` / `\]` delimiters, and the `bash_compat` shell option that gates the extensions on top of strict POSIX prompt expansion. | Not implemented |
+| [ps1-prompt-extensions.md](ps1-prompt-extensions.md) - Bash-compatible backslash-escape prompt language for `PS1`, `PS2`, `PS4`, non-printing `\[` / `\]` delimiters, and the `bash_prompts` shell option that gates the extensions on top of strict POSIX prompt expansion. | Implemented |
