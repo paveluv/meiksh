@@ -521,4 +521,152 @@ mod tests {
             );
         });
     }
+
+    #[test]
+    fn apply_line_include_without_host_is_diagnostic() {
+        // `apply_line` is used by `bind -f <line>` and has no file
+        // host, so `$include` must be rejected at that site rather
+        // than silently recursing.
+        assert_no_syscalls(|| {
+            let mut ctx = EmacsContext::default();
+            let report = apply_line(
+                b"$include /etc/xyz",
+                &mut ctx,
+                &Conditions::mode_only(Mode::Emacs),
+            );
+            assert_eq!(report.diagnostics.len(), 1);
+            assert!(
+                report.diagnostics[0].message.contains("not allowed"),
+                "got: {:?}",
+                report.diagnostics[0].message
+            );
+        });
+    }
+
+    #[test]
+    fn include_inside_inactive_if_is_silently_skipped() {
+        // An `$include` nested under an inactive `$if` must be a
+        // no-op: neither a diagnostic nor a filesystem read.
+        assert_no_syscalls(|| {
+            let mut ctx = EmacsContext::default();
+            let src = b"$if mode=vi\n$include /etc/nope\n$endif\n";
+            let report = parse_source(src, &mut ctx, Mode::Emacs);
+            assert!(
+                report.diagnostics.is_empty(),
+                "expected silent skip: {report:?}"
+            );
+        });
+    }
+
+    #[test]
+    fn unknown_directive_is_diagnosed() {
+        assert_no_syscalls(|| {
+            let mut ctx = EmacsContext::default();
+            let src = b"$wibble\n";
+            let report = parse_source(src, &mut ctx, Mode::Emacs);
+            assert_eq!(report.diagnostics.len(), 1);
+            assert!(
+                report.diagnostics[0].message.contains("unknown directive"),
+                "got: {:?}",
+                report.diagnostics[0].message
+            );
+        });
+    }
+
+    #[test]
+    fn macro_entry_wraps_bytes_in_keymap_entry() {
+        assert_no_syscalls(|| {
+            let e = macro_entry(b"ls -la".to_vec());
+            match e {
+                KeymapEntry::Macro(bytes) => assert_eq!(bytes, b"ls -la"),
+                other => panic!("expected macro, got {other:?}"),
+            }
+        });
+    }
+
+    #[test]
+    fn comment_and_blank_lines_are_ignored() {
+        assert_no_syscalls(|| {
+            let mut ctx = EmacsContext::default();
+            let src = b"# a comment\n\n   \n# another\n";
+            let report = parse_source(src, &mut ctx, Mode::Emacs);
+            assert_eq!(report.applied_lines, 0);
+            assert!(report.diagnostics.is_empty());
+        });
+    }
+
+    #[test]
+    fn set_with_tab_separator_is_accepted() {
+        // `set\tname value` must parse the same as `set name value`.
+        assert_no_syscalls(|| {
+            let mut ctx = EmacsContext::default();
+            let _ = apply_line(
+                b"set\tcompletion-ignore-case on",
+                &mut ctx,
+                &Conditions::mode_only(Mode::Emacs),
+            );
+            assert!(ctx.vars.completion_ignore_case);
+        });
+    }
+}
+
+#[cfg(test)]
+mod io_tests {
+    //! File-IO-driven paths in [`load_with_guard`]. These use the
+    //! `run_trace` syscall harness instead of `assert_no_syscalls`.
+
+    use super::*;
+    use crate::sys::constants::ENOENT;
+    use crate::sys::test_support::run_trace;
+    use crate::trace_entries;
+
+    #[test]
+    fn cannot_open_path_reports_diagnostic() {
+        run_trace(
+            trace_entries![
+                realpath(_, _) -> err(ENOENT),
+                open(_, _, _) -> err(ENOENT),
+            ],
+            || {
+                let mut ctx = EmacsContext::default();
+                let report =
+                    load_from_path(b"/etc/nope", &mut ctx, &Conditions::mode_only(Mode::Emacs));
+                assert!(
+                    report
+                        .diagnostics
+                        .iter()
+                        .any(|d| d.message.contains("cannot open")),
+                    "expected cannot-open diagnostic: {report:?}"
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn unterminated_if_block_through_load_from_path_reports_diagnostic() {
+        // Content leaves the parser state unbalanced so the
+        // load_with_guard tail emits the "unterminated $if" bullet.
+        let content = b"$if mode=emacs\n\"\\C-a\": end-of-line\n";
+        run_trace(
+            trace_entries![
+                realpath(_, _) -> realpath("/tmp/rc"),
+                open(_, _, _) -> fd(3),
+                read(fd(3), _) -> bytes(content),
+                read(fd(3), _) -> 0,
+                close(fd(3)) -> 0,
+            ],
+            || {
+                let mut ctx = EmacsContext::default();
+                let report =
+                    load_from_path(b"/tmp/rc", &mut ctx, &Conditions::mode_only(Mode::Emacs));
+                assert!(
+                    report
+                        .diagnostics
+                        .iter()
+                        .any(|d| d.message.contains("unterminated $if")),
+                    "expected unterminated-$if diagnostic: {report:?}"
+                );
+            },
+        );
+    }
 }

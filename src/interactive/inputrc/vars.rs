@@ -266,4 +266,137 @@ mod tests {
             assert!(!v.output_meta);
         });
     }
+
+    #[test]
+    fn empty_name_is_error() {
+        assert_no_syscalls(|| {
+            let mut v = InputrcVars::default();
+            let err = parse_assignment(b"", &mut v).unwrap_err();
+            assert!(err.contains("expected variable name"), "got: {err}");
+            // Whitespace-only input also has no name: split_name_value
+            // reads zero non-space bytes, returning an empty name.
+            let err = parse_assignment(b"  ", &mut v).unwrap_err();
+            assert!(err.contains("expected variable name"), "got: {err}");
+        });
+    }
+
+    #[test]
+    fn variable_with_no_value_falls_through_to_typed_error() {
+        assert_no_syscalls(|| {
+            // The name parses; the value-slot is empty; the typed
+            // parsers report their own errors. Covers the `(name,
+            // None)` branch of split_name_value and the downstream
+            // integer parse failure on an empty string.
+            let mut v = InputrcVars::default();
+            let err = parse_assignment(b"history-size", &mut v).unwrap_err();
+            assert!(err.contains("invalid integer"), "got: {err}");
+            let err = parse_assignment(b"completion-ignore-case", &mut v).unwrap_err();
+            assert!(err.contains("invalid boolean"), "got: {err}");
+        });
+    }
+
+    #[test]
+    fn bell_style_audible_and_visible_values() {
+        assert_no_syscalls(|| {
+            let mut v = InputrcVars::default();
+            parse_assignment(b"bell-style audible", &mut v).unwrap();
+            assert_eq!(v.bell_style, BellStyle::Audible);
+            parse_assignment(b"bell-style visible", &mut v).unwrap();
+            assert_eq!(v.bell_style, BellStyle::Visible);
+        });
+    }
+
+    #[test]
+    fn bell_style_invalid_value_is_error() {
+        assert_no_syscalls(|| {
+            let mut v = InputrcVars::default();
+            let err = parse_assignment(b"bell-style loud", &mut v).unwrap_err();
+            assert!(err.contains("invalid value for bell-style"), "got: {err}");
+        });
+    }
+
+    #[test]
+    fn show_all_variables_toggle() {
+        assert_no_syscalls(|| {
+            let mut v = InputrcVars::default();
+            parse_assignment(b"show-all-if-ambiguous on", &mut v).unwrap();
+            assert!(v.show_all_if_ambiguous);
+            parse_assignment(b"show-all-if-unmodified on", &mut v).unwrap();
+            assert!(v.show_all_if_unmodified);
+        });
+    }
+
+    #[test]
+    fn bracketed_paste_colored_stats_symlink_marks_toggle() {
+        assert_no_syscalls(|| {
+            let mut v = InputrcVars::default();
+            parse_assignment(b"enable-bracketed-paste off", &mut v).unwrap();
+            assert!(!v.enable_bracketed_paste);
+            parse_assignment(b"colored-stats on", &mut v).unwrap();
+            assert!(v.colored_stats);
+            parse_assignment(b"mark-symlinked-directories on", &mut v).unwrap();
+            assert!(v.mark_symlinked_directories);
+            parse_assignment(b"completion-map-case on", &mut v).unwrap();
+            assert!(v.completion_map_case);
+        });
+    }
+
+    #[test]
+    fn editing_mode_vi_value_and_invalid_value() {
+        assert_no_syscalls(|| {
+            let mut v = InputrcVars::default();
+            parse_assignment(b"editing-mode vi", &mut v).unwrap();
+            assert_eq!(v.editing_mode, EditingMode::Vi);
+            parse_assignment(b"editing-mode emacs", &mut v).unwrap();
+            assert_eq!(v.editing_mode, EditingMode::Emacs);
+            let err = parse_assignment(b"editing-mode ksh", &mut v).unwrap_err();
+            assert!(err.contains("invalid editing-mode"), "got: {err}");
+        });
+    }
+
+    #[test]
+    fn set_bool_false_variants_and_invalid_value() {
+        assert_no_syscalls(|| {
+            let mut v = InputrcVars::default();
+            // Each of the "false" spellings plus the case-insensitive
+            // path: ascii_lowercase forces the match.
+            parse_assignment(b"completion-ignore-case TRUE", &mut v).unwrap();
+            assert!(v.completion_ignore_case);
+            parse_assignment(b"completion-ignore-case FALSE", &mut v).unwrap();
+            assert!(!v.completion_ignore_case);
+            parse_assignment(b"completion-ignore-case No", &mut v).unwrap();
+            assert!(!v.completion_ignore_case);
+            parse_assignment(b"completion-ignore-case 0", &mut v).unwrap();
+            assert!(!v.completion_ignore_case);
+            let err = parse_assignment(b"completion-ignore-case maybe", &mut v).unwrap_err();
+            assert!(err.contains("invalid boolean"), "got: {err}");
+        });
+    }
+
+    #[test]
+    fn set_u32_rejects_non_utf8_and_non_numeric() {
+        assert_no_syscalls(|| {
+            let mut v = InputrcVars::default();
+            // Non-utf8: pass bytes containing a stray 0xff.
+            let err = parse_assignment(b"history-size \xff", &mut v).unwrap_err();
+            assert!(err.contains("invalid integer"), "got: {err}");
+            // Non-numeric utf8.
+            let err = parse_assignment(b"history-size abc", &mut v).unwrap_err();
+            assert!(err.contains("invalid integer"), "got: {err}");
+            // keyseq-timeout takes the same set_u32 path.
+            parse_assignment(b"keyseq-timeout 250", &mut v).unwrap();
+            assert_eq!(v.keyseq_timeout_ms, 250);
+        });
+    }
+
+    #[test]
+    fn trailing_whitespace_in_value_is_trimmed() {
+        assert_no_syscalls(|| {
+            // split_name_value strips trailing spaces/tabs from the
+            // value slice before returning.
+            let mut v = InputrcVars::default();
+            parse_assignment(b"history-size   42  \t", &mut v).unwrap();
+            assert_eq!(v.history_size, 42);
+        });
+    }
 }

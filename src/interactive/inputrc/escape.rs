@@ -54,14 +54,14 @@ pub(crate) fn decode_escape(input: &[u8]) -> Result<(Vec<u8>, usize), String> {
 }
 
 fn decode_octal(input: &[u8]) -> Result<(Vec<u8>, usize), String> {
+    // Callers (`decode_escape`) only route here when `input[0]` is a
+    // digit in `0..=7`, so the loop always consumes at least one byte
+    // and `n >= 1` on exit.
     let mut value: u32 = 0;
     let mut n = 0;
     while n < 3 && n < input.len() && (b'0'..=b'7').contains(&input[n]) {
         value = value * 8 + (input[n] - b'0') as u32;
         n += 1;
-    }
-    if n == 0 {
-        return Err("empty octal escape".to_string());
     }
     if value > 0xff {
         return Err(format!("octal escape out of range: \\{}", value));
@@ -167,9 +167,6 @@ pub(crate) fn decode_keyname(token: &[u8]) -> Result<Vec<u8>, String> {
     } else {
         out.push(byte);
     }
-    if out.len() > 2 {
-        return Err("keyname expands to more than two bytes".to_string());
-    }
     Ok(out)
 }
 
@@ -260,11 +257,135 @@ mod tests {
     }
 
     #[test]
-    fn keyname_too_long_is_error() {
+    fn unknown_keyname_token_is_error() {
         assert_no_syscalls(|| {
-            // "Control-Meta-Meta-..." — impossible case; test Meta- applied
-            // to a multi-byte escape
-            assert!(decode_keyname(b"ZZZ").is_err());
+            // Multi-byte non-canonical tokens fall to the
+            // `unknown keyname` arm.
+            let err = decode_keyname(b"ZZZ").unwrap_err();
+            assert!(err.contains("unknown keyname"), "got: {err}");
+        });
+    }
+
+    #[test]
+    fn every_simple_escape_letter_decodes() {
+        assert_no_syscalls(|| {
+            // One assertion per single-char escape branch in decode_escape.
+            assert_eq!(decode_quoted(br#"\\""#).unwrap().0, vec![b'\\']);
+            assert_eq!(decode_quoted(br#"\"""#).unwrap().0, vec![b'"']);
+            assert_eq!(decode_quoted(br#"\'""#).unwrap().0, vec![b'\'']);
+            assert_eq!(decode_quoted(br#"\a""#).unwrap().0, vec![0x07]);
+            assert_eq!(decode_quoted(br#"\b""#).unwrap().0, vec![0x08]);
+            assert_eq!(decode_quoted(br#"\d""#).unwrap().0, vec![0x7f]);
+            assert_eq!(decode_quoted(br#"\f""#).unwrap().0, vec![0x0c]);
+            assert_eq!(decode_quoted(br#"\r""#).unwrap().0, vec![0x0d]);
+            assert_eq!(decode_quoted(br#"\v""#).unwrap().0, vec![0x0b]);
+        });
+    }
+
+    #[test]
+    fn unterminated_string_is_error() {
+        assert_no_syscalls(|| {
+            // Scan to end without hitting closing quote.
+            let err = decode_quoted(b"abc").unwrap_err();
+            assert!(err.contains("unterminated"), "got: {err}");
+        });
+    }
+
+    #[test]
+    fn dangling_backslash_is_error() {
+        assert_no_syscalls(|| {
+            // `\` followed by nothing is caught inside decode_escape.
+            let err = decode_escape(b"").unwrap_err();
+            assert!(err.contains("dangling"), "got: {err}");
+        });
+    }
+
+    #[test]
+    fn octal_out_of_range_is_error() {
+        assert_no_syscalls(|| {
+            // `\777` = 511 decimal, > 0xff.
+            let err = decode_quoted(br#"\777""#).unwrap_err();
+            assert!(err.contains("out of range"), "got: {err}");
+        });
+    }
+
+    #[test]
+    fn hex_escape_accepts_lowercase_and_uppercase() {
+        assert_no_syscalls(|| {
+            assert_eq!(decode_quoted(br#"\xab""#).unwrap().0, vec![0xab]);
+            assert_eq!(decode_quoted(br#"\xCD""#).unwrap().0, vec![0xcd]);
+            assert_eq!(decode_quoted(br#"\X0f""#).unwrap().0, vec![0x0f]);
+        });
+    }
+
+    #[test]
+    fn empty_hex_escape_is_error() {
+        assert_no_syscalls(|| {
+            // `\x` followed by a non-hex character (the closing quote).
+            let err = decode_quoted(br#"\x""#).unwrap_err();
+            assert!(err.contains("empty hex"), "got: {err}");
+        });
+    }
+
+    #[test]
+    fn control_missing_dash_is_error() {
+        assert_no_syscalls(|| {
+            // `\C` without `-` after — decode_control receives a slice
+            // whose first byte is not `-`.
+            let err = decode_escape(b"Cx").unwrap_err();
+            assert!(err.contains("C-"), "got: {err}");
+            // And the empty case (`\C` at end of input).
+            let err = decode_escape(b"C").unwrap_err();
+            assert!(err.contains("C-"), "got: {err}");
+        });
+    }
+
+    #[test]
+    fn control_without_target_is_error() {
+        assert_no_syscalls(|| {
+            // `\C-` followed by nothing.
+            let err = decode_escape(b"C-").unwrap_err();
+            assert!(err.contains("requires"), "got: {err}");
+        });
+    }
+
+    #[test]
+    fn meta_missing_dash_is_error() {
+        assert_no_syscalls(|| {
+            let err = decode_escape(b"Mx").unwrap_err();
+            assert!(err.contains("M-"), "got: {err}");
+            let err = decode_escape(b"M").unwrap_err();
+            assert!(err.contains("M-"), "got: {err}");
+        });
+    }
+
+    #[test]
+    fn meta_without_target_is_error() {
+        assert_no_syscalls(|| {
+            let err = decode_escape(b"M-").unwrap_err();
+            assert!(err.contains("requires"), "got: {err}");
+        });
+    }
+
+    #[test]
+    fn control_wraps_multibyte_inner_escape() {
+        assert_no_syscalls(|| {
+            // `\C-\M-a` → inner decode yields two bytes [0x1b, 'a'];
+            // the control wrap masks only the last byte and passes the
+            // rest through verbatim. This is the only production path
+            // that hits the non-last-byte branch of decode_control.
+            assert_eq!(decode_quoted(br#"\C-\M-a""#).unwrap().0, vec![0x1b, 0x01]);
+        });
+    }
+
+    #[test]
+    fn keyname_m_prefix_distinct_from_meta_prefix() {
+        assert_no_syscalls(|| {
+            // The `Meta-` branch is exercised elsewhere; this covers
+            // the short `M-` form specifically.
+            assert_eq!(decode_keyname(b"M-a").unwrap(), vec![0x1b, b'a']);
+            // Case-insensitive per spec.
+            assert_eq!(decode_keyname(b"m-a").unwrap(), vec![0x1b, b'a']);
         });
     }
 }

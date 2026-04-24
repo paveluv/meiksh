@@ -323,4 +323,115 @@ mod tests {
             assert!(report.diagnostics.is_empty());
         });
     }
+
+    #[test]
+    fn else_without_if_is_diagnostic() {
+        assert_no_syscalls(|| {
+            let mut state = ParserState::new(&emacs_mode_no_term());
+            let mut report = Report::default();
+            dispatch_directive(b"else", 1, &mut state, &mut report);
+            assert_eq!(report.diagnostics.len(), 1);
+            assert!(
+                report.diagnostics[0].message.contains("without $if"),
+                "got: {:?}",
+                report.diagnostics[0].message
+            );
+            assert!(state.is_balanced());
+        });
+    }
+
+    #[test]
+    fn duplicate_else_is_diagnostic() {
+        assert_no_syscalls(|| {
+            // Nested $if mode=vi ... $else ... $else inside an
+            // otherwise-active parent.
+            let mut state = ParserState::new(&emacs_mode_no_term());
+            let mut report = Report::default();
+            dispatch_directive(b"if mode=vi", 1, &mut state, &mut report);
+            dispatch_directive(b"else", 2, &mut state, &mut report);
+            dispatch_directive(b"else", 3, &mut state, &mut report);
+            assert_eq!(report.diagnostics.len(), 1);
+            assert!(
+                report.diagnostics[0].message.contains("duplicate"),
+                "got: {:?}",
+                report.diagnostics[0].message
+            );
+            // The second $else must not re-flip the frame.
+            assert!(state.is_active());
+        });
+    }
+
+    #[test]
+    fn duplicate_else_on_else_inactive_frame() {
+        // Covers the ElseInactive arm of the duplicate-$else match
+        // (distinct from the ElseActive path above).
+        assert_no_syscalls(|| {
+            let mut state = ParserState::new(&emacs_mode_no_term());
+            let mut report = Report::default();
+            dispatch_directive(b"if mode=emacs", 1, &mut state, &mut report);
+            dispatch_directive(b"else", 2, &mut state, &mut report); // → ElseInactive
+            dispatch_directive(b"else", 3, &mut state, &mut report); // duplicate
+            assert_eq!(report.diagnostics.len(), 1);
+        });
+    }
+
+    #[test]
+    fn include_with_tab_separator_returns_path() {
+        assert_no_syscalls(|| {
+            let mut state = ParserState::new(&emacs_mode_no_term());
+            let mut report = Report::default();
+            match dispatch_directive(b"include\t/etc/xyz", 1, &mut state, &mut report) {
+                DirectiveOutcome::Include(path) => assert_eq!(path, b"/etc/xyz"),
+                _ => panic!("expected include"),
+            }
+        });
+    }
+
+    #[test]
+    fn unknown_directive_is_not_recognized() {
+        assert_no_syscalls(|| {
+            let mut state = ParserState::new(&emacs_mode_no_term());
+            let mut report = Report::default();
+            let r = dispatch_directive(b"something-else", 1, &mut state, &mut report);
+            assert!(matches!(r, DirectiveOutcome::NotRecognized));
+        });
+    }
+
+    #[test]
+    fn nested_if_under_inactive_parent_stays_inactive_silently() {
+        // Covers: (a) the `IfInactive` push inside an already-inactive
+        // parent (line 75), (b) the is_active_parent() branch with
+        // stack.len() > 1, and (c) the rule that diagnostics are
+        // suppressed when the test would never have fired anyway.
+        assert_no_syscalls(|| {
+            let mut state = ParserState::new(&emacs_mode_no_term());
+            let mut report = Report::default();
+            dispatch_directive(b"if mode=vi", 1, &mut state, &mut report); // inactive
+            dispatch_directive(b"if application=bash", 2, &mut state, &mut report);
+            assert!(!state.is_active());
+            // The inner unknown test must NOT produce a diagnostic
+            // because the parent frame is already disabled.
+            assert!(
+                report.diagnostics.is_empty(),
+                "nested test under inactive parent must be silent: {report:?}"
+            );
+            dispatch_directive(b"endif", 3, &mut state, &mut report);
+            dispatch_directive(b"endif", 4, &mut state, &mut report);
+            assert!(state.is_balanced());
+        });
+    }
+
+    #[test]
+    fn trim_ws_strips_leading_and_trailing_whitespace_on_if_test() {
+        // The `if ` body is run through trim_ws; surround the test
+        // with leading/trailing spaces and tabs to exercise both trim
+        // loops.
+        assert_no_syscalls(|| {
+            let mut state = ParserState::new(&emacs_mode_no_term());
+            let mut report = Report::default();
+            dispatch_directive(b"if  \tmode=emacs\t \r", 1, &mut state, &mut report);
+            assert!(state.is_active());
+            assert!(report.diagnostics.is_empty());
+        });
+    }
 }
