@@ -2,7 +2,7 @@
 
 ## Status
 
-**Not implemented.** This document is a specification; the inputrc parser described here has no corresponding implementation in meiksh. No file at `$INPUTRC`, `$HOME/.inputrc`, or `/etc/inputrc` is consulted at shell startup, and no `bind -f` builtin is available to load one on demand. Implementation is part of [emacs-editing-mode.md](emacs-editing-mode.md) Stage C as described in the project plan.
+**Implemented.** The inputrc parser lives under [src/interactive/inputrc/](../../src/interactive/inputrc/) (entry point [src/interactive/inputrc/mod.rs](../../src/interactive/inputrc/mod.rs), with `conditional`, `editline`, `escape`, `include`, `keybind`, and `vars` submodules). Startup reads `$INPUTRC`, falling back to `$HOME/.inputrc`, and `bind -f` loads additional files on demand through [src/builtin/bind.rs](../../src/builtin/bind.rs). Every normative rule of this spec — key-sequence syntax, `set` variables, `$if` / `$else` / `$endif` conditionals (including `$if term=<name>`), `$include`, macro bindings, and both readline-style and editline-style positional `bind` forms — is exercised by unit tests colocated with each submodule and by the `inputrc_*` integration tests in [tests/integration/emacs_mode.rs](../../tests/integration/emacs_mode.rs). The variables declared inert in Section 15 of [emacs-editing-mode.md](emacs-editing-mode.md) (e.g. `convert-meta`, `enable-keypad`, `horizontal-scroll-mode`) are recognized by the parser but produce per-spec diagnostics or no-ops as described; this is spec-endorsed behavior, not a gap.
 
 ## 1. Scope
 
