@@ -1,8 +1,8 @@
 //! Interactive-shell startup-file loader.
 //!
 //! Implements the meiksh startup sequence defined in
-//! `docs/features/startup-files.md`: set the exported `MEIKSH` marker,
-//! then — under an identity guard — source `/etc/profile`,
+//! `docs/features/startup-files.md`: set the exported `MEIKSH_VERSION`
+//! marker, then — under an identity guard — source `/etc/profile`,
 //! `$HOME/.profile`, and `$ENV`, in that order, skipping each file
 //! that does not exist.
 
@@ -15,18 +15,21 @@ use crate::sys;
 const SYSTEM_PROFILE_PATH: &[u8] = b"/etc/profile";
 
 /// Name of the marker variable exported before any startup file is
-/// sourced (spec § 5). Scripts branch on its presence with
-/// `[ -n "${MEIKSH:-}" ]`.
-const MEIKSH_MARKER_NAME: &[u8] = b"MEIKSH";
+/// sourced (spec § 5). Mirrors the `BASH_VERSION` / `ZSH_VERSION` /
+/// `KSH_VERSION` convention other shells use. Scripts branch on its
+/// presence with `[ -n "${MEIKSH_VERSION:-}" ]`.
+const MEIKSH_MARKER_NAME: &[u8] = b"MEIKSH_VERSION";
 
-/// Value assigned to [`MEIKSH_MARKER_NAME`]. Stable across releases;
-/// see spec § 5 for the forward-compatibility contract.
-const MEIKSH_MARKER_VALUE: &[u8] = b"1";
+/// Value assigned to [`MEIKSH_MARKER_NAME`]. The crate's SemVer
+/// string — e.g. `"0.1.0"` — sourced at compile time from Cargo so
+/// the exported value stays in lockstep with every release. See
+/// spec § 5 for the forward-compatibility contract.
+const MEIKSH_MARKER_VALUE: &[u8] = env!("CARGO_PKG_VERSION").as_bytes();
 
 /// Internal test-isolation opt-out (spec § 7). When set to `1` in the
-/// environment, every file from Section 3 is skipped; the `MEIKSH`
-/// marker is still established so scripts can tell they are running
-/// under a meiksh-managed test harness. This knob is read from the
+/// environment, every file from Section 3 is skipped; the
+/// `MEIKSH_VERSION` marker is still established so scripts can tell
+/// they are running under a meiksh-managed test harness. This knob is read from the
 /// shell variable table and therefore honors `export` from within the
 /// shell; it is intentionally *not* exposed in public documentation
 /// because it is not part of the user-facing contract.
@@ -34,11 +37,11 @@ const STARTUP_SKIP_ENV_NAME: &[u8] = b"MEIKSH_SKIP_STARTUP_FILES";
 const STARTUP_SKIP_ENV_VALUE: &[u8] = b"1";
 
 pub(super) fn load_startup_files(shell: &mut Shell) -> Result<(), ShellError> {
-    // Spec § 5: the `MEIKSH` marker is established *before* any file is
-    // sourced and *before* the identity guard is evaluated, so that
-    // privileged shells which skip all sourcing still announce their
-    // identity to child processes (e.g. a `printenv` run from a
-    // locked-down setuid meiksh).
+    // Spec § 5: the `MEIKSH_VERSION` marker is established *before*
+    // any file is sourced and *before* the identity guard is
+    // evaluated, so that privileged shells which skip all sourcing
+    // still announce their identity to child processes (e.g. a
+    // `printenv` run from a locked-down setuid meiksh).
     let _ = shell.set_var(MEIKSH_MARKER_NAME, MEIKSH_MARKER_VALUE);
     shell.mark_exported(MEIKSH_MARKER_NAME);
 
@@ -111,7 +114,7 @@ mod tests {
     use crate::trace_entries;
 
     #[test]
-    fn sets_meiksh_marker_before_sourcing() {
+    fn sets_meiksh_version_marker_before_sourcing() {
         run_trace(
             trace_entries![
                 access(str("/etc/profile"), int(0)) -> err(sys::constants::ENOENT),
@@ -119,8 +122,16 @@ mod tests {
             || {
                 let mut shell = test_shell();
                 load_startup_files(&mut shell).expect("startup");
-                assert_eq!(shell.get_var(b"MEIKSH"), Some(b"1".as_ref()));
-                assert!(shell.is_exported(b"MEIKSH"));
+                let expected = env!("CARGO_PKG_VERSION").as_bytes();
+                assert_eq!(shell.get_var(b"MEIKSH_VERSION"), Some(expected));
+                assert!(shell.is_exported(b"MEIKSH_VERSION"));
+                // A non-empty SemVer string — mirrors BASH_VERSION /
+                // ZSH_VERSION / KSH_VERSION semantics. Scripts that
+                // merely test presence (`[ -n "${MEIKSH_VERSION:-}" ]`)
+                // are forward-compatible; the specific value is the
+                // crate's Cargo version and will change across
+                // releases.
+                assert!(!expected.is_empty());
             },
         );
     }
@@ -339,8 +350,11 @@ mod tests {
                 .env_mut()
                 .insert(b"MEIKSH_SKIP_STARTUP_FILES".to_vec(), b"1".to_vec());
             load_startup_files(&mut shell).expect("startup");
-            assert_eq!(shell.get_var(b"MEIKSH"), Some(b"1".as_ref()));
-            assert!(shell.is_exported(b"MEIKSH"));
+            assert_eq!(
+                shell.get_var(b"MEIKSH_VERSION"),
+                Some(env!("CARGO_PKG_VERSION").as_bytes())
+            );
+            assert!(shell.is_exported(b"MEIKSH_VERSION"));
             assert_eq!(shell.get_var(b"FROM_ENV_FILE"), None);
             assert_eq!(shell.get_var(b"FROM_HOME_PROFILE"), None);
         });
@@ -348,10 +362,11 @@ mod tests {
 
     #[test]
     fn skip_env_var_only_honors_exact_value_one() {
-        // A value other than b"1" (e.g. "yes", "true", empty) must not
-        // activate the skip path. This guards against accidental
+        // A value other than b"1" (e.g. "yes", "true", empty) must
+        // not activate the skip path. This guards against accidental
         // semantic drift — the knob is a presence-plus-value signal,
-        // identical to the `MEIKSH` marker itself.
+        // distinct from the version-string-valued `MEIKSH_VERSION`
+        // marker itself.
         run_trace(
             trace_entries![
                 access(str("/etc/profile"), int(0)) -> err(sys::constants::ENOENT),
@@ -379,8 +394,11 @@ mod tests {
             sys::test_support::with_process_ids_for_test((1, 2, 3, 3), || {
                 load_startup_files(&mut shell).expect("guarded startup");
             });
-            assert_eq!(shell.get_var(b"MEIKSH"), Some(b"1".as_ref()));
-            assert!(shell.is_exported(b"MEIKSH"));
+            assert_eq!(
+                shell.get_var(b"MEIKSH_VERSION"),
+                Some(env!("CARGO_PKG_VERSION").as_bytes())
+            );
+            assert!(shell.is_exported(b"MEIKSH_VERSION"));
             assert_eq!(shell.get_var(b"FROM_ENV_FILE"), None);
             assert_eq!(shell.get_var(b"FROM_HOME_PROFILE"), None);
         });

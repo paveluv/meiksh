@@ -1897,9 +1897,9 @@ fn tab_variable_completion_via_dollar_prefix() {
     // Export a uniquely named variable so there's only one candidate.
     // The prefix `TABVARCOMPL` is chosen so it cannot share an initial
     // segment with any name the interactive shell itself exports at
-    // startup (for example the `MEIKSH` marker from
+    // startup (for example the `MEIKSH_VERSION` marker from
     // `docs/features/startup-files.md` § 5), which would otherwise
-    // make `$MEIK<TAB>` ambiguous and prevent completion.
+    // make `$M<TAB>` ambiguous and prevent completion.
     pty.send(b"export TABVARCOMPL=seen\n");
     let _ = drain_until_contains(&mut pty, b"$ ");
     // printf '[%s]' $TABVA<TAB> → $TABVARCOMPL → expands to "seen".

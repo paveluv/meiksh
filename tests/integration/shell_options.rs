@@ -313,11 +313,11 @@ fn interactive_shell_uses_home_history_default() {
 }
 
 #[test]
-fn interactive_shell_exports_meiksh_marker() {
-    // Spec docs/features/startup-files.md § 5: the `MEIKSH` variable
-    // is set to `1` and exported before any startup file is sourced,
-    // so a child process started inside the interactive shell inherits
-    // it via `execve(2)`.
+fn interactive_shell_exports_meiksh_version_marker() {
+    // Spec docs/features/startup-files.md § 5: the `MEIKSH_VERSION`
+    // variable is set to the crate's SemVer string and exported before
+    // any startup file is sourced, so a child process started inside
+    // the interactive shell inherits it via `execve(2)`.
     let home = TempDir::new("meiksh-marker-home");
     let output = Command::new(meiksh())
         .arg("-i")
@@ -332,16 +332,19 @@ fn interactive_shell_exports_meiksh_marker() {
                 .stdin
                 .as_mut()
                 .unwrap()
-                .write_all(b"printenv MEIKSH\nexit\n")?;
+                .write_all(b"printenv MEIKSH_VERSION\nexit\n")?;
             child.wait_with_output()
         })
         .expect("run meiksh interactive");
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains("1"),
-        "MEIKSH should be exported to the child printenv call, got stdout: {stdout}"
+    let expected = env!("CARGO_PKG_VERSION");
+    assert_eq!(
+        stdout.trim(),
+        expected,
+        "MEIKSH_VERSION should be exported to the child printenv call \
+         as the crate SemVer string, got stdout: {stdout:?}"
     );
 }
 
@@ -417,16 +420,16 @@ fn interactive_shell_sources_home_profile_before_env() {
 }
 
 #[test]
-fn interactive_shell_home_profile_can_see_meiksh_marker() {
-    // Spec § 5: MEIKSH is established before ~/.profile runs so that
-    // profile scripts can branch on shell identity. Without the marker
-    // our `.profile` writes `FROM_PROFILE=empty`; with it, it writes
-    // the marker's value.
+fn interactive_shell_home_profile_can_see_meiksh_version_marker() {
+    // Spec § 5: MEIKSH_VERSION is established before ~/.profile runs
+    // so that profile scripts can branch on shell identity. Without
+    // the marker our `.profile` writes `FROM_PROFILE=empty`; with it,
+    // it writes the marker's value (the crate SemVer string).
     let home = TempDir::new("meiksh-marker-profile");
     let profile = home.join(".profile");
     fs::write(
         &profile,
-        "if [ -n \"${MEIKSH:-}\" ]; then FROM_PROFILE=\"meiksh=${MEIKSH}\"; else FROM_PROFILE=empty; fi\nexport FROM_PROFILE\n",
+        "if [ -n \"${MEIKSH_VERSION:-}\" ]; then FROM_PROFILE=\"meiksh=${MEIKSH_VERSION}\"; else FROM_PROFILE=empty; fi\nexport FROM_PROFILE\n",
     )
     .expect("write ~/.profile");
 
@@ -450,9 +453,11 @@ fn interactive_shell_home_profile_can_see_meiksh_marker() {
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
+    let expected = format!("meiksh={}", env!("CARGO_PKG_VERSION"));
     assert!(
-        stdout.contains("meiksh=1"),
-        "~/.profile should observe MEIKSH=1, got stdout: {stdout}"
+        stdout.contains(&expected),
+        "~/.profile should observe MEIKSH_VERSION={}, got stdout: {stdout}",
+        env!("CARGO_PKG_VERSION")
     );
 }
 
