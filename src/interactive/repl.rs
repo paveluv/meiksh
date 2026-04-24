@@ -133,12 +133,18 @@ pub(super) fn run_loop(shell: &mut Shell) -> Result<i32, ShellError> {
         }
         // Per ps1-prompt-extensions.md § 6.4 (\#), the per-session
         // counter is bumped exactly once per accepted, non-empty input
-        // unit — immediately before the command runs, so the next
-        // prompt (PS1 for the following unit) observes the new value.
-        // It wraps modulo 2^63 on overflow (practically unreachable).
+        // unit — *after* the command runs so that `\#` in `PS4` traces
+        // (and the command's own `\!` / `\#` reads) observe value N
+        // during the execution of the N-th accepted line, with the
+        // increment visible to the *next* prompt. The bump happens
+        // whether execution succeeded or raised an error, matching the
+        // "regardless of whether that line contains a syntactically
+        // valid command" clause. It wraps modulo 2^63 on overflow
+        // (practically unreachable).
+        let exec_result = shell.execute_string(&source);
         shell.session_command_counter =
             shell.session_command_counter.wrapping_add(1) & 0x7FFF_FFFF_FFFF_FFFF;
-        match shell.execute_string(&source) {
+        match exec_result {
             Ok(status) => shell.last_status = status,
             Err(error) => {
                 shell.last_status = error.exit_status();
