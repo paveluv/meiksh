@@ -993,6 +993,12 @@ mod tests {
             assert_eq!(scan_to_closing_brace(b"$((1+2))}tail", 0).unwrap(), 8);
             // Backtick command substitution with escaped backtick.
             assert_eq!(scan_to_closing_brace(b"`a\\`b`}tail", 0).unwrap(), 6);
+            // $(( ... )) with nested parentheses — forces the
+            // `depth += 1` / saturating `depth - 1` arms.
+            assert_eq!(scan_to_closing_brace(b"$(((1+2)*3))}t", 0).unwrap(), 12);
+            // $( ... ) with nested parentheses — forces the
+            // balanced-paren `depth += 1` / `break on depth == 0` arms.
+            assert_eq!(scan_to_closing_brace(b"$(echo (x))}t", 0).unwrap(), 11);
         });
     }
 
@@ -1097,6 +1103,25 @@ mod tests {
         assert_no_syscalls(|| {
             let result = super::parse_dollar_single_quoted_body(b"\\c\\M");
             assert_eq!(result, &[0x0d]);
+        });
+    }
+
+    #[test]
+    fn lookup_param_cached_handles_zero_and_special_parameter() {
+        // `lookup_param_cached` has bespoke fast paths for `$0` (the
+        // shell name) and single-character special parameters that
+        // short-circuit ahead of the cached env-var lookup.
+        assert_no_syscalls(|| {
+            let ctx = FakeContext::new();
+            let cache = crate::shell::vars::CachedVarBinding::default();
+            let zero = lookup_param_cached(&ctx, &cache, b"0").expect("$0");
+            assert_eq!(&*zero, b"meiksh");
+            // `$?` (last exit status) — a special parameter.
+            let last = lookup_param_cached(&ctx, &cache, b"?").expect("$?");
+            assert_eq!(&*last, b"0");
+            // Positional `$1` is reached via the digit branch.
+            let one = lookup_param_cached(&ctx, &cache, b"1").expect("$1");
+            assert_eq!(&*one, b"alpha");
         });
     }
 

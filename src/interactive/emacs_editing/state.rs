@@ -112,6 +112,17 @@ mod tests {
     }
 
     #[test]
+    fn insert_bytes_at_cursor_with_empty_input_is_noop() {
+        // Exercises the empty-bytes early return at line 87.
+        assert_no_syscalls(|| {
+            let mut s = EmacsState::new(0x7f);
+            s.insert_bytes_at_cursor(b"");
+            assert_eq!(s.buf, b"");
+            assert_eq!(s.cursor, 0);
+        });
+    }
+
+    #[test]
     fn paste_group_collapses_into_single_insert() {
         assert_no_syscalls(|| {
             let mut s = EmacsState::new(0x7f);

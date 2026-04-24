@@ -154,13 +154,11 @@ fn build_prompt_env(shell: &Shell, history_number: usize) -> PromptEnv {
     // (which is `MAJOR.MINOR.PATCH`). We use a tiny runtime split so
     // we don't need a build-time constant.
     let full = env!("CARGO_PKG_VERSION").as_bytes().to_vec();
-    let short = match (
-        full.iter().position(|b| *b == b'.'),
-        full.iter().rposition(|b| *b == b'.'),
-    ) {
-        (Some(first), Some(last)) if first < last => full[..last].to_vec(),
-        _ => full.clone(),
-    };
+    // `CARGO_PKG_VERSION` is always `MAJOR.MINOR.PATCH` (two dots), so
+    // the rposition of `.` always points at the PATCH separator; the
+    // short form drops the PATCH component.
+    let last_dot = full.iter().rposition(|b| *b == b'.').unwrap_or(full.len());
+    let short = full[..last_dot].to_vec();
 
     PromptEnv {
         user,
@@ -386,6 +384,19 @@ mod tests {
     }
 
     /// § 3.1 table: `PS3` in bash mode skips the escape pass entirely.
+    #[test]
+    fn build_prompt_env_falls_back_to_getcwd_when_pwd_unset() {
+        // When `$PWD` is empty, `build_prompt_env` falls through to
+        // `sys::fs::get_cwd()` to populate `cwd`.  Covers the
+        // `_ => sys::fs::get_cwd().ok()` arm.
+        run_trace(trace_entries![getcwd() -> cwd("/tmp/cov")], || {
+            let mut shell = test_shell();
+            shell.env_mut().remove(b"PWD".as_slice());
+            let env = super::build_prompt_env(&shell, 1);
+            assert_eq!(env.cwd.as_deref(), Some(b"/tmp/cov" as &[u8]));
+        });
+    }
+
     #[test]
     fn expand_full_prompt_ps3_skips_escape_pass_even_in_bash_mode() {
         let mut shell = test_shell();

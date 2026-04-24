@@ -722,13 +722,10 @@ fn expand_braced_word_text<C: Context>(
     // capacity.
     let mut temp = std::mem::take(&mut scratch.output_nested);
     temp.clear();
-    let result = expand_parts_into_mode(ctx, raw, word_parts, true, true, &mut temp, scratch);
-    let text = match &result {
-        Ok(()) => temp.drain_single_vec(),
-        Err(_) => Vec::new(),
-    };
+    let outcome = expand_parts_into_mode(ctx, raw, word_parts, true, true, &mut temp, scratch)
+        .map(|()| temp.drain_single_vec());
     scratch.output_nested = temp;
-    result.map(|()| text)
+    outcome
 }
 
 fn expand_braced_word_pattern<C: Context>(
@@ -741,13 +738,10 @@ fn expand_braced_word_pattern<C: Context>(
     // this call. Cleared before use; restored afterwards.
     let mut segments = std::mem::take(&mut scratch.pattern_segments);
     segments.clear();
-    let result = build_pattern_segments(ctx, raw, word_parts, &mut segments, scratch);
-    let pattern = match &result {
-        Ok(()) => render_pattern_from_segments(&segments),
-        Err(_) => Vec::new(),
-    };
+    let outcome = build_pattern_segments(ctx, raw, word_parts, &mut segments, scratch)
+        .map(|()| render_pattern_from_segments(&segments));
     scratch.pattern_segments = segments;
-    result.map(|()| pattern)
+    outcome
 }
 
 pub(super) fn build_pattern_segments<C: Context>(
@@ -1189,7 +1183,10 @@ mod tests {
             // `current`).  Both slots were pool-sourced, so at least one
             // of them must preserve our marker pointer.
             let used_pool_buffer = joined.as_ptr() == marker || output.current.as_ptr() == marker;
-            assert!(used_pool_buffer, "expected a pool-provided buffer to be reused");
+            assert!(
+                used_pool_buffer,
+                "expected a pool-provided buffer to be reused"
+            );
         });
     }
 
@@ -1257,8 +1254,16 @@ mod tests {
             };
             let mut output = ExpandOutput::default();
             let mut scratch = ExpandScratch::default();
-            let err = expand_kind(&mut ctx, raw, &kind, false, false, &mut output, &mut scratch)
-                .expect_err("expected bad substitution error");
+            let err = expand_kind(
+                &mut ctx,
+                raw,
+                &kind,
+                false,
+                false,
+                &mut output,
+                &mut scratch,
+            )
+            .expect_err("expected bad substitution error");
             assert_eq!(err.message.as_ref(), b"bad substitution");
         });
     }
@@ -1291,8 +1296,16 @@ mod tests {
             };
             let mut output = ExpandOutput::default();
             let mut scratch = ExpandScratch::default();
-            let err = expand_kind(&mut ctx, raw, &kind, false, false, &mut output, &mut scratch)
-                .expect_err("expected cannot-assign error");
+            let err = expand_kind(
+                &mut ctx,
+                raw,
+                &kind,
+                false,
+                false,
+                &mut output,
+                &mut scratch,
+            )
+            .expect_err("expected cannot-assign error");
             assert!(
                 err.message.starts_with(b"1foo: cannot assign in this way"),
                 "unexpected error bytes: {:?}",
@@ -1426,7 +1439,10 @@ mod tests {
                 .expect("build segments");
             assert_eq!(
                 segments,
-                vec![Segment::Text(b"/home/testuser".to_vec(), QuoteState::Quoted)],
+                vec![Segment::Text(
+                    b"/home/testuser".to_vec(),
+                    QuoteState::Quoted
+                )],
             );
         });
     }

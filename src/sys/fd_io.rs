@@ -427,4 +427,32 @@ mod tests {
             },
         );
     }
+
+    #[test]
+    fn fd_seek_rewind_zero_bytes_is_noop() {
+        run_trace(trace_entries![], || {
+            assert!(fd_seek_rewind(3, 0).is_ok());
+        });
+    }
+
+    #[test]
+    fn fd_seek_rewind_reports_lseek_error() {
+        use super::super::constants::SEEK_CUR;
+        use super::super::test_support::{ArgMatcher, TraceResult, t};
+        run_trace(
+            vec![t(
+                "lseek",
+                vec![
+                    ArgMatcher::Fd(3),
+                    ArgMatcher::Int(-5),
+                    ArgMatcher::Int(SEEK_CUR as i64),
+                ],
+                TraceResult::Err(libc::ESPIPE),
+            )],
+            || {
+                let err = fd_seek_rewind(3, 5).unwrap_err();
+                assert_eq!(err, SysError::Errno(libc::ESPIPE));
+            },
+        );
+    }
 }

@@ -281,6 +281,14 @@ mod tests {
     }
 
     #[test]
+    fn format_strftime_with_embedded_nul_returns_empty() {
+        // A NUL inside the format string makes `to_cstring` fail and
+        // exercises the early `return Vec::new()` arm at line 131.
+        let tm = LocalTime::from_fields(0, 0, 0, 1, 1, 2024, 1, 0);
+        assert_eq!(format_strftime(b"abc\0def", &tm, 32), b"");
+    }
+
+    #[test]
     fn getrlimit_invalid_resource_returns_error() {
         assert!(getrlimit(99999).is_err());
     }

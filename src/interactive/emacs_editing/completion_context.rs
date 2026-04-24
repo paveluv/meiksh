@@ -331,6 +331,32 @@ mod tests {
     }
 
     #[test]
+    fn closed_double_quote_pops_back_to_unquoted() {
+        // The closing `"` pops the DoubleQuote frame, leaving the
+        // top-of-stack Unquoted so the final classification is Normal.
+        assert_eq!(classify(b"echo \"hi\" "), CompletionContext::Normal);
+    }
+
+    #[test]
+    fn dollar_in_double_quote_without_paren_stays_literal() {
+        // `$x` inside `"..."` has no substitution; the `b'$'` arm
+        // exits the "peek for `(`" block without pushing a frame, so
+        // the top-of-stack remains DoubleQuote.
+        assert_eq!(classify(b"echo \"$x"), CompletionContext::InsideDoubleQuote);
+    }
+
+    #[test]
+    fn backtick_inside_double_quote_pushes_cmd_sub_frame() {
+        // A `` ` `` inside `"..."` pushes a CmdSubBacktick frame
+        // whose interior is treated as Unquoted. An opening `'` then
+        // suppresses classification as InsideSingleQuote.
+        assert_eq!(
+            classify(b"echo \"`echo 'he"),
+            CompletionContext::InsideSingleQuote
+        );
+    }
+
+    #[test]
     fn cursor_before_end_respects_limit() {
         // Cursor positioned before the opening `'` means normal.
         assert_eq!(

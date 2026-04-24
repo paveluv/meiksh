@@ -236,6 +236,83 @@ mod tests {
     }
 
     #[test]
+    fn backspace_on_empty_pattern_is_noop() {
+        // The `if self.pattern.is_empty() { return; }` guard short-
+        // circuits before touching `pattern` or re-scanning, so the
+        // matched slot remains untouched (still `None`).
+        assert_no_syscalls(|| {
+            let h = hist(&[b"hello"]);
+            let mut s = IncrementalSearch::new(&h, Direction::Backward);
+            s.backspace();
+            assert_eq!(s.pattern(), b"");
+            assert!(!s.failing());
+            assert_eq!(s.matched(), None);
+        });
+    }
+
+    #[test]
+    fn feed_backspace_via_del_clears_last_byte() {
+        // `0x7f` (DEL) and `0x08` (BS) both route through the feed
+        // backspace arm and return `Continue`.
+        assert_no_syscalls(|| {
+            let h = hist(&[b"abc", b"abd"]);
+            let mut s = IncrementalSearch::new(&h, Direction::Backward);
+            s.push_byte(b'a');
+            s.push_byte(b'b');
+            assert_eq!(s.feed(0x7f), SearchOutcome::Continue);
+            assert_eq!(s.pattern(), b"a");
+            assert_eq!(s.feed(0x08), SearchOutcome::Continue);
+            assert_eq!(s.pattern(), b"");
+        });
+    }
+
+    #[test]
+    fn feed_ctrl_r_repeats_backward() {
+        // `0x12` (C-r) inside feed calls `repeat(Backward)` then
+        // returns `Continue`, advancing past the current match.
+        assert_no_syscalls(|| {
+            let h = hist(&[b"echo a", b"ls", b"echo b"]);
+            let mut s = IncrementalSearch::new(&h, Direction::Backward);
+            s.push_byte(b'e');
+            assert_eq!(s.matched(), Some(2));
+            assert_eq!(s.feed(0x12), SearchOutcome::Continue);
+            assert_eq!(s.matched(), Some(0));
+        });
+    }
+
+    #[test]
+    fn feed_ctrl_s_flips_to_forward_repeat() {
+        // `0x13` (C-s) switches `direction` to Forward and repeats.
+        // Starting from the first backward hit at index 2, C-s scans
+        // forward from `idx + 1`, which falls off the end so the
+        // search flips to `failing`.
+        assert_no_syscalls(|| {
+            let h = hist(&[b"echo a", b"ls", b"echo b"]);
+            let mut s = IncrementalSearch::new(&h, Direction::Backward);
+            s.push_byte(b'e');
+            assert_eq!(s.matched(), Some(2));
+            assert_eq!(s.feed(0x13), SearchOutcome::Continue);
+            // No more matches after index 2 scanning forward.
+            assert!(s.failing());
+            assert_eq!(s.direction(), Direction::Forward);
+        });
+    }
+
+    #[test]
+    fn repeat_forward_advances_past_current_match() {
+        // `repeat(Forward)` sets the new anchor to `idx + 1` and
+        // scans forward from there — landing on the next match.
+        assert_no_syscalls(|| {
+            let h = hist(&[b"echo a", b"ls", b"echo b"]);
+            let mut s = IncrementalSearch::new(&h, Direction::Forward);
+            s.push_byte(b'e');
+            assert_eq!(s.matched(), Some(0));
+            s.repeat(Direction::Forward);
+            assert_eq!(s.matched(), Some(2));
+        });
+    }
+
+    #[test]
     fn other_key_exits_with_redispatch() {
         assert_no_syscalls(|| {
             let h = hist(&[b"x"]);

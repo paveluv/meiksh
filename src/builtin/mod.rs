@@ -827,6 +827,13 @@ mod tests {
     use crate::trace_entries;
 
     #[test]
+    fn lookup_empty_name_returns_none() {
+        assert_no_syscalls(|| {
+            assert!(lookup(b"").is_none());
+        });
+    }
+
+    #[test]
     fn builtin_registry_knows_core_commands() {
         assert_no_syscalls(|| {
             assert!(is_builtin(b"cd"));

@@ -312,6 +312,19 @@ mod tests {
     }
 
     #[test]
+    fn lineno_fills_empty_value_slot_for_exported_lineno() {
+        // `mark_exported(LINENO)` creates `Some(EnvEntry { value: None })`.
+        // The program loop must take the `slot @ None` arm to populate
+        // the line number into the empty value.
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            shell.mark_exported(b"LINENO");
+            let _ = shell.execute_string(b"true\ntrue");
+            assert_eq!(shell.get_var(b"LINENO"), Some(b"2".as_slice()));
+        });
+    }
+
+    #[test]
     fn execute_program_stops_on_shell_not_running() {
         assert_no_syscalls(|| {
             let mut shell = test_shell();

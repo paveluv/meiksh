@@ -16,6 +16,7 @@ thread_local! {
     static TEST_LOCAL_TIME: RefCell<Option<super::time::LocalTime>> = const { RefCell::new(None) };
     static TEST_HOSTNAME: RefCell<Option<Vec<u8>>> = const { RefCell::new(None) };
     static TEST_TTYNAME: RefCell<Option<Vec<u8>>> = const { RefCell::new(None) };
+    static TEST_TERMINAL_COLUMNS: RefCell<Option<usize>> = const { RefCell::new(None) };
     static TEST_EUID_IS_ROOT: RefCell<bool> = const { RefCell::new(false) };
     static TEST_EUID_RAW: RefCell<u32> = const { RefCell::new(1000) };
     static TEST_PWNAME_FOR_UID: RefCell<Option<Vec<u8>>> = const { RefCell::new(None) };
@@ -44,6 +45,20 @@ pub(super) fn trace_gethostname(buf: &mut [u8]) -> c_int {
 
 pub(super) fn trace_ttyname_of_fd(_fd: c_int) -> Option<Vec<u8>> {
     TEST_TTYNAME.with(|c| c.borrow().clone())
+}
+
+#[cfg(test)]
+pub(crate) fn set_test_ttyname(name: Option<Vec<u8>>) {
+    TEST_TTYNAME.with(|c| *c.borrow_mut() = name);
+}
+
+pub(crate) fn test_terminal_columns_override() -> Option<usize> {
+    TEST_TERMINAL_COLUMNS.with(|c| *c.borrow())
+}
+
+#[cfg(test)]
+pub(crate) fn set_test_terminal_columns(cols: Option<usize>) {
+    TEST_TERMINAL_COLUMNS.with(|c| *c.borrow_mut() = cols);
 }
 
 pub(super) fn trace_effective_uid_is_root() -> bool {

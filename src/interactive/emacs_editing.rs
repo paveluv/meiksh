@@ -360,3 +360,431 @@ fn run_external_editor(
 fn is_printable(b: u8) -> bool {
     b >= 0x20 && b != 0x7f
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::interactive::inputrc;
+    use crate::shell::test_support::test_shell;
+    use crate::sys::constants::{STDERR_FILENO, STDIN_FILENO, STDOUT_FILENO};
+    use crate::sys::test_support::run_trace;
+    use crate::trace_entries;
+
+    use self::keymap::KeymapEntry;
+
+    const PASTE_ON: &[u8] = b"\x1b[?2004h";
+    const PASTE_OFF: &[u8] = b"\x1b[?2004l";
+    const CLEAR_LINE: &[u8] = b"\r\x1b[K";
+
+    /// Snapshot the global emacs context (via the shared inputrc test
+    /// helper), install a caller-supplied keymap customization with
+    /// `startup_loaded = true` so `ensure_startup_loaded` stays a
+    /// no-op, run `body`, and let the helper restore the previous
+    /// snapshot on the way out.
+    fn with_default_keymap<F: FnOnce()>(customize: impl FnOnce(&mut keymap::Keymap), body: F) {
+        inputrc::test_helpers::with_fresh_global(|| {
+            {
+                let mut g = match inputrc::global().lock() {
+                    Ok(g) => g,
+                    Err(p) => p.into_inner(),
+                };
+                g.keymap = keymap::Keymap::default_emacs();
+                g.startup_loaded = true;
+                customize(&mut g.keymap);
+            }
+            body();
+        });
+    }
+
+    #[test]
+    fn read_line_accepts_single_character_on_enter() {
+        with_default_keymap(
+            |_| {},
+            || {
+                run_trace(
+                    trace_entries![
+                        tcgetattr(fd(STDIN_FILENO)) -> 0,
+                        tcsetattr(fd(STDIN_FILENO), int(0)) -> 0,
+                        tcgetattr(fd(STDIN_FILENO)) -> 0,
+                        write(fd(STDOUT_FILENO), bytes(PASTE_ON)) -> auto,
+                        write(fd(STDOUT_FILENO), bytes(CLEAR_LINE)) -> auto,
+                        read(fd(STDIN_FILENO), _) -> bytes([b'a']),
+                        write(fd(STDOUT_FILENO), bytes(CLEAR_LINE)) -> auto,
+                        write(fd(STDOUT_FILENO), bytes(b"a")) -> auto,
+                        read(fd(STDIN_FILENO), _) -> bytes([b'\n']),
+                        write(fd(STDOUT_FILENO), bytes(PASTE_OFF)) -> auto,
+                        write(fd(STDOUT_FILENO), bytes(b"\r\n")) -> auto,
+                        tcsetattr(fd(STDIN_FILENO), int(0)) -> 0,
+                    ],
+                    || {
+                        let mut shell = test_shell();
+                        let line = super::read_line(&mut shell, b"").unwrap();
+                        assert_eq!(line, Some(b"a\n".to_vec()));
+                    },
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn read_line_eof_returns_none() {
+        // Covers the `read_byte()? == None` arm in `dispatch_loop`
+        // (line 94) that terminates the read on EOF.
+        with_default_keymap(
+            |_| {},
+            || {
+                run_trace(
+                    trace_entries![
+                        tcgetattr(fd(STDIN_FILENO)) -> 0,
+                        tcsetattr(fd(STDIN_FILENO), int(0)) -> 0,
+                        tcgetattr(fd(STDIN_FILENO)) -> 0,
+                        write(fd(STDOUT_FILENO), bytes(PASTE_ON)) -> auto,
+                        write(fd(STDOUT_FILENO), bytes(CLEAR_LINE)) -> auto,
+                        read(fd(STDIN_FILENO), _) -> 0,
+                        write(fd(STDOUT_FILENO), bytes(PASTE_OFF)) -> auto,
+                        write(fd(STDOUT_FILENO), bytes(b"\r\n")) -> auto,
+                        tcsetattr(fd(STDIN_FILENO), int(0)) -> 0,
+                    ],
+                    || {
+                        let mut shell = test_shell();
+                        let line = super::read_line(&mut shell, b"").unwrap();
+                        assert_eq!(line, None);
+                    },
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn read_line_ctrl_d_on_empty_line_returns_none() {
+        // Pressing C-d on an empty buffer triggers the
+        // `outcome.eof` arm in `apply_function`, which returns
+        // `Ok(Some(None))` and ends the read loop with `None`.
+        with_default_keymap(
+            |_| {},
+            || {
+                run_trace(
+                    trace_entries![
+                        tcgetattr(fd(STDIN_FILENO)) -> 0,
+                        tcsetattr(fd(STDIN_FILENO), int(0)) -> 0,
+                        tcgetattr(fd(STDIN_FILENO)) -> 0,
+                        write(fd(STDOUT_FILENO), bytes(PASTE_ON)) -> auto,
+                        write(fd(STDOUT_FILENO), bytes(CLEAR_LINE)) -> auto,
+                        read(fd(STDIN_FILENO), _) -> bytes([0x04]),
+                        write(fd(STDOUT_FILENO), bytes(PASTE_OFF)) -> auto,
+                        write(fd(STDOUT_FILENO), bytes(b"\r\n")) -> auto,
+                        tcsetattr(fd(STDIN_FILENO), int(0)) -> 0,
+                    ],
+                    || {
+                        let mut shell = test_shell();
+                        let line = super::read_line(&mut shell, b"").unwrap();
+                        assert_eq!(line, None);
+                    },
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn read_line_rings_bell_for_unbound_multibyte_sequence() {
+        // `ESC X` with `X` unbound ⇒ pending stays multibyte and the
+        // `Unbound` arm takes the `bell(); pending.clear()` path.  We
+        // then hit Enter to exit the loop.
+        with_default_keymap(
+            |_| {},
+            || {
+                run_trace(
+                    trace_entries![
+                        tcgetattr(fd(STDIN_FILENO)) -> 0,
+                        tcsetattr(fd(STDIN_FILENO), int(0)) -> 0,
+                        tcgetattr(fd(STDIN_FILENO)) -> 0,
+                        write(fd(STDOUT_FILENO), bytes(PASTE_ON)) -> auto,
+                        write(fd(STDOUT_FILENO), bytes(CLEAR_LINE)) -> auto,
+                        read(fd(STDIN_FILENO), _) -> bytes([0x1b]),
+                        read(fd(STDIN_FILENO), _) -> bytes([b'~']),
+                        write(fd(STDOUT_FILENO), bytes(b"\x07")) -> auto,
+                        write(fd(STDOUT_FILENO), bytes(CLEAR_LINE)) -> auto,
+                        read(fd(STDIN_FILENO), _) -> bytes([b'\n']),
+                        write(fd(STDOUT_FILENO), bytes(PASTE_OFF)) -> auto,
+                        write(fd(STDOUT_FILENO), bytes(b"\r\n")) -> auto,
+                        tcsetattr(fd(STDIN_FILENO), int(0)) -> 0,
+                    ],
+                    || {
+                        let mut shell = test_shell();
+                        let line = super::read_line(&mut shell, b"").unwrap();
+                        assert_eq!(line, Some(b"\n".to_vec()));
+                    },
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn read_line_forward_search_empty_aborts_and_returns_empty_line() {
+        // Press C-s with no history: the forward-search state machine
+        // immediately reports failure because the empty pattern has no
+        // matches; pressing ESC aborts and leaves the line empty, then
+        // Enter accepts.  Exercises lines 164–166 (ForwardSearchHistory
+        // dispatch) and the `SearchOutcome::Abort` branch in
+        // `run_incremental_search`.
+        with_default_keymap(
+            |_| {},
+            || {
+                run_trace(
+                    trace_entries![
+                        tcgetattr(fd(STDIN_FILENO)) -> 0,
+                        tcsetattr(fd(STDIN_FILENO), int(0)) -> 0,
+                        tcgetattr(fd(STDIN_FILENO)) -> 0,
+                        write(fd(STDOUT_FILENO), bytes(PASTE_ON)) -> auto,
+                        write(fd(STDOUT_FILENO), bytes(CLEAR_LINE)) -> auto,
+                        read(fd(STDIN_FILENO), _) -> bytes([0x13]),
+                        write(fd(STDERR_FILENO), bytes(b"\r\x1b[K(i-search`'): ")) -> auto,
+                        read(fd(STDIN_FILENO), _) -> bytes([0x07]),
+                        write(fd(STDOUT_FILENO), bytes(CLEAR_LINE)) -> auto,
+                        write(fd(STDOUT_FILENO), bytes(CLEAR_LINE)) -> auto,
+                        read(fd(STDIN_FILENO), _) -> bytes([b'\n']),
+                        write(fd(STDOUT_FILENO), bytes(PASTE_OFF)) -> auto,
+                        write(fd(STDOUT_FILENO), bytes(b"\r\n")) -> auto,
+                        tcsetattr(fd(STDIN_FILENO), int(0)) -> 0,
+                    ],
+                    || {
+                        let mut shell = test_shell();
+                        let line = super::read_line(&mut shell, b"").unwrap();
+                        assert_eq!(line, Some(b"\n".to_vec()));
+                    },
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn read_line_forward_search_fails_then_eofs_inside_search() {
+        // Enter incremental search with C-s, type a char that fails to
+        // match (we have no history), then EOF while still in the search
+        // mini-buffer.  Covers lines 241–243 (EOF within
+        // `run_incremental_search`) and the "failing i-search" prompt on
+        // line 298/305.
+        with_default_keymap(
+            |_| {},
+            || {
+                run_trace(
+                    trace_entries![
+                        tcgetattr(fd(STDIN_FILENO)) -> 0,
+                        tcsetattr(fd(STDIN_FILENO), int(0)) -> 0,
+                        tcgetattr(fd(STDIN_FILENO)) -> 0,
+                        write(fd(STDOUT_FILENO), bytes(PASTE_ON)) -> auto,
+                        write(fd(STDOUT_FILENO), bytes(CLEAR_LINE)) -> auto,
+                        read(fd(STDIN_FILENO), _) -> bytes([0x13]),
+                        write(fd(STDERR_FILENO), bytes(b"\r\x1b[K(i-search`'): ")) -> auto,
+                        read(fd(STDIN_FILENO), _) -> bytes([b'x']),
+                        write(fd(STDERR_FILENO), bytes(b"\r\x1b[K(failing i-search`x'): ")) -> auto,
+                        read(fd(STDIN_FILENO), _) -> 0,
+                        write(fd(STDOUT_FILENO), bytes(PASTE_OFF)) -> auto,
+                        write(fd(STDOUT_FILENO), bytes(b"\r\n")) -> auto,
+                        tcsetattr(fd(STDIN_FILENO), int(0)) -> 0,
+                    ],
+                    || {
+                        let mut shell = test_shell();
+                        let line = super::read_line(&mut shell, b"").unwrap();
+                        assert_eq!(line, None);
+                    },
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn read_line_reverse_search_exits_on_redispatched_accept_line() {
+        // History has one entry that matches "hi".  C-r + "h" finds it
+        // and sets `state.buf = history[idx]`.  We've bound ESC (0x1b)
+        // to `accept-line` so that pressing ESC while inside the
+        // search mini-buffer triggers `SearchOutcome::Exit` with
+        // `byte: 0x1b` — redispatch then fires `accept-line` and
+        // propagates the accepted line all the way out.  Covers
+        // lines 276–287 (the Exit body plus the early
+        // `return Ok(Some(res));`).
+        with_default_keymap(
+            |km| {
+                km.bind(b"\x1b", KeymapEntry::Func(EmacsFn::AcceptLine));
+            },
+            || {
+                run_trace(
+                    trace_entries![
+                        tcgetattr(fd(STDIN_FILENO)) -> 0,
+                        tcsetattr(fd(STDIN_FILENO), int(0)) -> 0,
+                        tcgetattr(fd(STDIN_FILENO)) -> 0,
+                        write(fd(STDOUT_FILENO), bytes(PASTE_ON)) -> auto,
+                        write(fd(STDOUT_FILENO), bytes(CLEAR_LINE)) -> auto,
+                        read(fd(STDIN_FILENO), _) -> bytes([0x12]),
+                        write(fd(STDERR_FILENO), bytes(b"\r\x1b[K(reverse-i-search`'): ")) -> auto,
+                        read(fd(STDIN_FILENO), _) -> bytes([b'h']),
+                        write(fd(STDERR_FILENO), bytes(b"\r\x1b[K(reverse-i-search`h'): ")) -> auto,
+                        read(fd(STDIN_FILENO), _) -> bytes([0x1b]),
+                        write(fd(STDOUT_FILENO), bytes(CLEAR_LINE)) -> auto,
+                        write(fd(STDOUT_FILENO), bytes(b"hi")) -> auto,
+                        write(fd(STDOUT_FILENO), bytes(PASTE_OFF)) -> auto,
+                        write(fd(STDOUT_FILENO), bytes(b"\r\n")) -> auto,
+                        tcsetattr(fd(STDIN_FILENO), int(0)) -> 0,
+                    ],
+                    || {
+                        let mut shell = test_shell();
+                        shell.add_history(b"hi");
+                        let line = super::read_line(&mut shell, b"").unwrap();
+                        assert_eq!(line, Some(b"hi\n".to_vec()));
+                    },
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn read_line_reverse_search_exit_falls_through_when_redispatch_no_op() {
+        // Same setup as above, but ESC is bound to `BeginningOfLine`
+        // which doesn't accept — so after the Exit body we fall
+        // through to lines 289–290 (the trailing `redraw` +
+        // `Ok(None)`), and the user's next Enter accepts normally.
+        with_default_keymap(
+            |km| {
+                km.bind(b"\x1b", KeymapEntry::Func(EmacsFn::BeginningOfLine));
+            },
+            || {
+                run_trace(
+                    trace_entries![
+                        tcgetattr(fd(STDIN_FILENO)) -> 0,
+                        tcsetattr(fd(STDIN_FILENO), int(0)) -> 0,
+                        tcgetattr(fd(STDIN_FILENO)) -> 0,
+                        write(fd(STDOUT_FILENO), bytes(PASTE_ON)) -> auto,
+                        write(fd(STDOUT_FILENO), bytes(CLEAR_LINE)) -> auto,
+                        read(fd(STDIN_FILENO), _) -> bytes([0x12]),
+                        write(fd(STDERR_FILENO), bytes(b"\r\x1b[K(reverse-i-search`'): ")) -> auto,
+                        read(fd(STDIN_FILENO), _) -> bytes([b'h']),
+                        write(fd(STDERR_FILENO), bytes(b"\r\x1b[K(reverse-i-search`h'): ")) -> auto,
+                        read(fd(STDIN_FILENO), _) -> bytes([0x1b]),
+                        write(fd(STDOUT_FILENO), bytes(CLEAR_LINE)) -> auto,
+                        write(fd(STDOUT_FILENO), bytes(b"hi")) -> auto,
+                        write(fd(STDOUT_FILENO), bytes(CLEAR_LINE)) -> auto,
+                        write(fd(STDOUT_FILENO), bytes(b"hi\x1b[2D")) -> auto,
+                        write(fd(STDOUT_FILENO), bytes(CLEAR_LINE)) -> auto,
+                        write(fd(STDOUT_FILENO), bytes(b"hi\x1b[2D")) -> auto,
+                        read(fd(STDIN_FILENO), _) -> bytes([b'\n']),
+                        write(fd(STDOUT_FILENO), bytes(PASTE_OFF)) -> auto,
+                        write(fd(STDOUT_FILENO), bytes(b"\r\n")) -> auto,
+                        tcsetattr(fd(STDIN_FILENO), int(0)) -> 0,
+                    ],
+                    || {
+                        let mut shell = test_shell();
+                        shell.add_history(b"hi");
+                        let line = super::read_line(&mut shell, b"").unwrap();
+                        assert_eq!(line, Some(b"hi\n".to_vec()));
+                    },
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn read_line_dispatches_macro_binding() {
+        // Bind ESC `m` to the macro "ok" so the keymap resolves to
+        // `Resolved::Macro(...)`, which expands to self-inserts via
+        // recursive `handle_byte`.  Covers lines 173–181.
+        with_default_keymap(
+            |km| {
+                km.bind(b"\x1bm", KeymapEntry::Macro(b"ok".to_vec()));
+            },
+            || {
+                run_trace(
+                    trace_entries![
+                        tcgetattr(fd(STDIN_FILENO)) -> 0,
+                        tcsetattr(fd(STDIN_FILENO), int(0)) -> 0,
+                        tcgetattr(fd(STDIN_FILENO)) -> 0,
+                        write(fd(STDOUT_FILENO), bytes(PASTE_ON)) -> auto,
+                        write(fd(STDOUT_FILENO), bytes(CLEAR_LINE)) -> auto,
+                        read(fd(STDIN_FILENO), _) -> bytes([0x1b]),
+                        read(fd(STDIN_FILENO), _) -> bytes([b'm']),
+                        write(fd(STDOUT_FILENO), bytes(CLEAR_LINE)) -> auto,
+                        write(fd(STDOUT_FILENO), bytes(b"ok")) -> auto,
+                        read(fd(STDIN_FILENO), _) -> bytes([b'\n']),
+                        write(fd(STDOUT_FILENO), bytes(PASTE_OFF)) -> auto,
+                        write(fd(STDOUT_FILENO), bytes(b"\r\n")) -> auto,
+                        tcsetattr(fd(STDIN_FILENO), int(0)) -> 0,
+                    ],
+                    || {
+                        let mut shell = test_shell();
+                        let line = super::read_line(&mut shell, b"").unwrap();
+                        assert_eq!(line, Some(b"ok\n".to_vec()));
+                    },
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn read_line_macro_accepting_newline_returns_immediately() {
+        // A macro whose body ends in `\n` causes the recursive
+        // `handle_byte` to fire `accept-line` and bubble up a line.
+        // Covers line 178 (`return Ok(Some(res));` inside the macro
+        // dispatch loop).
+        with_default_keymap(
+            |km| {
+                km.bind(b"\x1bm", KeymapEntry::Macro(b"ok\n".to_vec()));
+            },
+            || {
+                run_trace(
+                    trace_entries![
+                        tcgetattr(fd(STDIN_FILENO)) -> 0,
+                        tcsetattr(fd(STDIN_FILENO), int(0)) -> 0,
+                        tcgetattr(fd(STDIN_FILENO)) -> 0,
+                        write(fd(STDOUT_FILENO), bytes(PASTE_ON)) -> auto,
+                        write(fd(STDOUT_FILENO), bytes(CLEAR_LINE)) -> auto,
+                        read(fd(STDIN_FILENO), _) -> bytes([0x1b]),
+                        read(fd(STDIN_FILENO), _) -> bytes([b'm']),
+                        write(fd(STDOUT_FILENO), bytes(PASTE_OFF)) -> auto,
+                        write(fd(STDOUT_FILENO), bytes(b"\r\n")) -> auto,
+                        tcsetattr(fd(STDIN_FILENO), int(0)) -> 0,
+                    ],
+                    || {
+                        let mut shell = test_shell();
+                        let line = super::read_line(&mut shell, b"").unwrap();
+                        assert_eq!(line, Some(b"ok\n".to_vec()));
+                    },
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn read_line_runs_bound_shell_command() {
+        // Bind ESC `s` to a `bind -x`-style shell command that
+        // mutates READLINE_LINE.  Covers lines 183–186 (the
+        // `Resolved::ExecShell` arm).
+        with_default_keymap(
+            |km| {
+                km.bind(b"\x1bs", KeymapEntry::ExecShell(b":".to_vec()));
+            },
+            || {
+                run_trace(
+                    trace_entries![
+                        tcgetattr(fd(STDIN_FILENO)) -> 0,
+                        tcsetattr(fd(STDIN_FILENO), int(0)) -> 0,
+                        tcgetattr(fd(STDIN_FILENO)) -> 0,
+                        write(fd(STDOUT_FILENO), bytes(PASTE_ON)) -> auto,
+                        write(fd(STDOUT_FILENO), bytes(CLEAR_LINE)) -> auto,
+                        read(fd(STDIN_FILENO), _) -> bytes([0x1b]),
+                        read(fd(STDIN_FILENO), _) -> bytes([b's']),
+                        write(fd(STDOUT_FILENO), bytes(CLEAR_LINE)) -> auto,
+                        read(fd(STDIN_FILENO), _) -> bytes([b'\n']),
+                        write(fd(STDOUT_FILENO), bytes(PASTE_OFF)) -> auto,
+                        write(fd(STDOUT_FILENO), bytes(b"\r\n")) -> auto,
+                        tcsetattr(fd(STDIN_FILENO), int(0)) -> 0,
+                    ],
+                    || {
+                        let mut shell = test_shell();
+                        let line = super::read_line(&mut shell, b"").unwrap();
+                        assert_eq!(line, Some(b"\n".to_vec()));
+                    },
+                );
+            },
+        );
+    }
+}

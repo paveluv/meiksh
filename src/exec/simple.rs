@@ -1407,4 +1407,138 @@ mod tests {
             },
         );
     }
+
+    #[test]
+    fn argv0_is_literal_returns_false_for_empty_words() {
+        assert_no_syscalls(|| {
+            let cmd = SimpleCommand::default();
+            assert!(!argv0_is_literal(&cmd));
+        });
+    }
+
+    #[test]
+    fn function_call_reuses_cached_slot_on_second_invocation() {
+        // First call primes the argv0_slot; second call goes through the
+        // early-return body-cache branch in probe_function_memoized.
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let prog = parse_test("f() { true; }; f; f").unwrap();
+            let status = execute_program(&mut shell, &prog).unwrap();
+            assert_eq!(status, 0);
+        });
+    }
+
+    #[test]
+    fn classify_argv0_not_literal_with_no_match_falls_back_to_external() {
+        // Drives the NotLiteral arm of `classify_argv0` with a name
+        // that resolves to neither a builtin nor a function so the
+        // External branch (line 270) is taken.
+        assert_no_syscalls(|| {
+            let shell = test_shell();
+            let simple = SimpleCommand::default();
+            simple.argv0_memo.set(Argv0Memo::NotLiteral);
+            let result = classify_argv0(&shell, &simple, b"definitely_not_a_command_xyz");
+            assert!(matches!(result, Argv0Classification::External));
+        });
+    }
+
+    #[test]
+    fn probe_function_memoized_returns_cached_body_directly() {
+        // Pre-populate the per-SimpleCommand argv0_slot with a slot
+        // that has a body so that `probe_function_memoized` short-
+        // circuits via the cached early-return arm at line 215.
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let _ = shell.execute_string(b"f() { :; }");
+            let simple = SimpleCommand::default();
+            let slot = shell.lookup_function_slot(b"f").expect("slot");
+            *simple.argv0_slot.borrow_mut() = Some(slot);
+            let result = probe_function_memoized(&shell, &simple, b"f");
+            assert!(result.is_some());
+        });
+    }
+
+    #[test]
+    fn function_slot_cleared_after_function_removed() {
+        // Probe with a stale, non-None `argv0_slot` after the function
+        // has been removed — exercises line 226's slot clear.
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let _ = shell.execute_string(b"f() { :; }");
+            let simple = SimpleCommand::default();
+            let slot = shell.lookup_function_slot(b"f").expect("slot");
+            *simple.argv0_slot.borrow_mut() = Some(slot);
+            shell.unset_function(b"f");
+            let result = probe_function_memoized(&shell, &simple, b"f");
+            assert!(result.is_none());
+            assert!(simple.argv0_slot.borrow().is_none());
+        });
+    }
+
+    #[test]
+    fn non_literal_argv0_classifies_as_special_builtin() {
+        // Dispatch a special builtin through a parameter expansion so
+        // argv0 is not a literal (NotLiteral memo → SpecialBuiltin arm).
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let prog = parse_test("a=:; $a").unwrap();
+            let status = execute_program(&mut shell, &prog).unwrap();
+            assert_eq!(status, 0);
+        });
+    }
+
+    #[test]
+    fn non_literal_argv0_classifies_as_function_over_regular_builtin() {
+        // Shadow a regular builtin with a function and dispatch via
+        // expansion; NotLiteral arm prefers the function body.
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let prog = parse_test("true() { :; }; a=true; $a").unwrap();
+            let status = execute_program(&mut shell, &prog).unwrap();
+            assert_eq!(status, 0);
+        });
+    }
+
+    #[test]
+    fn non_literal_argv0_classifies_as_function_without_builtin() {
+        // A plain function invoked through an expanded argv0 hits the
+        // NotLiteral → no-builtin → Function branch.
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let prog = parse_test("myfn() { :; }; a=myfn; $a").unwrap();
+            let status = execute_program(&mut shell, &prog).unwrap();
+            assert_eq!(status, 0);
+        });
+    }
+
+    #[test]
+    fn literal_regular_builtin_shadowed_by_function_dispatches_function() {
+        // Direct literal argv0 that matches a regular builtin which is
+        // also shadowed by a user function (LiteralRegular → Function).
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let prog = parse_test("true() { :; }; true").unwrap();
+            let status = execute_program(&mut shell, &prog).unwrap();
+            assert_eq!(status, 0);
+        });
+    }
+
+    #[test]
+    fn function_prefix_assignment_readonly_restores_state() {
+        // Readonly prefix assignment on a function call hits the
+        // apply_prefix_assignments_cached error path that restores saved
+        // variables and closes the redirection guard.
+        run_trace(
+            trace_entries![
+                write(fd(2), bytes(b"meiksh: line 1: RO: readonly variable\n")) -> auto,
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.mark_readonly(b"RO");
+                let prog = parse_test("myfn() { :; }; RO=v myfn").unwrap();
+                let err = execute_program(&mut shell, &prog).unwrap_err();
+                assert_eq!(err.exit_status(), 1);
+            },
+        );
+    }
 }
