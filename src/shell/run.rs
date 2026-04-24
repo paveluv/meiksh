@@ -252,7 +252,7 @@ impl Shell {
             }
         }
         if self.interactive {
-            interactive::load_env_file(self)?;
+            interactive::load_startup_files(self)?;
         }
         let result = if let Some(command) = self.options.command_string.clone() {
             self.run_source(b"<command>", &command)

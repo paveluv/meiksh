@@ -4,13 +4,13 @@ use crate::sys;
 
 mod editor;
 pub(crate) mod emacs_editing;
-mod env_file;
 mod history;
 pub(crate) mod inputrc;
 mod mail;
 pub(crate) mod prompt;
 mod prompt_expand;
 mod repl;
+mod startup;
 mod vi_editing;
 
 fn remove_file_bytes(path: &[u8]) {
@@ -23,8 +23,8 @@ pub(crate) fn run(shell: &mut Shell) -> Result<i32, ShellError> {
     repl::run_loop(shell)
 }
 
-pub(crate) fn load_env_file(shell: &mut Shell) -> Result<(), ShellError> {
-    env_file::load_env_file(shell)
+pub(crate) fn load_startup_files(shell: &mut Shell) -> Result<(), ShellError> {
+    startup::load_startup_files(shell)
 }
 #[cfg(test)]
 #[allow(

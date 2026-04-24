@@ -89,6 +89,18 @@ pub fn spawn_meiksh_pty(extra_env: &[(&str, &str)]) -> Option<PtyChild> {
         // `/etc/inputrc`. Tests that specifically exercise inputrc
         // loading override this via `extra_env`.
         .env("INPUTRC", "/dev/null")
+        // Spec docs/features/startup-files.md § 3 teaches the shell to
+        // source `/etc/profile` and `$HOME/.profile` at interactive
+        // startup. On a developer machine either of those can run
+        // arbitrary commands (spawning subshells via `run-parts`,
+        // toggling `bash_completion`, etc.) which emit bytes onto the
+        // PTY and interfere with prompt/keymap assertions downstream.
+        // The undocumented test hook `MEIKSH_SKIP_STARTUP_FILES=1`
+        // (spec § 7) skips all three files while preserving the
+        // `MEIKSH` marker, giving every PTY test a hermetic baseline.
+        // Tests that specifically exercise startup sourcing must
+        // spawn a meiksh subprocess directly, not via this harness.
+        .env("MEIKSH_SKIP_STARTUP_FILES", "1")
         .stdin(unsafe { Stdio::from_raw_fd(secondary_fd) })
         .stdout(unsafe { Stdio::from_raw_fd(stdout_fd) })
         .stderr(unsafe { Stdio::from_raw_fd(stderr_fd) });
