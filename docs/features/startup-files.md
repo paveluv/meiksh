@@ -2,7 +2,7 @@
 
 ## Status
 
-**Implemented.** The loader lives in [src/interactive/startup.rs](../../src/interactive/startup.rs) and is invoked once by [`Shell::run`](../../src/shell/run.rs) whenever the shell is interactive. Every normative statement of this spec is exercised by the unit tests colocated with the loader (trace-driven coverage of each file-source path, the `MEIKSH` marker, `$HOME`/`$ENV` handling, and the setuid guard) and by the `interactive_shell_*` integration tests in [tests/integration/shell_options.rs](../../tests/integration/shell_options.rs) (end-to-end `~/.profile`, `$ENV`, and `MEIKSH` sourcing through a real `meiksh -i` subprocess).
+**Implemented.** The loader lives in [src/interactive/startup.rs](../../src/interactive/startup.rs) and is invoked once by [`Shell::run`](../../src/shell/run.rs) whenever the shell is interactive. Every normative statement of this spec is exercised by the unit tests colocated with the loader (trace-driven coverage of each file-source path, the `MEIKSH_VERSION` marker, `$HOME`/`$ENV` handling, and the setuid guard) and by the `interactive_shell_*` integration tests in [tests/integration/shell_options.rs](../../tests/integration/shell_options.rs) (end-to-end `~/.profile`, `$ENV`, and `MEIKSH_VERSION` sourcing through a real `meiksh -i` subprocess).
 
 ## 1. Scope
 
@@ -51,26 +51,28 @@ If a file from Section 3 exists but contains a syntactic or semantic error, sour
 
 Before sourcing any file from Section 3, meiksh shall compare the process's real and effective user IDs, and the process's real and effective group IDs. If any of these pairs differ (the shell is running setuid or setgid), meiksh shall skip all of Section 3 and proceed directly to the interactive REPL. This matches the POSIX-specified guard for `$ENV` and extends it, conservatively, to `/etc/profile` and `$HOME/.profile` so that a privileged meiksh can never be tricked into executing attacker-controlled system or user state.
 
-The `MEIKSH` marker in Section 5 shall still be established under this guard.
+The `MEIKSH_VERSION` marker in Section 5 shall still be established under this guard.
 
-## 5. The `MEIKSH` Marker Variable
+## 5. The `MEIKSH_VERSION` Marker Variable
 
 At the beginning of interactive startup, *before* any file from Section 3 is sourced and *before* the identity guard is evaluated, meiksh shall:
 
-1. Set the shell variable `MEIKSH` to the value `1`.
-2. Mark `MEIKSH` exported, so that any child process spawned by a startup file — or by any command run later in the interactive session — inherits it via `execve(2)`.
+1. Set the shell variable `MEIKSH_VERSION` to the crate's SemVer string (for example, `0.1.0`). The exact value is determined at compile time from Cargo's package version.
+2. Mark `MEIKSH_VERSION` exported, so that any child process spawned by a startup file — or by any command run later in the interactive session — inherits it via `execve(2)`.
 
-This marker exists so that portable startup scripts can branch on shell identity. The following idiom shall behave as intended when included in `/etc/profile` or `$HOME/.profile`:
+This name mirrors the convention used by every other major interactive shell: `BASH_VERSION`, `ZSH_VERSION`, `KSH_VERSION`, `FISH_VERSION`. Unlike bash's and zsh's markers, `MEIKSH_VERSION` is **exported** by default so that `/etc/profile` and `$HOME/.profile` — which are routinely shared across shells — can detect meiksh from inside the same startup pass that decides what shell-specific configuration to apply.
+
+The marker exists so that portable startup scripts can branch on shell identity. The following idiom shall behave as intended when included in `/etc/profile` or `$HOME/.profile`:
 
 ```sh
-if [ -n "${MEIKSH:-}" ]; then
+if [ -n "${MEIKSH_VERSION:-}" ]; then
     # meiksh-specific setup
 fi
 ```
 
-`MEIKSH` is deliberately a presence-plus-value signal. The value `1` shall be considered stable across meiksh versions; scripts that merely check `[ -n "$MEIKSH" ]` shall continue to work if meiksh later adopts a richer value. Scripts that check for `MEIKSH=1` exactly are conformant for the current release but not future-proof.
+`MEIKSH_VERSION` is deliberately a presence-plus-value signal. Its *value* follows SemVer and will change across meiksh releases, so scripts that want portability shall check only for presence (`[ -n "$MEIKSH_VERSION" ]`). Scripts that need version-aware behavior may parse the value using normal SemVer rules; meiksh shall not change the format of the string within a release.
 
-The user (or a startup file) may `unset MEIKSH` after it has been inspected; meiksh shall not restore the variable.
+The user (or a startup file) may `unset MEIKSH_VERSION` after it has been inspected; meiksh shall not restore the variable.
 
 ## 6. Files Meiksh Does Not Load
 
@@ -81,14 +83,14 @@ The following files, loaded by one or more of bash, ksh, or zsh at startup, shal
 - `/etc/ksh.kshrc`, `~/.kshrc`, `$ENV` when non-interactive — ksh-specific variants.
 - `~/.profile` in non-interactive mode — meiksh gates `~/.profile` on interactive mode (Section 2); the traditional POSIX login-profile behavior is not reproduced.
 
-If a user wants bash-style `~/.bashrc` behavior under meiksh, they shall put the equivalent logic in `~/.profile` and gate it on `[ -n "$MEIKSH" ]` per Section 5.
+If a user wants bash-style `~/.bashrc` behavior under meiksh, they shall put the equivalent logic in `~/.profile` and gate it on `[ -n "$MEIKSH_VERSION" ]` per Section 5.
 
 ## 7. Non-Goals
 
 - Meiksh shall not distinguish login from non-login interactive shells. There is no `--login` flag, no leading-dash argv-0 detection, and no separate login-profile path.
 - Meiksh shall not source files based on remote/local heuristics (for example, by consulting `SSH_CONNECTION`).
-- Meiksh shall not read a personal `~/.meikshrc`. All user-level startup logic belongs in `~/.profile`, gated on `$MEIKSH` if shell-specific.
+- Meiksh shall not read a personal `~/.meikshrc`. All user-level startup logic belongs in `~/.profile`, gated on `$MEIKSH_VERSION` if shell-specific.
 
 ### 7.1 Internal Test Hook
 
-For the benefit of meiksh's own integration tests, the variable `MEIKSH_SKIP_STARTUP_FILES`, when equal to the exact value `1` at the start of `Shell::run`, shall suppress every file from Section 3 while still establishing the `MEIKSH` marker (Section 5). The PTY harness in `tests/integration/interactive_common/` sets this variable so that a developer's real `/etc/profile`, `~/.profile`, or `$ENV` cannot contaminate test assertions. This hook is internal and is deliberately omitted from user-facing documentation; it shall not be relied upon by ordinary scripts.
+For the benefit of meiksh's own integration tests, the variable `MEIKSH_SKIP_STARTUP_FILES`, when equal to the exact value `1` at the start of `Shell::run`, shall suppress every file from Section 3 while still establishing the `MEIKSH_VERSION` marker (Section 5). The PTY harness in `tests/integration/interactive_common/` sets this variable so that a developer's real `/etc/profile`, `~/.profile`, or `$ENV` cannot contaminate test assertions. This hook is internal and is deliberately omitted from user-facing documentation; it shall not be relied upon by ordinary scripts.

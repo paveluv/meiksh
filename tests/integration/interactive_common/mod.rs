@@ -97,7 +97,8 @@ pub fn spawn_meiksh_pty(extra_env: &[(&str, &str)]) -> Option<PtyChild> {
         // PTY and interfere with prompt/keymap assertions downstream.
         // The undocumented test hook `MEIKSH_SKIP_STARTUP_FILES=1`
         // (spec § 7) skips all three files while preserving the
-        // `MEIKSH` marker, giving every PTY test a hermetic baseline.
+        // `MEIKSH_VERSION` marker, giving every PTY test a hermetic
+        // baseline.
         // Tests that specifically exercise startup sourcing must
         // spawn a meiksh subprocess directly, not via this harness.
         .env("MEIKSH_SKIP_STARTUP_FILES", "1")
