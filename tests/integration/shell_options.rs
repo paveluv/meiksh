@@ -313,6 +313,178 @@ fn interactive_shell_uses_home_history_default() {
 }
 
 #[test]
+fn interactive_shell_exports_meiksh_marker() {
+    // Spec docs/features/startup-files.md § 5: the `MEIKSH` variable
+    // is set to `1` and exported before any startup file is sourced,
+    // so a child process started inside the interactive shell inherits
+    // it via `execve(2)`.
+    let home = TempDir::new("meiksh-marker-home");
+    let output = Command::new(meiksh())
+        .arg("-i")
+        .env("HOME", home.path())
+        .env_remove("ENV")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .and_then(|mut child| {
+            child
+                .stdin
+                .as_mut()
+                .unwrap()
+                .write_all(b"printenv MEIKSH\nexit\n")?;
+            child.wait_with_output()
+        })
+        .expect("run meiksh interactive");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("1"),
+        "MEIKSH should be exported to the child printenv call, got stdout: {stdout}"
+    );
+}
+
+#[test]
+fn interactive_shell_sources_home_profile() {
+    // Spec docs/features/startup-files.md § 3.2.
+    let home = TempDir::new("meiksh-home-profile");
+    let profile = home.join(".profile");
+    fs::write(&profile, "export FROM_HOME_PROFILE=home_ok\n").expect("write ~/.profile");
+
+    let output = Command::new(meiksh())
+        .arg("-i")
+        .env("HOME", home.path())
+        .env_remove("ENV")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .and_then(|mut child| {
+            child
+                .stdin
+                .as_mut()
+                .unwrap()
+                .write_all(b"printenv FROM_HOME_PROFILE\nexit\n")?;
+            child.wait_with_output()
+        })
+        .expect("run meiksh interactive");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("home_ok"),
+        "~/.profile should have set FROM_HOME_PROFILE=home_ok, got stdout: {stdout}"
+    );
+}
+
+#[test]
+fn interactive_shell_sources_home_profile_before_env() {
+    // Spec § 3: ordering is /etc/profile → ~/.profile → $ENV. The two
+    // user files both assign the same variable; the final value is
+    // whatever $ENV set last.
+    let home = TempDir::new("meiksh-order-home");
+    let profile = home.join(".profile");
+    fs::write(&profile, "ORDER_VAR=home\nexport ORDER_VAR\n").expect("write ~/.profile");
+
+    let env_file = home.join("env.sh");
+    fs::write(&env_file, "ORDER_VAR=env\nexport ORDER_VAR\n").expect("write env file");
+
+    let output = Command::new(meiksh())
+        .arg("-i")
+        .env("HOME", home.path())
+        .env("ENV", &env_file)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .and_then(|mut child| {
+            child
+                .stdin
+                .as_mut()
+                .unwrap()
+                .write_all(b"printenv ORDER_VAR\nexit\n")?;
+            child.wait_with_output()
+        })
+        .expect("run meiksh interactive");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("env"),
+        "ORDER_VAR should be re-assigned by $ENV after ~/.profile, got stdout: {stdout}"
+    );
+}
+
+#[test]
+fn interactive_shell_home_profile_can_see_meiksh_marker() {
+    // Spec § 5: MEIKSH is established before ~/.profile runs so that
+    // profile scripts can branch on shell identity. Without the marker
+    // our `.profile` writes `FROM_PROFILE=empty`; with it, it writes
+    // the marker's value.
+    let home = TempDir::new("meiksh-marker-profile");
+    let profile = home.join(".profile");
+    fs::write(
+        &profile,
+        "if [ -n \"${MEIKSH:-}\" ]; then FROM_PROFILE=\"meiksh=${MEIKSH}\"; else FROM_PROFILE=empty; fi\nexport FROM_PROFILE\n",
+    )
+    .expect("write ~/.profile");
+
+    let output = Command::new(meiksh())
+        .arg("-i")
+        .env("HOME", home.path())
+        .env_remove("ENV")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .and_then(|mut child| {
+            child
+                .stdin
+                .as_mut()
+                .unwrap()
+                .write_all(b"printenv FROM_PROFILE\nexit\n")?;
+            child.wait_with_output()
+        })
+        .expect("run meiksh interactive");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("meiksh=1"),
+        "~/.profile should observe MEIKSH=1, got stdout: {stdout}"
+    );
+}
+
+#[test]
+fn non_interactive_shell_skips_startup_files() {
+    // Spec § 2: non-interactive shells source no startup file. We
+    // invoke `sh -c` with HOME/ENV pointing at loud files; neither
+    // should run, so the command exits cleanly and prints only the
+    // body of the -c string.
+    let home = TempDir::new("meiksh-noninteractive");
+    let profile = home.join(".profile");
+    fs::write(&profile, "echo FROM_HOME_PROFILE_RAN\n").expect("write ~/.profile");
+    let env_file = home.join("env.sh");
+    fs::write(&env_file, "echo FROM_ENV_RAN\n").expect("write env file");
+
+    let output = Command::new(meiksh())
+        .args(["-c", "echo ok"])
+        .env("HOME", home.path())
+        .env("ENV", &env_file)
+        .output()
+        .expect("run meiksh -c");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(
+        stdout.trim(),
+        "ok",
+        "non-interactive shell should source no startup files, got stdout: {stdout}"
+    );
+}
+
+#[test]
 fn interactive_shell_sources_env_file() {
     let root = TempDir::new("meiksh-env");
     let path = root.join("env.sh");

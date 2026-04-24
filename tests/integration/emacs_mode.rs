@@ -1895,16 +1895,21 @@ fn tab_variable_completion_via_dollar_prefix() {
     };
     enable_emacs(&mut pty);
     // Export a uniquely named variable so there's only one candidate.
-    pty.send(b"export MEIKSHCOMPLVAR=seen\n");
+    // The prefix `TABVARCOMPL` is chosen so it cannot share an initial
+    // segment with any name the interactive shell itself exports at
+    // startup (for example the `MEIKSH` marker from
+    // `docs/features/startup-files.md` § 5), which would otherwise
+    // make `$MEIK<TAB>` ambiguous and prevent completion.
+    pty.send(b"export TABVARCOMPL=seen\n");
     let _ = drain_until_contains(&mut pty, b"$ ");
-    // printf '[%s]' $MEI<TAB> → $MEIKSHCOMPLVAR → expands to "seen".
-    pty.send(b"printf '[%s]' $MEIK\x09");
+    // printf '[%s]' $TABVA<TAB> → $TABVARCOMPL → expands to "seen".
+    pty.send(b"printf '[%s]' $TABVA\x09");
     let out = accept_then_drain_end(&mut pty);
     let _ = pty.exit_and_wait();
     let text = String::from_utf8_lossy(&out);
     assert!(
         text.contains("[seen]"),
-        "expected `$`-prefixed TAB to complete to $MEIKSHCOMPLVAR and expand: {text:?}"
+        "expected `$`-prefixed TAB to complete to $TABVARCOMPL and expand: {text:?}"
     );
 }
 
