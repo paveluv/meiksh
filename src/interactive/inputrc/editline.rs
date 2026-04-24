@@ -305,6 +305,18 @@ mod tests {
     }
 
     #[test]
+    fn decode_keyseq_tolerates_embedded_double_quotes() {
+        assert_no_syscalls(|| {
+            // An embedded quoted run is decoded via the readline
+            // decoder; escapes inside it keep their meaning.
+            assert_eq!(
+                decode_editline_keyseq(b"a\"\\e[A\"b").unwrap(),
+                vec![b'a', 0x1b, b'[', b'A', b'b']
+            );
+        });
+    }
+
+    #[test]
     fn translate_every_mapped_name() {
         assert_no_syscalls(|| {
             for (name, expected) in MAPPING_TABLE {

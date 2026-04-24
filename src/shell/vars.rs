@@ -243,6 +243,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn cached_var_binding_debug_prints_placeholder() {
+        // Ensures the Debug impl doesn't leak the private cell state.
+        let binding = CachedVarBinding::default();
+        let text = format!("{:?}", binding);
+        assert!(text.contains("CachedVarBinding"));
+    }
+
+    #[test]
     fn ensure_slot_assigns_stable_indices() {
         let mut t = VarTable::default();
         let a = t.ensure_slot(b"FOO");

@@ -67,6 +67,15 @@ mod tests {
     }
 
     #[test]
+    fn relative_path_with_no_dir_in_including_file_uses_dot_slash() {
+        // `including_file` without a slash makes `rposition` return
+        // `None`, exercising the `b"./"` fallback at line 40.
+        assert_no_syscalls(|| {
+            assert_eq!(resolve(b"inputrc", b"shared"), b"./shared");
+        });
+    }
+
+    #[test]
     fn include_guard_blocks_recursion() {
         assert_no_syscalls(|| {
             let mut g = IncludeGuard::default();

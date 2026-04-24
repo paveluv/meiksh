@@ -482,6 +482,46 @@ mod tests {
     }
 
     #[test]
+    fn detect_name_equals_prefix_non_literal_returns_none() {
+        // A word whose first part is not a `Literal` (e.g. starts with
+        // a `$var` expansion) must not be picked up as `NAME=...`.
+        assert_no_syscalls(|| {
+            assert!(detect_name_equals_prefix(&word(b"$x=1")).is_none());
+        });
+    }
+
+    #[test]
+    fn detect_name_equals_prefix_empty_name_returns_none() {
+        // `=foo` has `eq == 0` — the helper rejects it.
+        assert_no_syscalls(|| {
+            assert!(detect_name_equals_prefix(&word(b"=foo")).is_none());
+        });
+    }
+
+    #[test]
+    fn literal_only_bytes_rejects_partial_literal_span() {
+        // `literal_only_bytes` requires the single-`Literal` slice
+        // pattern *and* `start == 0 && end == raw.len()`.  The
+        // latter guard is the one on line 160 — hit it directly by
+        // constructing a Word whose lone Literal covers a strict
+        // subset of `raw`.
+        assert_no_syscalls(|| {
+            let w = Word {
+                raw: b"foobar".to_vec(),
+                parts: vec![WordPart::Literal {
+                    start: 0,
+                    end: 3,
+                    has_glob: false,
+                    newlines: 0,
+                    assignment: false,
+                }],
+                line: 1,
+            };
+            assert!(literal_only_bytes(&w).is_none());
+        });
+    }
+
+    #[test]
     fn build_assignment_value_parts_produces_tilde_for_path_like() {
         assert_no_syscalls(|| {
             let parts = build_assignment_value_parts(b"~/bin:~/scripts");

@@ -544,6 +544,16 @@ mod tests {
     }
 
     #[test]
+    fn eval_arithmetic_rejects_missing_closing_paren() {
+        // Unbalanced parenthesis: parse_primary eats `(`, parses the
+        // inner expression, then fails when `)` is expected but the
+        // input ends — exercises the `missing ')'` error arm.
+        let mut ctx = FakeContext::new();
+        let err = eval_arithmetic(&mut ctx, b"(1 + 2").expect_err("missing paren");
+        assert!(err.message.windows(9).any(|w| w == b"missing '"));
+    }
+
+    #[test]
     fn eval_arithmetic_rejects_trailing_tokens() {
         // `1 2` is valid arithmetic up to `1`, then hits the trailing-tokens
         // guard in eval_arithmetic.

@@ -433,6 +433,20 @@ mod tests {
     }
 
     #[test]
+    fn define_function_redefines_existing_slot_in_place() {
+        // Defining `f` twice should reuse the same `Rc<FunctionSlot>`,
+        // taking the in-place mutation arm at line 271.
+        crate::sys::test_support::assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let _ = shell.execute_string(b"f() { :; }");
+            let slot1 = shell.lookup_function_slot(b"f").expect("first slot");
+            let _ = shell.execute_string(b"f() { true; }");
+            let slot2 = shell.lookup_function_slot(b"f").expect("second slot");
+            assert!(Rc::ptr_eq(&slot1, &slot2));
+        });
+    }
+
+    #[test]
     fn return_in_dot_sourced_file_exits_source_with_status() {
         crate::sys::test_support::assert_no_syscalls(|| {
             let mut shell = test_shell();

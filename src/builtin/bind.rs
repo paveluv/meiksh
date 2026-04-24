@@ -15,7 +15,7 @@ use crate::interactive::emacs_editing::keymap::{ALL_FUNCTIONS, EmacsFn, KeymapEn
 use crate::interactive::inputrc::editline::{
     EditlineLookup, decode_editline_keyseq, translate_editline_function,
 };
-use crate::interactive::inputrc::{self, Conditions, EmacsContext, Mode};
+use crate::interactive::inputrc::{self, Conditions, Mode};
 use crate::shell::error::ShellError;
 use crate::shell::state::Shell;
 
@@ -85,9 +85,13 @@ fn dispatch_positional(
     shell: &mut Shell,
     positional: &[&[u8]],
 ) -> Result<BuiltinOutcome, ShellError> {
-    if positional.is_empty() {
-        return dump_bindings();
-    }
+    // Caller guarantees at least one arg: the only call site is the
+    // `_ =>` fallthrough in [`bind`], which has already consumed
+    // `argv[1]` before delegating here.
+    debug_assert!(
+        !positional.is_empty(),
+        "dispatch_positional called without any argument",
+    );
     // Any `:` in a positional argument forces the readline-style
     // branch (bash handles each arg independently in this case).
     let any_colon = positional.iter().any(|a| a.contains(&b':'));
@@ -315,13 +319,6 @@ fn trim_ws(bytes: &[u8]) -> &[u8] {
     &bytes[s..e]
 }
 
-// Silence unused-code warnings when the file compiles into
-// non-interactive builds.
-#[allow(dead_code)]
-const _REF: EmacsFn = EmacsFn::SelfInsert;
-#[allow(dead_code)]
-fn _keep_emacs_context_live(_: &EmacsContext) {}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -482,6 +479,309 @@ mod tests {
                     assert!(matches!(outcome, BuiltinOutcome::Status(1)));
                 },
             );
+        });
+    }
+
+    #[test]
+    fn trim_ws_strips_leading_and_trailing_spaces_and_tabs() {
+        // `trim_ws` skips ASCII space / tab on both ends and keeps the
+        // inner byte run verbatim.  The trailing-whitespace loop is
+        // only exercised when `e > s && matches!(bytes[e-1], ' ' | '\t')`
+        // — covered here by the trailing-tab input.
+        assert_no_syscalls(|| {
+            assert_eq!(trim_ws(b"  hello\t"), b"hello");
+            assert_eq!(trim_ws(b"\t\t  "), b"");
+            assert_eq!(trim_ws(b""), b"");
+        });
+    }
+
+    #[test]
+    fn parse_bind_x_spec_accepts_unquoted_keyname_form() {
+        // `C-a:echo` uses the unquoted keyname branch (no leading `"`).
+        // `decode_keyname` resolves `C-a` to `0x01`; the command bytes
+        // are everything after the colon, trimmed.
+        assert_no_syscalls(|| {
+            let spec = parse_bind_x_spec(b"C-a:echo hello").expect("parse");
+            assert_eq!(spec.keyseq, vec![0x01]);
+            assert_eq!(spec.command, b"echo hello");
+        });
+    }
+
+    #[test]
+    fn parse_bind_x_spec_rejects_unterminated_quoted_key() {
+        // An open quote with no closing `"` makes `decode_quoted`
+        // return `Err`, which the spec parser must translate to `None`.
+        assert_no_syscalls(|| {
+            assert!(parse_bind_x_spec(b"\"unterminated").is_none());
+        });
+    }
+
+    #[test]
+    fn parse_bind_x_spec_missing_colon_in_unquoted_form_is_none() {
+        // Unquoted path requires a `:` separator; without one, we must
+        // return `None` so the caller surfaces status 1.
+        assert_no_syscalls(|| {
+            assert!(parse_bind_x_spec(b"C-a no-colon").is_none());
+        });
+    }
+
+    #[test]
+    fn bind_r_without_keyseq_reports_error() {
+        // `bind -r` with no following argument must print a
+        // `bind: -r requires a keyseq` diagnostic and return status 1
+        // via the `ShellError::Status` wrapper.
+        with_fresh_ctx(|| {
+            run_trace(
+                trace_entries![write(
+                    fd(crate::sys::constants::STDERR_FILENO),
+                    bytes(b"meiksh: bind: -r requires a keyseq\n"),
+                ) -> auto,],
+                || {
+                    let mut shell = test_shell();
+                    let err = invoke(&mut shell, &[b"bind".to_vec(), b"-r".to_vec()])
+                        .expect_err("expected -r without key to error");
+                    assert!(matches!(err, ShellError::Status(1)));
+                },
+            );
+        });
+    }
+
+    #[test]
+    fn bind_f_without_filename_reports_error() {
+        with_fresh_ctx(|| {
+            run_trace(
+                trace_entries![write(
+                    fd(crate::sys::constants::STDERR_FILENO),
+                    bytes(b"meiksh: bind: -f requires a filename\n"),
+                ) -> auto,],
+                || {
+                    let mut shell = test_shell();
+                    let err = invoke(&mut shell, &[b"bind".to_vec(), b"-f".to_vec()])
+                        .expect_err("expected -f without file to error");
+                    assert!(matches!(err, ShellError::Status(1)));
+                },
+            );
+        });
+    }
+
+    #[test]
+    fn bind_x_without_argument_reports_error() {
+        with_fresh_ctx(|| {
+            run_trace(
+                trace_entries![write(
+                    fd(crate::sys::constants::STDERR_FILENO),
+                    bytes(b"meiksh: bind: -x requires an argument\n"),
+                ) -> auto,],
+                || {
+                    let mut shell = test_shell();
+                    let err = invoke(&mut shell, &[b"bind".to_vec(), b"-x".to_vec()])
+                        .expect_err("expected -x without spec to error");
+                    assert!(matches!(err, ShellError::Status(1)));
+                },
+            );
+        });
+    }
+
+    #[test]
+    fn bind_x_with_malformed_spec_returns_status_1() {
+        // `parse_bind_x_spec` rejects input without a `:` separator;
+        // `do_bind_x` must then surface status 1 without touching the
+        // keymap.
+        assert_no_syscalls(|| {
+            with_fresh_ctx(|| {
+                let mut shell = test_shell();
+                let outcome = invoke(
+                    &mut shell,
+                    &[b"bind".to_vec(), b"-x".to_vec(), b"no colon here".to_vec()],
+                )
+                .expect("bind -x malformed");
+                assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+            });
+        });
+    }
+
+    #[test]
+    fn bind_r_with_invalid_key_argument_returns_status_1() {
+        // `parse_key_argument` rejects an unknown keyname; the
+        // `-r` branch must surface status 1 without a diagnostic.
+        assert_no_syscalls(|| {
+            with_fresh_ctx(|| {
+                let mut shell = test_shell();
+                let outcome = invoke(
+                    &mut shell,
+                    &[b"bind".to_vec(), b"-r".to_vec(), b"not-a-key".to_vec()],
+                )
+                .expect("bind -r with bad key");
+                assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+            });
+        });
+    }
+
+    #[test]
+    fn bind_positional_successful_readline_form_returns_status_0() {
+        // A single positional arg with a valid `keyseq:function` line
+        // reaches `do_apply_line`, which calls `inputrc::apply_line`.
+        // A successful apply yields `applied_lines == 1` and the
+        // builtin returns status 0 via the non-error branch.
+        assert_no_syscalls(|| {
+            with_fresh_ctx(|| {
+                let mut shell = test_shell();
+                let outcome = invoke(
+                    &mut shell,
+                    &[b"bind".to_vec(), b"\"\\C-xq\": accept-line".to_vec()],
+                )
+                .expect("bind one-arg");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+                assert!(matches!(
+                    lookup(&[0x18, b'q']),
+                    Resolved::Function(EmacsFn::AcceptLine)
+                ));
+            });
+        });
+    }
+
+    #[test]
+    fn bind_f_with_missing_file_reports_status_1() {
+        // `bind -f` on a nonexistent file runs the inputrc loader,
+        // which emits an "unable to open" diagnostic and returns an
+        // empty report with `applied_lines == 0`. The builtin must
+        // surface status 1 in that case.
+        with_fresh_ctx(|| {
+            run_trace(
+                trace_entries![
+                    realpath(_, _) -> err(crate::sys::constants::ENOENT),
+                    open(_, _, _) -> err(crate::sys::constants::ENOENT),
+                    write(
+                        fd(crate::sys::constants::STDERR_FILENO),
+                        bytes(b"meiksh: /nonexistent/meiksh-bind-test: cannot open: /nonexistent/meiksh-bind-test\n"),
+                    ) -> auto,
+                ],
+                || {
+                    let mut shell = test_shell();
+                    let outcome = invoke(
+                        &mut shell,
+                        &[
+                            b"bind".to_vec(),
+                            b"-f".to_vec(),
+                            b"/nonexistent/meiksh-bind-test".to_vec(),
+                        ],
+                    )
+                    .expect("bind -f missing");
+                    assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+                },
+            );
+        });
+    }
+
+    #[test]
+    fn bind_editline_with_invalid_keyseq_returns_status_1() {
+        // `decode_editline_keyseq` rejects a trailing `^` (dangling
+        // control-escape). The `do_apply_editline` function emits a
+        // `bind: ...` diagnostic and returns status 1.
+        with_fresh_ctx(|| {
+            run_trace(
+                trace_entries![write(
+                    fd(crate::sys::constants::STDERR_FILENO),
+                    bytes(b"meiksh: bind: dangling `^` in key sequence\n"),
+                ) -> auto,],
+                || {
+                    let mut shell = test_shell();
+                    let outcome = invoke(
+                        &mut shell,
+                        &[b"bind".to_vec(), b"^".to_vec(), b"accept-line".to_vec()],
+                    )
+                    .expect("bind editline bad keyseq");
+                    assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+                },
+            );
+        });
+    }
+
+    #[test]
+    fn bind_positional_single_colonless_arg_falls_through_to_apply_line() {
+        // A lone positional arg without a colon can't match the
+        // two-arg editline form, so `dispatch_positional` falls
+        // through to `do_apply_line`. `inputrc::apply_line` cannot
+        // parse a bare token (no colon), so `applied_lines == 0`
+        // and the builtin reports status 1. The parser emits its
+        // own "unrecognized command" diagnostic on stderr.
+        with_fresh_ctx(|| {
+            run_trace(
+                trace_entries![write(
+                    fd(crate::sys::constants::STDERR_FILENO),
+                    bytes(b"meiksh: -: line 1: missing `:` in binding\n"),
+                ) -> auto,],
+                || {
+                    let mut shell = test_shell();
+                    let outcome = invoke(
+                        &mut shell,
+                        &[b"bind".to_vec(), b"single-positional".to_vec()],
+                    )
+                    .expect("bind fallback");
+                    assert!(matches!(outcome, BuiltinOutcome::Status(1)));
+                },
+            );
+        });
+    }
+
+    #[test]
+    fn bind_no_args_dumps_current_bindings() {
+        // With no options or positional args, `bind` writes the current
+        // inputrc dump to stdout (covers the None→dump_bindings path
+        // in `bind` itself).
+        with_fresh_ctx(|| {
+            let expected = {
+                let guard = match inputrc::global().lock() {
+                    Ok(g) => g,
+                    Err(p) => p.into_inner(),
+                };
+                let mut out = Vec::new();
+                guard.keymap.dump_inputrc(&mut out);
+                out
+            };
+            run_trace(
+                trace_entries![write(fd(crate::sys::constants::STDOUT_FILENO), bytes(&expected)) -> auto],
+                || {
+                    let mut shell = test_shell();
+                    let outcome = invoke(&mut shell, &[b"bind".to_vec()]).expect("bind");
+                    assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+                },
+            );
+        });
+    }
+
+    #[test]
+    fn bind_single_colon_arg_applies_line_and_returns_zero() {
+        // A single positional `keyseq:function` arg without other
+        // arguments goes through dispatch_positional's readline-style
+        // branch via the `any_colon` check, which leads to
+        // do_apply_lines (status 0) — exercises the success exit at
+        // line 250 of do_apply_line via the multi-line fallback and
+        // also covers the readline-only path.
+        assert_no_syscalls(|| {
+            with_fresh_ctx(|| {
+                let mut shell = test_shell();
+                let outcome = invoke(
+                    &mut shell,
+                    &[b"bind".to_vec(), b"\"\\C-xz\": accept-line".to_vec()],
+                )
+                .expect("bind single");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            });
+        });
+    }
+
+    #[test]
+    fn do_apply_line_success_returns_zero() {
+        // Call do_apply_line directly with a well-formed readline line
+        // so applied_lines > 0 → Status(0) path at line 250.
+        assert_no_syscalls(|| {
+            with_fresh_ctx(|| {
+                let shell = test_shell();
+                let outcome =
+                    do_apply_line(&shell, b"\"\\C-xq\": accept-line").expect("apply_line");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            });
         });
     }
 

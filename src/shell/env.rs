@@ -318,6 +318,39 @@ mod tests {
     }
 
     #[test]
+    fn set_var_fills_previously_marked_empty_slot() {
+        // `mark_exported` creates `Some(EnvEntry { value: None, .. })`
+        // when the slot had not yet been used.  A subsequent
+        // `set_var` must then take the `val @ None` arm rather than
+        // the `Some(buf)` reuse arm.
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            shell.mark_exported(b"LAZY");
+            assert_eq!(shell.get_var(b"LAZY"), None);
+            shell.set_var(b"LAZY", b"now").expect("set");
+            assert_eq!(shell.get_var(b"LAZY"), Some(b"now".as_slice()));
+            assert!(shell.is_exported(b"LAZY"));
+        });
+    }
+
+    #[test]
+    fn set_var_grows_slot_vector_when_shrunk() {
+        // Hits the `while (slot as usize) >= vars.slots.len()` fix-up
+        // guard that keeps `set_var_by_slot` safe when a copy-on-write
+        // clone has left the slot vector shorter than the caller's
+        // pre-computed index.
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let slot = shell.vars_mut().ensure_slot(b"GROW");
+            shell.vars_mut().slots.clear();
+            shell
+                .set_var_by_slot(slot, b"GROW", b"v")
+                .expect("grow + set");
+            assert_eq!(shell.get_var(b"GROW"), Some(b"v".as_slice()));
+        });
+    }
+
+    #[test]
     fn export_var_error_on_readonly() {
         run_trace(
             trace_entries![..vec![t_stderr("meiksh: RO: readonly variable")]],

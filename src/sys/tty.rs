@@ -13,10 +13,9 @@ pub(crate) fn is_interactive_fd(fd: c_int) -> bool {
 /// Used by `\l` in prompt expansion.
 pub(crate) fn tty_basename(fd: c_int) -> Option<Vec<u8>> {
     let full = interface::ttyname_of_fd(fd)?;
-    let slash = full.iter().rposition(|b| *b == b'/').map(|i| i + 1);
-    match slash {
-        Some(i) if i <= full.len() => Some(full[i..].to_vec()),
-        _ => Some(full),
+    match full.iter().rposition(|b| *b == b'/') {
+        Some(i) => Some(full[i + 1..].to_vec()),
+        None => Some(full),
     }
 }
 pub(crate) fn current_foreground_pgrp(fd: c_int) -> SysResult<Pid> {
@@ -77,28 +76,35 @@ pub(crate) fn isatty_fd(fd: c_int) -> bool {
 /// the hot path and has no observable behavior when stdout is not a
 /// terminal.
 pub(crate) fn terminal_columns_from_stdio() -> Option<usize> {
-    use super::constants::{STDERR_FILENO, STDIN_FILENO, STDOUT_FILENO};
+    #[cfg(test)]
+    {
+        return super::test_support::test_terminal_columns_override();
+    }
+    #[cfg(not(test))]
+    {
+        use super::constants::{STDERR_FILENO, STDIN_FILENO, STDOUT_FILENO};
 
-    #[repr(C)]
-    struct Winsize {
-        ws_row: libc::c_ushort,
-        ws_col: libc::c_ushort,
-        ws_xpixel: libc::c_ushort,
-        ws_ypixel: libc::c_ushort,
-    }
-    let mut ws = Winsize {
-        ws_row: 0,
-        ws_col: 0,
-        ws_xpixel: 0,
-        ws_ypixel: 0,
-    };
-    for fd in [STDOUT_FILENO, STDERR_FILENO, STDIN_FILENO] {
-        let rc = unsafe { libc::ioctl(fd, libc::TIOCGWINSZ, &mut ws) };
-        if rc == 0 && ws.ws_col > 0 {
-            return Some(ws.ws_col as usize);
+        #[repr(C)]
+        struct Winsize {
+            ws_row: libc::c_ushort,
+            ws_col: libc::c_ushort,
+            ws_xpixel: libc::c_ushort,
+            ws_ypixel: libc::c_ushort,
         }
+        let mut ws = Winsize {
+            ws_row: 0,
+            ws_col: 0,
+            ws_xpixel: 0,
+            ws_ypixel: 0,
+        };
+        for fd in [STDOUT_FILENO, STDERR_FILENO, STDIN_FILENO] {
+            let rc = unsafe { libc::ioctl(fd, libc::TIOCGWINSZ, &mut ws) };
+            if rc == 0 && ws.ws_col > 0 {
+                return Some(ws.ws_col as usize);
+            }
+        }
+        None
     }
-    None
 }
 
 #[cfg(test)]
@@ -198,5 +204,30 @@ mod tests {
         run_trace(trace_entries![isatty(fd(0)) -> 0], || {
             assert!(!isatty_fd(0));
         });
+    }
+
+    #[test]
+    fn tty_basename_without_slash_returns_whole_name() {
+        use crate::sys::test_support::set_test_ttyname;
+        set_test_ttyname(Some(b"pts1".to_vec()));
+        let name = tty_basename(0).expect("some");
+        set_test_ttyname(None);
+        assert_eq!(name, b"pts1");
+    }
+
+    #[test]
+    fn tty_basename_with_slash_returns_last_component() {
+        use crate::sys::test_support::set_test_ttyname;
+        set_test_ttyname(Some(b"/dev/pts/3".to_vec()));
+        let name = tty_basename(0).expect("some");
+        set_test_ttyname(None);
+        assert_eq!(name, b"3");
+    }
+
+    #[test]
+    fn tty_basename_none_when_no_tty() {
+        use crate::sys::test_support::set_test_ttyname;
+        set_test_ttyname(None);
+        assert!(tty_basename(0).is_none());
     }
 }

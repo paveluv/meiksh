@@ -611,6 +611,49 @@ mod tests {
 }
 
 #[cfg(test)]
+pub(crate) mod test_helpers {
+    use super::{EmacsContext, global};
+
+    /// Serialize and snapshot the global inputrc state for tests that
+    /// mutate it.  Restores the previous snapshot afterwards so
+    /// sibling tests don't observe a `startup_loaded = true` leak.
+    pub(crate) fn with_fresh_global<F: FnOnce()>(f: F) {
+        use std::sync::Mutex;
+        static SERIAL: Mutex<()> = Mutex::new(());
+        let _lock = match SERIAL.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        let saved = {
+            let guard = match global().lock() {
+                Ok(g) => g,
+                Err(p) => p.into_inner(),
+            };
+            (
+                guard.keymap.clone(),
+                guard.vars.clone(),
+                guard.startup_loaded,
+            )
+        };
+        {
+            let mut guard = match global().lock() {
+                Ok(g) => g,
+                Err(p) => p.into_inner(),
+            };
+            *guard = EmacsContext::default();
+        }
+        f();
+        let mut guard = match global().lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        guard.keymap = saved.0;
+        guard.vars = saved.1;
+        guard.startup_loaded = saved.2;
+    }
+}
+
+#[cfg(test)]
 mod io_tests {
     //! File-IO-driven paths in [`load_with_guard`]. These use the
     //! `run_trace` syscall harness instead of `assert_no_syscalls`.
@@ -640,6 +683,108 @@ mod io_tests {
                 );
             },
         );
+    }
+
+    pub(crate) use super::test_helpers::with_fresh_global;
+
+    #[test]
+    fn ensure_startup_loaded_loads_inputrc_env_var() {
+        // With `$INPUTRC` set and the file readable, the function
+        // opens the file and parses its contents.  The "binding was
+        // applied" side-effect is visible in the global keymap.
+        let content = b"\"\\C-a\": end-of-line\n";
+        with_fresh_global(|| {
+            run_trace(
+                trace_entries![
+                    access(str(b"/tmp/rc-env"), _) -> 0,
+                    realpath(_, _) -> realpath("/tmp/rc-env"),
+                    open(_, _, _) -> fd(7),
+                    read(fd(7), _) -> bytes(content),
+                    read(fd(7), _) -> 0,
+                    close(fd(7)) -> 0,
+                ],
+                || {
+                    let mut shell = crate::shell::test_support::test_shell();
+                    let _ = shell.set_var(b"INPUTRC", b"/tmp/rc-env");
+                    ensure_startup_loaded(&shell);
+                    // Second call must be a no-op (no more syscalls).
+                    ensure_startup_loaded(&shell);
+                },
+            );
+        });
+    }
+
+    #[test]
+    fn ensure_startup_loaded_skips_empty_inputrc_and_falls_back_to_home() {
+        // `INPUTRC=""` triggers the `if path.is_empty() { return false; }`
+        // early-return inside the `load` closure.  The function then
+        // falls through to the `HOME/.inputrc` probe.
+        let content = b"set completion-ignore-case on\n";
+        with_fresh_global(|| {
+            run_trace(
+                trace_entries![
+                    access(str(b"/tmp/home-rc/.inputrc"), _) -> 0,
+                    realpath(_, _) -> realpath("/tmp/home-rc/.inputrc"),
+                    open(_, _, _) -> fd(9),
+                    read(fd(9), _) -> bytes(content),
+                    read(fd(9), _) -> 0,
+                    close(fd(9)) -> 0,
+                ],
+                || {
+                    let mut shell = crate::shell::test_support::test_shell();
+                    let _ = shell.set_var(b"INPUTRC", b"");
+                    let _ = shell.set_var(b"HOME", b"/tmp/home-rc");
+                    ensure_startup_loaded(&shell);
+                },
+            );
+        });
+    }
+
+    #[test]
+    fn ensure_startup_loaded_uses_etc_inputrc_when_user_file_missing() {
+        // Both `INPUTRC` and `HOME` probes find nothing; the function
+        // must then attempt `/etc/inputrc`.
+        let content = b"set completion-ignore-case on\n";
+        with_fresh_global(|| {
+            run_trace(
+                trace_entries![
+                    access(str(b"/tmp/home-missing/.inputrc"), _) -> err(ENOENT),
+                    access(str(b"/etc/inputrc"), _) -> 0,
+                    realpath(_, _) -> realpath("/etc/inputrc"),
+                    open(_, _, _) -> fd(5),
+                    read(fd(5), _) -> bytes(content),
+                    read(fd(5), _) -> 0,
+                    close(fd(5)) -> 0,
+                ],
+                || {
+                    let mut shell = crate::shell::test_support::test_shell();
+                    shell.env_mut().remove(b"INPUTRC");
+                    let _ = shell.set_var(b"HOME", b"/tmp/home-missing");
+                    ensure_startup_loaded(&shell);
+                },
+            );
+        });
+    }
+
+    #[test]
+    fn ensure_startup_loaded_appends_slash_to_bare_home() {
+        // When `$HOME` already lacks a trailing `/`, the function
+        // appends one before concatenating `.inputrc`. Covers the
+        // `if !path.ends_with(b"/")` arm.
+        with_fresh_global(|| {
+            run_trace(
+                trace_entries![
+                    access(str(b"/tmp/home-bare/.inputrc"), _) -> err(ENOENT),
+                    access(str(b"/etc/inputrc"), _) -> err(ENOENT),
+                ],
+                || {
+                    let mut shell = crate::shell::test_support::test_shell();
+                    shell.env_mut().remove(b"INPUTRC");
+                    let _ = shell.set_var(b"HOME", b"/tmp/home-bare");
+                    ensure_startup_loaded(&shell);
+                },
+            );
+        });
     }
 
     #[test]

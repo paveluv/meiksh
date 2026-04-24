@@ -359,6 +359,45 @@ mod tests {
     }
 
     #[test]
+    fn jobs_skips_unselected_jobs_in_main_loop() {
+        // Adding job 1 and 2, requesting only %2 ensures the
+        // `selected_contains(job.id)` check at line 69 evaluates
+        // false for job 1 and the `continue` arm at line 70 fires.
+        run_trace(
+            trace_entries![write(
+                fd(crate::sys::constants::STDOUT_FILENO),
+                bytes(b"[2]   Done\tsleep 2\n"),
+            ) -> auto,],
+            || {
+                let mut shell = test_shell();
+                shell.jobs.push(crate::shell::jobs::Job {
+                    id: 1,
+                    command: b"sleep 1"[..].into(),
+                    pgid: Some(101),
+                    last_pid: Some(101),
+                    last_status: None,
+                    children: vec![],
+                    state: crate::shell::jobs::JobState::Running,
+                    saved_termios: None,
+                });
+                shell.jobs.push(crate::shell::jobs::Job {
+                    id: 2,
+                    command: b"sleep 2"[..].into(),
+                    pgid: Some(202),
+                    last_pid: Some(202),
+                    last_status: None,
+                    children: vec![],
+                    state: crate::shell::jobs::JobState::Running,
+                    saved_termios: None,
+                });
+                let outcome =
+                    invoke(&mut shell, &[b"jobs".to_vec(), b"%2".to_vec()]).expect("jobs %2");
+                assert!(matches!(outcome, BuiltinOutcome::Status(0)));
+            },
+        );
+    }
+
+    #[test]
     fn jobs_invalid_option_error() {
         run_trace(
             trace_entries![write(

@@ -457,6 +457,40 @@ mod tests {
     }
 
     #[test]
+    fn tty_basename_is_rendered_when_set() {
+        // Covers the `Some(t) if !t.is_empty()` arm of the `\l`
+        // handler that `tty_falls_back_to_tty_literal` can't touch.
+        let p = decode(b"on \\l", &base_env(), &fixed_tm());
+        assert_eq!(p.bytes, b"on pts/3");
+    }
+
+    #[test]
+    fn d_escape_without_brace_falls_through_as_literal() {
+        // `\D` not followed by `{` must fall through to the § 6.6
+        // unknown-escape branch that emits the raw two bytes.
+        let p = decode_default(b"pre \\Dxy");
+        assert_eq!(p.bytes, b"pre \\Dxy");
+    }
+
+    #[test]
+    fn octal_escape_at_end_of_input_stops_short() {
+        // `\1` with no following digit is a two-byte octal escape; the
+        // inner loop must `break` when `idx >= raw.len()`.
+        let p = decode_default(b"\\1");
+        assert_eq!(p.bytes, b"\x01");
+    }
+
+    #[test]
+    fn empty_cwd_renders_as_question_mark() {
+        // `cwd` is `Some`, but empty — must hit the
+        // `if cwd.is_empty() { out.push(b'?') }` arm in `render_cwd`.
+        let mut env = base_env();
+        env.cwd = Some(Vec::new());
+        let p = decode(b"\\w", &env, &fixed_tm());
+        assert_eq!(p.bytes, b"?");
+    }
+
+    #[test]
     fn tty_falls_back_to_tty_literal() {
         let mut env = base_env();
         env.tty_basename = None;

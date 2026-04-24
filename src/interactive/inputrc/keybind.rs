@@ -130,4 +130,53 @@ mod tests {
             assert!(err.contains("missing"));
         });
     }
+
+    #[test]
+    fn empty_left_hand_side_rejected() {
+        // The parser treats `:` with no LHS as an empty key sequence;
+        // it must report the dedicated "empty key sequence" diagnostic
+        // so the user knows which half of the binding is missing.
+        assert_no_syscalls(|| {
+            let err = parse(b":accept-line").unwrap_err();
+            assert_eq!(err, "empty key sequence");
+        });
+    }
+
+    #[test]
+    fn trailing_junk_after_quoted_lhs_rejected() {
+        // A properly closed `"..."` followed by stray bytes before the
+        // colon is a malformed binding; `consumed != lhs.len() - 1`
+        // triggers the trailing-junk diagnostic.
+        assert_no_syscalls(|| {
+            let err = parse(b"\"\\C-a\"xx: accept-line").unwrap_err();
+            assert!(
+                err.contains("trailing junk after quoted key sequence"),
+                "got: {err}",
+            );
+        });
+    }
+
+    #[test]
+    fn trailing_junk_after_quoted_macro_rejected() {
+        // The macro branch has the same check applied to the RHS:
+        // bytes after the closing `"` are rejected with a dedicated
+        // diagnostic.
+        assert_no_syscalls(|| {
+            let err = parse(b"\"\\C-a\": \"macro\"xx").unwrap_err();
+            assert!(
+                err.contains("trailing junk after macro value"),
+                "got: {err}",
+            );
+        });
+    }
+
+    #[test]
+    fn leading_and_trailing_whitespace_stripped_from_rhs() {
+        // `trim_ws` walks both ends of the RHS; a tab-padded name
+        // exercises both the leading and trailing trim loops.
+        assert_no_syscalls(|| {
+            let (_, entry) = parse(b"C-a: \taccept-line\t").expect("parse");
+            assert_eq!(entry, KeymapEntry::Func(EmacsFn::AcceptLine));
+        });
+    }
 }

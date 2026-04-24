@@ -854,12 +854,13 @@ fn list_candidates(cands: &[Candidate]) {
         .max()
         .unwrap_or(0);
     const GUTTER: usize = 2;
+    // `GUTTER` is a non-zero constant, so `max_width.saturating_add(GUTTER)`
+    // is always ≥ `GUTTER` — the division below can never face a zero
+    // divisor. Asserting this keeps the invariant visible in debug
+    // builds and trips loudly if someone lowers `GUTTER` to zero.
     let cell = max_width.saturating_add(GUTTER);
-    let cols = if cell == 0 {
-        1
-    } else {
-        (term_cols / cell).max(1)
-    };
+    debug_assert!(cell >= GUTTER && cell != 0);
+    let cols = (term_cols / cell).max(1);
     let rows = cands.len().div_ceil(cols);
 
     let mut buf: Vec<u8> = Vec::with_capacity(cands.len() * (max_width + GUTTER) + 4);
@@ -1013,10 +1014,6 @@ fn command_candidates(shell: &Shell, prefix: &[u8]) -> Vec<Candidate> {
                 if !name.starts_with(prefix) {
                     continue;
                 }
-                // Skip `.` and `..`.
-                if name == b"." || name == b".." {
-                    continue;
-                }
                 push(&mut out_cands, &mut seen, name.to_vec());
             }
         }
@@ -1044,9 +1041,6 @@ fn complete_path_candidates(prefix: &[u8]) -> Vec<Candidate> {
     for e in entries {
         let name = e.as_bytes();
         if !name.starts_with(fname) {
-            continue;
-        }
-        if name == b"." || name == b".." {
             continue;
         }
         let mut word = if dir == b"." {
@@ -1361,6 +1355,1000 @@ mod tests {
             let mut state = EmacsState::new(0x7f);
             let out = apply(&mut shell, &mut state, EmacsFn::QuotedInsert, 0x11);
             assert!(out.quoted_insert);
+        });
+    }
+
+    // --- empty-buffer bell / no-op early returns ---------------------
+
+    #[test]
+    fn kill_line_at_eol_is_noop_without_undo_entry() {
+        // `kill-line` at end-of-buffer drains zero bytes. The helper
+        // returns before pushing to the undo stack or kill buffer, which
+        // is the only branch where `state.kill` stays untouched.
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let mut state = EmacsState::new(0x7f);
+            state.buf = b"abc".to_vec();
+            state.cursor = state.buf.len();
+            apply(&mut shell, &mut state, EmacsFn::KillLine, 0x0b);
+            assert_eq!(state.buf, b"abc");
+            assert!(state.kill.is_empty());
+            assert_eq!(state.undo.len(), 0);
+        });
+    }
+
+    #[test]
+    fn unix_line_discard_at_sol_is_noop() {
+        // `unix-line-discard` from the start of the buffer has nothing
+        // to kill; the function must return before touching the undo /
+        // kill state.
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let mut state = EmacsState::new(0x7f);
+            state.buf = b"abc".to_vec();
+            state.cursor = 0;
+            apply(&mut shell, &mut state, EmacsFn::UnixLineDiscard, 0x15);
+            assert_eq!(state.buf, b"abc");
+            assert!(state.kill.is_empty());
+            assert_eq!(state.undo.len(), 0);
+        });
+    }
+
+    #[test]
+    fn unix_word_rubout_in_whitespace_is_noop() {
+        // Cursor sitting on whitespace with only whitespace to the left
+        // produces an empty kill range; the early return leaves undo /
+        // kill untouched.
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let mut state = EmacsState::new(0x7f);
+            state.buf = b"   hello".to_vec();
+            state.cursor = 0;
+            apply(&mut shell, &mut state, EmacsFn::UnixWordRubout, 0x17);
+            assert_eq!(state.buf, b"   hello");
+            assert!(state.kill.is_empty());
+            assert_eq!(state.undo.len(), 0);
+        });
+    }
+
+    #[test]
+    fn kill_word_at_eol_is_noop() {
+        // `kill-word` at end-of-buffer has nothing to consume and must
+        // exit before touching the undo / kill buffer.
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let mut state = EmacsState::new(0x7f);
+            state.buf = b"abc".to_vec();
+            state.cursor = state.buf.len();
+            apply(&mut shell, &mut state, EmacsFn::KillWord, 0);
+            assert_eq!(state.buf, b"abc");
+            assert!(state.kill.is_empty());
+            assert_eq!(state.undo.len(), 0);
+        });
+    }
+
+    #[test]
+    fn backward_kill_word_at_sol_is_noop() {
+        // Symmetric to `kill-word`: `backward-kill-word` with cursor at
+        // byte 0 leaves state untouched.
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let mut state = EmacsState::new(0x7f);
+            state.buf = b"abc".to_vec();
+            state.cursor = 0;
+            apply(&mut shell, &mut state, EmacsFn::BackwardKillWord, 0x7f);
+            assert_eq!(state.buf, b"abc");
+            assert!(state.kill.is_empty());
+            assert_eq!(state.undo.len(), 0);
+        });
+    }
+
+    #[test]
+    fn yank_with_empty_kill_buffer_rings_bell() {
+        // `yank` with nothing in the kill buffer must ring the bell
+        // and make no buffer / cursor changes (spec § 5.7).
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let mut state = EmacsState::new(0x7f);
+            state.buf = b"abc".to_vec();
+            state.cursor = 2;
+            let out = apply(&mut shell, &mut state, EmacsFn::Yank, 0x19);
+            assert!(out.bell);
+            assert_eq!(state.buf, b"abc");
+            assert_eq!(state.cursor, 2);
+        });
+    }
+
+    #[test]
+    fn forward_char_at_eol_rings_bell() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let mut state = EmacsState::new(0x7f);
+            state.buf = b"abc".to_vec();
+            state.cursor = state.buf.len();
+            let out = apply(&mut shell, &mut state, EmacsFn::ForwardChar, 0x06);
+            assert!(out.bell);
+            assert_eq!(state.cursor, 3);
+        });
+    }
+
+    #[test]
+    fn backward_char_at_sol_rings_bell() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let mut state = EmacsState::new(0x7f);
+            state.buf = b"abc".to_vec();
+            state.cursor = 0;
+            let out = apply(&mut shell, &mut state, EmacsFn::BackwardChar, 0x02);
+            assert!(out.bell);
+            assert_eq!(state.cursor, 0);
+        });
+    }
+
+    // --- transpose edge cases ----------------------------------------
+
+    #[test]
+    fn transpose_chars_with_fewer_than_two_chars_rings_bell() {
+        // Spec § 5.5: `transpose-chars` requires at least two bytes in
+        // the buffer; otherwise it must ring the bell and leave the
+        // buffer alone.
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let mut state = EmacsState::new(0x7f);
+            state.buf = b"a".to_vec();
+            state.cursor = 1;
+            let out = apply(&mut shell, &mut state, EmacsFn::TransposeChars, 0x14);
+            assert!(out.bell);
+            assert_eq!(state.buf, b"a");
+        });
+    }
+
+    #[test]
+    fn transpose_chars_at_sol_in_middle_of_buffer_rings_bell() {
+        // Cursor at position 0 with a non-trivial buffer: there's no
+        // character to the left to swap, so the function must ring the
+        // bell rather than corrupting the buffer.
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let mut state = EmacsState::new(0x7f);
+            state.buf = b"abc".to_vec();
+            state.cursor = 0;
+            let out = apply(&mut shell, &mut state, EmacsFn::TransposeChars, 0x14);
+            assert!(out.bell);
+            assert_eq!(state.buf, b"abc");
+        });
+    }
+
+    #[test]
+    fn transpose_chars_in_middle_swaps_adjacent() {
+        // `transpose-chars` with the cursor between two chars swaps
+        // them and moves the cursor past the swap.
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let mut state = EmacsState::new(0x7f);
+            state.buf = b"abcd".to_vec();
+            state.cursor = 2;
+            apply(&mut shell, &mut state, EmacsFn::TransposeChars, 0x14);
+            assert_eq!(state.buf, b"acbd");
+            assert_eq!(state.cursor, 3);
+        });
+    }
+
+    #[test]
+    fn transpose_words_with_cursor_in_word_swaps_surrounding_words() {
+        // Spec § 5.6: cursor *inside* a word marks that word as the
+        // right-hand operand; the previous word on the line becomes the
+        // left-hand operand.
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let mut state = EmacsState::new(0x7f);
+            state.buf = b"one two three".to_vec();
+            state.cursor = 6;
+            apply(&mut shell, &mut state, EmacsFn::TransposeWords, 0x14);
+            assert_eq!(state.buf, b"two one three");
+        });
+    }
+
+    #[test]
+    fn transpose_words_with_only_one_word_rings_bell() {
+        // No left-hand word available → bell, no mutation.
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let mut state = EmacsState::new(0x7f);
+            state.buf = b"solo".to_vec();
+            state.cursor = state.buf.len();
+            let out = apply(&mut shell, &mut state, EmacsFn::TransposeWords, 0x14);
+            assert!(out.bell);
+            assert_eq!(state.buf, b"solo");
+        });
+    }
+
+    #[test]
+    fn transpose_words_with_cursor_on_leading_ws_walks_forward_then_bells() {
+        // Cursor on leading whitespace has no word behind it, so the
+        // `p == 0` fallback forward-walks to the first word on the
+        // line.  Even with a forward match, there is no *left* word to
+        // swap with, so the function must ring the bell.  This
+        // exercises the forward-walk success path (`q < buf.len()`
+        // after skipping whitespace and consuming a run of word bytes)
+        // that otherwise would be unreachable.
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let mut state = EmacsState::new(0x7f);
+            state.buf = b"   hello".to_vec();
+            state.cursor = 0;
+            let out = apply(&mut shell, &mut state, EmacsFn::TransposeWords, 0x14);
+            assert!(out.bell);
+            assert_eq!(state.buf, b"   hello");
+        });
+    }
+
+    #[test]
+    fn transpose_words_with_cursor_past_ws_after_last_word_rings_bell() {
+        // Cursor past the last word, only whitespace behind and no
+        // further word ahead → no operands available, bell must fire.
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let mut state = EmacsState::new(0x7f);
+            state.buf = b"   ".to_vec();
+            state.cursor = state.buf.len();
+            let out = apply(&mut shell, &mut state, EmacsFn::TransposeWords, 0x14);
+            assert!(out.bell);
+            assert_eq!(state.buf, b"   ");
+        });
+    }
+
+    // --- case-word no-op --------------------------------------------
+
+    #[test]
+    fn case_word_at_eol_is_noop() {
+        // `upcase-word` / `downcase-word` / `capitalize-word` with no
+        // word following the cursor must early-return without pushing
+        // an undo entry.
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let mut state = EmacsState::new(0x7f);
+            state.buf = b"abc".to_vec();
+            state.cursor = state.buf.len();
+            apply(&mut shell, &mut state, EmacsFn::UpcaseWord, 0);
+            assert_eq!(state.buf, b"abc");
+            assert_eq!(state.undo.len(), 0);
+        });
+    }
+
+    // --- history-empty bell cases ------------------------------------
+
+    #[test]
+    fn previous_history_with_empty_history_rings_bell() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            shell.history_mut().clear();
+            let mut state = EmacsState::new(0x7f);
+            let out = apply(&mut shell, &mut state, EmacsFn::PreviousHistory, 0x10);
+            assert!(out.bell);
+        });
+    }
+
+    #[test]
+    fn next_history_overshoot_rings_bell() {
+        // Walking past the current ("not in history") position must
+        // ring the bell rather than silently clipping.
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            *shell.history_mut() = vec![b"one".to_vec().into_boxed_slice()];
+            let mut state = EmacsState::new(0x7f);
+            let out = apply(&mut shell, &mut state, EmacsFn::NextHistory, 0x0e);
+            assert!(out.bell);
+        });
+    }
+
+    #[test]
+    fn beginning_of_history_on_empty_history_is_noop() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            shell.history_mut().clear();
+            let mut state = EmacsState::new(0x7f);
+            state.buf = b"draft".to_vec();
+            apply(&mut shell, &mut state, EmacsFn::BeginningOfHistory, 0);
+            assert_eq!(state.buf, b"draft");
+            assert!(state.hist_index.is_none());
+        });
+    }
+
+    #[test]
+    fn beginning_of_history_jumps_to_oldest() {
+        // Spec § 5.3: beginning-of-history stores the current draft as
+        // `edit_line`, jumps to index 0, and restores the draft on
+        // end-of-history.
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            *shell.history_mut() = vec![
+                b"oldest".to_vec().into_boxed_slice(),
+                b"newer".to_vec().into_boxed_slice(),
+            ];
+            let mut state = EmacsState::new(0x7f);
+            state.buf = b"draft".to_vec();
+            state.cursor = 5;
+            apply(&mut shell, &mut state, EmacsFn::BeginningOfHistory, 0);
+            assert_eq!(state.buf, b"oldest");
+            assert_eq!(state.hist_index, Some(0));
+            apply(&mut shell, &mut state, EmacsFn::EndOfHistory, 0);
+            assert_eq!(state.buf, b"draft");
+            assert!(state.hist_index.is_none());
+        });
+    }
+
+    // --- history-search-prefix ---------------------------------------
+
+    #[test]
+    fn history_search_backward_finds_prefix_match() {
+        // `history-search-backward` walks backward from "end of history"
+        // and lands on the nearest entry whose prefix matches the bytes
+        // before the cursor. The cursor anchors at the original prefix
+        // length so repeated searches extend from the same column.
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            *shell.history_mut() = vec![
+                b"echo hello".to_vec().into_boxed_slice(),
+                b"ls -la".to_vec().into_boxed_slice(),
+                b"echo world".to_vec().into_boxed_slice(),
+            ];
+            let mut state = EmacsState::new(0x7f);
+            state.buf = b"ec".to_vec();
+            state.cursor = 2;
+            apply(&mut shell, &mut state, EmacsFn::HistorySearchBackward, 0);
+            assert_eq!(state.buf, b"echo world");
+            assert_eq!(state.hist_index, Some(2));
+            assert_eq!(state.cursor, 2);
+        });
+    }
+
+    #[test]
+    fn history_search_backward_walks_to_next_match() {
+        // Repeating `history-search-backward` from an already-matched
+        // entry must walk further back, exercising the
+        // `Some(i)`/Backward arm of the start_next computation.
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            *shell.history_mut() = vec![
+                b"echo hello".to_vec().into_boxed_slice(),
+                b"ls -la".to_vec().into_boxed_slice(),
+                b"echo world".to_vec().into_boxed_slice(),
+            ];
+            let mut state = EmacsState::new(0x7f);
+            state.buf = b"ec".to_vec();
+            state.cursor = 2;
+            state.hist_index = Some(2);
+            apply(&mut shell, &mut state, EmacsFn::HistorySearchBackward, 0);
+            assert_eq!(state.buf, b"echo hello");
+            assert_eq!(state.hist_index, Some(0));
+        });
+    }
+
+    #[test]
+    fn history_search_forward_from_beginning_finds_next_match() {
+        // Forward search starts from index 0+1 when not already
+        // anchored (the `None`/Forward branch seeds `start` to `Some(0)`
+        // and then advances to `Some(1)`).  So with a fresh cursor we
+        // should find the *second* prefix match onward, not index 0.
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            *shell.history_mut() = vec![
+                b"echo hello".to_vec().into_boxed_slice(),
+                b"ls -la".to_vec().into_boxed_slice(),
+                b"echo world".to_vec().into_boxed_slice(),
+            ];
+            let mut state = EmacsState::new(0x7f);
+            state.buf = b"ec".to_vec();
+            state.cursor = 2;
+            apply(&mut shell, &mut state, EmacsFn::HistorySearchForward, 0);
+            assert_eq!(state.buf, b"echo world");
+            assert_eq!(state.hist_index, Some(2));
+        });
+    }
+
+    #[test]
+    fn history_search_empty_history_is_noop() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            shell.history_mut().clear();
+            let mut state = EmacsState::new(0x7f);
+            state.buf = b"ec".to_vec();
+            state.cursor = 2;
+            apply(&mut shell, &mut state, EmacsFn::HistorySearchBackward, 0);
+            assert_eq!(state.buf, b"ec");
+            assert!(state.hist_index.is_none());
+        });
+    }
+
+    #[test]
+    fn history_search_no_match_leaves_buffer_untouched() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            *shell.history_mut() = vec![b"ls".to_vec().into_boxed_slice()];
+            let mut state = EmacsState::new(0x7f);
+            state.buf = b"zz".to_vec();
+            state.cursor = 2;
+            apply(&mut shell, &mut state, EmacsFn::HistorySearchBackward, 0);
+            assert_eq!(state.buf, b"zz");
+            assert!(state.hist_index.is_none());
+        });
+    }
+
+    // --- yank-last-arg edge cases ------------------------------------
+
+    #[test]
+    fn yank_last_arg_with_empty_history_rings_bell() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            shell.history_mut().clear();
+            let mut state = EmacsState::new(0x7f);
+            let out = apply(&mut shell, &mut state, EmacsFn::YankLastArg, 0);
+            assert!(out.bell);
+        });
+    }
+
+    #[test]
+    fn yank_last_arg_repeated_walks_older_history() {
+        // The second consecutive `yank-last-arg` must undo the previous
+        // insert, walk one entry further back, and splice in the newly
+        // selected last argument.
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            *shell.history_mut() = vec![
+                b"echo older_last".to_vec().into_boxed_slice(),
+                b"echo newer_last".to_vec().into_boxed_slice(),
+            ];
+            let mut state = EmacsState::new(0x7f);
+            state.buf = b"cmd ".to_vec();
+            state.cursor = 4;
+            apply(&mut shell, &mut state, EmacsFn::YankLastArg, 0);
+            assert_eq!(state.buf, b"cmd newer_last");
+            apply(&mut shell, &mut state, EmacsFn::YankLastArg, 0);
+            assert_eq!(state.buf, b"cmd older_last");
+        });
+    }
+
+    #[test]
+    fn yank_last_arg_exhausted_walk_rings_bell_and_preserves_state() {
+        // Walking past the oldest history entry must ring the bell and
+        // re-stash the current walk state so the caller can back off
+        // without losing their cursor.
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            *shell.history_mut() = vec![b"echo one".to_vec().into_boxed_slice()];
+            let mut state = EmacsState::new(0x7f);
+            state.buf = b"cmd ".to_vec();
+            state.cursor = 4;
+            apply(&mut shell, &mut state, EmacsFn::YankLastArg, 0);
+            assert_eq!(state.buf, b"cmd one");
+            let out = apply(&mut shell, &mut state, EmacsFn::YankLastArg, 0);
+            assert!(out.bell);
+            assert!(state.yank_last_arg.is_some());
+        });
+    }
+
+    // --- last_word_of pure helper -----------------------------------
+
+    #[test]
+    fn last_word_of_all_whitespace_returns_empty() {
+        assert_no_syscalls(|| {
+            assert_eq!(last_word_of(b"   \t\n  "), Vec::<u8>::new());
+            assert_eq!(last_word_of(b""), Vec::<u8>::new());
+        });
+    }
+
+    #[test]
+    fn last_word_of_with_trailing_whitespace_strips_it() {
+        assert_no_syscalls(|| {
+            assert_eq!(last_word_of(b"echo hello   "), b"hello".to_vec());
+            assert_eq!(last_word_of(b"  sole"), b"sole".to_vec());
+        });
+    }
+
+    // --- longest_common_prefix --------------------------------------
+
+    #[test]
+    fn longest_common_prefix_empty_input_is_none() {
+        assert_no_syscalls(|| {
+            assert!(longest_common_prefix(&[]).is_none());
+        });
+    }
+
+    #[test]
+    fn longest_common_prefix_no_overlap_is_none() {
+        assert_no_syscalls(|| {
+            let items = vec![b"alpha".to_vec(), b"bravo".to_vec()];
+            assert!(longest_common_prefix(&items).is_none());
+        });
+    }
+
+    #[test]
+    fn longest_common_prefix_partial_overlap_is_returned() {
+        assert_no_syscalls(|| {
+            let items = vec![b"echo".to_vec(), b"echelon".to_vec(), b"eck".to_vec()];
+            assert_eq!(longest_common_prefix(&items), Some(b"ec".to_vec()));
+        });
+    }
+
+    // --- is_dir_candidate trivial rejections -----------------------
+
+    #[test]
+    fn is_dir_candidate_rejects_empty_and_slash_suffixed() {
+        assert_no_syscalls(|| {
+            assert!(!is_dir_candidate(b""));
+            assert!(!is_dir_candidate(b"foo/"));
+        });
+    }
+
+    // --- gather_candidates tilde paths -----------------------------
+
+    #[test]
+    fn gather_candidates_bare_tilde_without_home_returns_empty_path_set() {
+        // With `HOME` unset, `~` cannot expand; the function must
+        // return an empty candidate list (still tagged as `Path` so
+        // the caller's terminator logic remains consistent).
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            shell.env_mut().remove(b"HOME");
+            let (cands, kind) = gather_candidates(&shell, b"~", false);
+            assert!(cands.is_empty());
+            assert_eq!(kind, CompletionKind::Path);
+        });
+    }
+
+    #[test]
+    fn gather_candidates_bare_tilde_with_home_returns_single_candidate() {
+        // With `HOME` set, a single-candidate completion of `~` yields
+        // exactly the `$HOME` directory, tagged as `Path` so the outer
+        // caller can append a `/` if it turns out to be a directory.
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let _ = shell.set_var(b"HOME", b"/tmp/home");
+            let (cands, kind) = gather_candidates(&shell, b"~", false);
+            assert_eq!(cands.len(), 1);
+            assert_eq!(cands[0].word, b"/tmp/home".to_vec());
+            assert_eq!(kind, CompletionKind::Path);
+        });
+    }
+
+    #[test]
+    fn gather_candidates_tilde_user_form_without_slash_returns_empty() {
+        // `~root` (no slash) is not resolved by meiksh — only `~` alone
+        // is special-cased. The function short-circuits without probing
+        // `/etc/passwd`, returning an empty path candidate list.
+        assert_no_syscalls(|| {
+            let shell = test_shell();
+            let (cands, kind) = gather_candidates(&shell, b"~root", false);
+            assert!(cands.is_empty());
+            assert_eq!(kind, CompletionKind::Path);
+        });
+    }
+
+    #[test]
+    fn gather_candidates_dollar_variable_matches_exported_name() {
+        // `$PA…` expansion walks the exported environment; the stripped
+        // prefix is matched verbatim against the variable name.
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let _ = shell.set_var(b"PATH_TEST_VAR", b"1");
+            let (cands, kind) = gather_candidates(&shell, b"$PATH_TEST_", false);
+            assert!(!cands.is_empty());
+            assert!(
+                cands.iter().any(|c| c.word == b"$PATH_TEST_VAR".to_vec()),
+                "expected $PATH_TEST_VAR: {:?}",
+                cands
+            );
+            assert_eq!(kind, CompletionKind::Variable);
+        });
+    }
+
+    #[test]
+    fn apply_reverse_search_is_noop_when_routed_through_apply() {
+        // The outer dispatch loop intercepts `ReverseSearchHistory` /
+        // `ForwardSearchHistory` before they reach `apply`. When tests
+        // (or a pathological binding) route them into `apply`, the
+        // body is an explicit no-op: no bell, no buffer mutation, and
+        // `last_fn` is still recorded so `yank-last-arg` walk detection
+        // keeps working.
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let mut state = EmacsState::new(0x7f);
+            state.buf = b"preserved".to_vec();
+            state.cursor = 3;
+            let out1 = apply(&mut shell, &mut state, EmacsFn::ReverseSearchHistory, 0);
+            assert!(!out1.bell);
+            assert!(!out1.accepted);
+            assert_eq!(state.buf, b"preserved");
+            assert_eq!(state.cursor, 3);
+            assert_eq!(state.last_fn, Some(EmacsFn::ReverseSearchHistory));
+            let out2 = apply(&mut shell, &mut state, EmacsFn::ForwardSearchHistory, 0);
+            assert!(!out2.bell);
+            assert_eq!(state.last_fn, Some(EmacsFn::ForwardSearchHistory));
+        });
+    }
+
+    #[test]
+    fn apply_edit_and_execute_records_tmp_path() {
+        // `EditAndExecuteCommand` opens `/tmp/meiksh-edit-<pid>`, writes
+        // the current buffer followed by `\n`, closes the fd, and
+        // surfaces the path back to the outer loop via
+        // `out.edit_and_execute`. We trace every syscall so the test
+        // stays deterministic under `run_trace`.
+        use crate::sys::test_support::run_trace;
+        use crate::trace_entries;
+        run_trace(
+            trace_entries![
+                getpid() -> pid(7777),
+                open(str(b"/tmp/meiksh-edit-7777"), int(crate::sys::constants::O_WRONLY | crate::sys::constants::O_CREAT | crate::sys::constants::O_TRUNC), int(0o600)) -> int(9),
+                write(fd(9), bytes(b"hello")) -> auto,
+                write(fd(9), bytes(b"\n")) -> auto,
+                close(fd(9)) -> 0,
+            ],
+            || {
+                let mut shell = test_shell();
+                let mut state = EmacsState::new(0x7f);
+                state.buf = b"hello".to_vec();
+                let out = apply(&mut shell, &mut state, EmacsFn::EditAndExecuteCommand, 0);
+                assert_eq!(
+                    out.edit_and_execute.as_deref(),
+                    Some(&b"/tmp/meiksh-edit-7777"[..])
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn apply_edit_and_execute_handles_open_failure_gracefully() {
+        // When `open` fails (e.g. `/tmp` not writable), the function
+        // still surfaces the intended path through
+        // `out.edit_and_execute` so the outer loop can attempt the
+        // external editor. The fd-level writes / close are skipped.
+        use crate::sys::test_support::run_trace;
+        use crate::trace_entries;
+        run_trace(
+            trace_entries![
+                getpid() -> pid(4321),
+                open(str(b"/tmp/meiksh-edit-4321"), int(crate::sys::constants::O_WRONLY | crate::sys::constants::O_CREAT | crate::sys::constants::O_TRUNC), int(0o600))
+                    -> err(crate::sys::constants::EACCES),
+            ],
+            || {
+                let mut shell = test_shell();
+                let mut state = EmacsState::new(0x7f);
+                let out = apply(&mut shell, &mut state, EmacsFn::EditAndExecuteCommand, 0);
+                assert_eq!(
+                    out.edit_and_execute.as_deref(),
+                    Some(&b"/tmp/meiksh-edit-4321"[..])
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn run_bind_x_updates_buffer_and_point_from_environment() {
+        // The `bind -x` handshake: publish READLINE_LINE/_POINT into
+        // the environment, run the command (which may mutate them),
+        // then pull the updated values back into the editor state.
+        // We drive it with a no-op command (`:`) and pre-set the env
+        // variables to simulate what the external command would do.
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let mut state = EmacsState::new(0x7f);
+            state.buf = b"original".to_vec();
+            state.cursor = 8;
+            // Pre-populate the "restored" values so `run_bind_x` reads
+            // the expected post-command values back. `execute_string`
+            // on `:` is an inexpensive no-op that exits via the
+            // `true` builtin.
+            let _ = shell.set_var(b"READLINE_LINE", b"will be overwritten");
+            let _ = shell.set_var(b"READLINE_POINT", b"0");
+            run_bind_x(&mut shell, &mut state, b":");
+            // After the command runs, the buffer matches whatever
+            // READLINE_LINE contained at the end — because `:` didn't
+            // touch it, we should see the buffer pre-published from
+            // `state.buf`.
+            assert_eq!(state.buf, b"original".to_vec());
+            // READLINE_LINE/_POINT were previously set, so the restore
+            // branch takes the `Some(v)` path: they are written back
+            // to the saved value rather than being removed.
+            assert_eq!(
+                shell.get_var(b"READLINE_LINE").map(|b| b.to_vec()),
+                Some(b"will be overwritten".to_vec())
+            );
+        });
+    }
+
+    #[test]
+    fn run_bind_x_removes_env_vars_when_previously_unset() {
+        // When READLINE_LINE / _POINT were unset before the call, the
+        // restore path must remove them (the `None` arms of the two
+        // `match` blocks). We verify this by observing that
+        // `shell.env().contains(...)` is false afterwards.
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            shell.env_mut().remove(b"READLINE_LINE");
+            shell.env_mut().remove(b"READLINE_POINT");
+            let mut state = EmacsState::new(0x7f);
+            state.buf = b"x".to_vec();
+            run_bind_x(&mut shell, &mut state, b":");
+            assert!(shell.get_var(b"READLINE_LINE").is_none());
+            assert!(shell.get_var(b"READLINE_POINT").is_none());
+        });
+    }
+
+    #[test]
+    fn run_bind_x_ignores_invalid_readline_point() {
+        // A non-numeric `READLINE_POINT` value must be silently
+        // ignored, taking both inner-`if let Ok` short-circuit arms
+        // at the `READLINE_POINT` parsing in `run_bind_x` so the
+        // cursor remains at its previous position.
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let mut state = EmacsState::new(0x7f);
+            state.buf = b"abc".to_vec();
+            state.cursor = 2;
+            run_bind_x(
+                &mut shell,
+                &mut state,
+                b"READLINE_LINE=abc; READLINE_POINT=not-a-number",
+            );
+            assert_eq!(state.buf, b"abc");
+            assert_eq!(state.cursor, 2);
+        });
+    }
+
+    #[test]
+    fn run_bind_x_parses_readline_point_on_return() {
+        // If the command writes a numeric value into READLINE_POINT
+        // and a new string into READLINE_LINE, `run_bind_x` clamps
+        // the point to `buf.len()` and copies the new buffer. Here
+        // we use a command line that sets both via `export`.
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let mut state = EmacsState::new(0x7f);
+            state.buf = b"abc".to_vec();
+            state.cursor = 1;
+            // `execute_string` runs the command in the shell. This
+            // command replaces READLINE_LINE with a shorter buffer
+            // and sets READLINE_POINT to a value larger than the new
+            // buffer — the function must clamp to `buf.len()`.
+            run_bind_x(
+                &mut shell,
+                &mut state,
+                b"READLINE_LINE=xy; READLINE_POINT=99",
+            );
+            assert_eq!(state.buf, b"xy");
+            assert_eq!(state.cursor, 2);
+        });
+    }
+
+    // --- list_candidates / completion internals ----------------------
+
+    #[test]
+    fn list_candidates_empty_returns_without_syscalls() {
+        // An empty candidate slice short-circuits before any stdout
+        // write. The function must perform no syscalls in that case.
+        assert_no_syscalls(|| {
+            list_candidates(&[]);
+        });
+    }
+
+    // --- gather_candidates filesystem paths --------------------------
+
+    #[test]
+    fn gather_candidates_tilde_slash_expands_against_home() {
+        // `~/foo` expansion rewrites the tilde with `$HOME` then
+        // delegates to `complete_path_candidates`. We drive that
+        // downstream call through the mocked-fs trace so the test
+        // stays deterministic.
+        use crate::sys::test_support::run_trace;
+        use crate::trace_entries;
+        run_trace(
+            trace_entries![
+                opendir(str(b"/tmp/tc-home/")) -> int(1),
+                readdir(_) -> dir_entry(b"."),
+                readdir(_) -> dir_entry(b".."),
+                readdir(_) -> dir_entry(b"foobar"),
+                readdir(_) -> int(0),
+                closedir(_) -> 0,
+            ],
+            || {
+                let mut shell = test_shell();
+                let _ = shell.set_var(b"HOME", b"/tmp/tc-home");
+                let (cands, kind) = gather_candidates(&shell, b"~/", false);
+                assert_eq!(kind, CompletionKind::Path);
+                assert!(
+                    cands.iter().any(|c| c.display == b"foobar".to_vec()),
+                    "expected foobar: {cands:?}"
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn command_candidates_includes_aliases_and_functions() {
+        // Register a shell alias and a shell function, then verify
+        // both appear in the first-word completion set (covering
+        // the aliases() and functions() iteration branches).
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            shell.aliases_mut().insert(
+                b"zz_alias_probe".to_vec().into_boxed_slice(),
+                b"ls -l".to_vec().into_boxed_slice(),
+            );
+            shell.define_function(
+                b"zz_func_probe".to_vec(),
+                std::rc::Rc::new(crate::syntax::ast::Command::Simple(Default::default())),
+            );
+            // Drop PATH entirely so `command_candidates` skips the
+            // directory scan — keeps this test syscall-free.
+            shell.env_mut().remove(b"PATH");
+            let cands = command_candidates(&shell, b"zz_");
+            assert!(
+                cands.iter().any(|c| c.display == b"zz_alias_probe"),
+                "missing alias: {cands:?}",
+            );
+            assert!(
+                cands.iter().any(|c| c.display == b"zz_func_probe"),
+                "missing function: {cands:?}",
+            );
+        });
+    }
+
+    #[test]
+    fn complete_path_candidates_skips_dot_and_dotdot() {
+        // The `.` / `..` entries returned by `readdir` are hidden
+        // conventions; the completer must skip them even when the
+        // prefix empty-matches them.
+        use crate::sys::test_support::run_trace;
+        use crate::trace_entries;
+        run_trace(
+            trace_entries![
+                opendir(str(b".")) -> int(1),
+                readdir(_) -> dir_entry(b"."),
+                readdir(_) -> dir_entry(b".."),
+                readdir(_) -> dir_entry(b"afile"),
+                readdir(_) -> int(0),
+                closedir(_) -> 0,
+            ],
+            || {
+                let cands = complete_path_candidates(b"");
+                assert_eq!(cands.len(), 1);
+                assert_eq!(cands[0].display, b"afile".to_vec());
+            },
+        );
+    }
+
+    #[test]
+    fn complete_path_candidates_returns_empty_on_readdir_error() {
+        // A failing `opendir` short-circuits the whole walk; the
+        // function returns an empty Vec instead of propagating the
+        // error.
+        use crate::sys::test_support::run_trace;
+        use crate::trace_entries;
+        run_trace(
+            trace_entries![
+                opendir(str(b".")) -> err(crate::sys::constants::ENOENT),
+            ],
+            || {
+                let cands = complete_path_candidates(b"");
+                assert!(cands.is_empty());
+            },
+        );
+    }
+
+    #[test]
+    fn command_candidates_skips_path_segment_with_embedded_nul() {
+        // A PATH segment containing a NUL byte cannot be turned into
+        // a CString, so `command_candidates` must `continue` past
+        // that segment (line 1006).
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let _ = shell.set_var(b"PATH", b"bad\0seg");
+            let cands = command_candidates(&shell, b"zzz_no_match");
+            assert!(cands.is_empty());
+        });
+    }
+
+    #[test]
+    fn command_candidates_skips_path_segment_with_failing_readdir() {
+        // A PATH segment that points at a non-openable directory
+        // exercises the `Err(_) => continue` arm at line 1010.
+        use crate::sys::test_support::run_trace;
+        use crate::trace_entries;
+        run_trace(
+            trace_entries![
+                opendir(str(b"/missing/path/segment")) -> err(crate::sys::constants::ENOENT),
+            ],
+            || {
+                let mut shell = test_shell();
+                let _ = shell.set_var(b"PATH", b"/missing/path/segment");
+                let cands = command_candidates(&shell, b"zzz_no_match");
+                assert!(cands.is_empty());
+            },
+        );
+    }
+
+    #[test]
+    fn complete_path_candidates_returns_empty_when_dir_contains_nul() {
+        // A NUL byte in the directory portion of `prefix` makes
+        // `to_cstring` fail; the function returns `Vec::new()`
+        // (line 1034).
+        assert_no_syscalls(|| {
+            let cands = complete_path_candidates(b"bad\0dir/file");
+            assert!(cands.is_empty());
+        });
+    }
+
+    #[test]
+    fn complete_path_candidates_skips_non_matching_entries() {
+        // `readdir` returns an entry that does not start with `fname`
+        // so the inner `continue` arm at line 1044 fires.
+        use crate::sys::test_support::run_trace;
+        use crate::trace_entries;
+        run_trace(
+            trace_entries![
+                opendir(str(b".")) -> int(1),
+                readdir(_) -> dir_entry(b"alpha"),
+                readdir(_) -> dir_entry(b"beta"),
+                readdir(_) -> int(0),
+                closedir(_) -> 0,
+            ],
+            || {
+                let cands = complete_path_candidates(b"al");
+                assert_eq!(cands.len(), 1);
+                assert_eq!(cands[0].display, b"alpha");
+            },
+        );
+    }
+
+    #[test]
+    fn terminal_columns_falls_back_to_columns_env_var() {
+        // With no controlling tty, `terminal_columns` reads the
+        // `COLUMNS` env var (lines 896–900). We stash and restore the
+        // current value to keep the test parallel-safe.
+        crate::sys::test_support::set_test_terminal_columns(None);
+        let prev = std::env::var_os("COLUMNS");
+        // SAFETY: tests are single-threaded with respect to env vars
+        // when each test reads/writes within its own scope.
+        unsafe {
+            std::env::set_var("COLUMNS", "55");
+        }
+        let cols = terminal_columns();
+        unsafe {
+            match prev {
+                Some(v) => std::env::set_var("COLUMNS", v),
+                None => std::env::remove_var("COLUMNS"),
+            }
+        }
+        assert_eq!(cols, 55);
+    }
+
+    #[test]
+    fn terminal_columns_uses_tty_override_when_present() {
+        // When the TTY ioctl reports a column count, that wins
+        // before the COLUMNS fallback (line 894).
+        crate::sys::test_support::set_test_terminal_columns(Some(132));
+        let cols = terminal_columns();
+        crate::sys::test_support::set_test_terminal_columns(None);
+        assert_eq!(cols, 132);
+    }
+
+    #[test]
+    fn gather_candidates_brace_variable_wraps_match() {
+        // `${PA…` produces `BraceVariable` candidates whose `word`
+        // already includes the leading `${`; the outer caller appends
+        // the closing `}` for unique matches.
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let _ = shell.set_var(b"BRACE_TEST_VAR", b"1");
+            let (cands, kind) = gather_candidates(&shell, b"${BRACE_TEST_", false);
+            assert!(
+                cands.iter().any(|c| c.word == b"${BRACE_TEST_VAR".to_vec()),
+                "expected ${{BRACE_TEST_VAR: {:?}",
+                cands
+            );
+            assert_eq!(kind, CompletionKind::BraceVariable);
         });
     }
 }

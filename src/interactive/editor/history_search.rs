@@ -157,6 +157,27 @@ mod tests {
     }
 
     #[test]
+    fn find_prefix_forward_miss_returns_none() {
+        assert_no_syscalls(|| {
+            let h = hist(&[b"ls", b"pwd"]);
+            assert_eq!(find_prefix(&h, b"echo", None, Direction::Forward), None);
+        });
+    }
+
+    #[test]
+    fn find_substring_needle_longer_than_any_entry_returns_none() {
+        assert_no_syscalls(|| {
+            // Each hay is shorter than the needle, so has_substring
+            // hits the `needle.len() > hay.len()` guard.
+            let h = hist(&[b"a", b"bc"]);
+            assert_eq!(
+                find_substring(&h, b"needle", None, Direction::Backward),
+                None
+            );
+        });
+    }
+
+    #[test]
     fn find_substring_empty_returns_none() {
         assert_no_syscalls(|| {
             let h = hist(&[b"x"]);

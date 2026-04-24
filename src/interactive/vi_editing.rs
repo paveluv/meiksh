@@ -1736,6 +1736,21 @@ mod tests {
         }
 
         #[test]
+        fn glob_expand_literal_nonexistent_pattern_returns_err() {
+            // A pattern without glob metacharacters falls through to
+            // the `sys::fs::file_exists` probe. If the file doesn't
+            // exist, the function must return `Err(())`.
+            run_trace(
+                trace_entries![
+                    access(str(b"/no/such/file"), int(sys::constants::F_OK)) -> err(sys::constants::ENOENT),
+                ],
+                || {
+                    assert!(glob_expand(b"/no/such/file").is_err());
+                },
+            );
+        }
+
+        #[test]
         fn glob_expand_no_match_returns_err() {
             run_trace(
                 trace_entries![

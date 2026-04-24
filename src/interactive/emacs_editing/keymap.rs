@@ -507,6 +507,52 @@ mod tests {
     }
 
     #[test]
+    fn bind_ignores_empty_keyseq() {
+        // Binding the empty sequence is a no-op: nothing is ever
+        // typed as "no bytes", so the trie rejects it silently.
+        assert_no_syscalls(|| {
+            let mut k = Keymap::default();
+            k.bind(b"", KeymapEntry::Func(EmacsFn::AcceptLine));
+            // The root is still empty: no entry and no children. The
+            // resolver walks zero bytes, lands on the root, and
+            // reports `Unbound` because both the entry is `None` and
+            // the children map is empty.
+            assert_eq!(k.resolve(b""), Resolved::Unbound);
+        });
+    }
+
+    #[test]
+    fn unbind_empty_keyseq_without_entry_returns_false() {
+        // Walking with an empty keyseq into a node whose `entry` is
+        // `None` hits the `return false` arm: nothing was bound at
+        // the target, so the caller observes `false`.
+        assert_no_syscalls(|| {
+            let mut k = Keymap::default();
+            assert!(!k.unbind(b""));
+        });
+    }
+
+    #[test]
+    fn dump_inputrc_round_trips_macro_binding() {
+        // The macro branch of `dump_inputrc` writes `"seq": "macro"`
+        // with escape handling for embedded quotes and backslashes.
+        assert_no_syscalls(|| {
+            let mut k = Keymap::default();
+            k.bind(b"\x18m", KeymapEntry::Macro(b"a\"b\\c".to_vec()));
+            let mut out = Vec::new();
+            k.dump_inputrc(&mut out);
+            // Expect the macro value to be quoted with the embedded
+            // `"` and `\` escaped per `write_escaped`.
+            assert!(
+                out.windows(b"\"a\\\"b\\\\c\"".len())
+                    .any(|w| w == b"\"a\\\"b\\\\c\""),
+                "macro dump missing escape-preserving form: {:?}",
+                String::from_utf8_lossy(&out),
+            );
+        });
+    }
+
+    #[test]
     fn emacs_fn_name_round_trip() {
         assert_no_syscalls(|| {
             for f in ALL_FUNCTIONS {
