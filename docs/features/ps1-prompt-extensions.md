@@ -34,6 +34,13 @@ Meiksh aligns with bash's prompt escape language because it is the widest deploy
 
 This specification intentionally omits a number of features that exist in the reference shells. The omissions are listed normatively in Section 13 (Non-Goals). Appendix B describes what it would take to add each omitted feature later. The absence of a feature from this document shall not be interpreted as an oversight.
 
+### 1.4 Companion Policy Documents
+
+This specification is written against two project-wide policy documents, which take precedence over any conflicting guidance implied here:
+
+- [docs/IMPLEMENTATION_POLICY.md](../IMPLEMENTATION_POLICY.md) is the canonical source for project rules that implementation of this spec must follow, in particular: the `libc`-boundary rule (production `libc` calls live only under `src/sys/`, integration-test `libc` usage lives only in `tests/integration/sys.rs`); the banned-`std` list (no `std::fs::File`, `std::process::Command`, `std::string::String`, `std::path::{Path, PathBuf}`, `std::env::var`, `println!`/`format!`/`write!`, and so on; use `Vec<u8>` / `&[u8]` with `sys::` wrappers and `bstr::ByteWriter`); and the `ShellMap` / `ShellSet` requirement for byte-string-keyed hash tables. Every implementation decision made in Section 11 (Implementation Notes) of this spec is a direct consequence of those rules; if the two documents disagree, `IMPLEMENTATION_POLICY.md` wins.
+- [docs/TEST_WRITING_GUIDE.md](../TEST_WRITING_GUIDE.md) is the canonical source for how the unit and integration tests that verify this spec shall be structured, including the unit-vs-integration split, the `trace_entries!` / `syscall_test!` conventions for fake-syscall unit tests, and the PTY-harness conventions for interactive integration tests. Every test-shape requirement made in Section 14 (Testing) of this spec shall be interpreted in light of that guide; if the two documents disagree, `TEST_WRITING_GUIDE.md` wins.
+
 ## 2. Compat-Mode Gate
 
 ### 2.1 The `bash_compat` Option
@@ -327,7 +334,7 @@ Command substitution inside prompts (`$(...)`) shall run a subshell in the same 
 
 ## 11. Implementation Notes (Non-Normative)
 
-This section is advisory. It records the expected implementation shape so that reviewers can spot misalignments.
+This section is advisory. It records the expected implementation shape so that reviewers can spot misalignments. Every choice below is constrained by [docs/IMPLEMENTATION_POLICY.md](../IMPLEMENTATION_POLICY.md) — the banned-`std` list, the `libc`-boundary rule, the `ShellMap` / `ShellSet` requirement, and the `sys::`-only FFI policy all apply unchanged. Implementers shall re-read `IMPLEMENTATION_POLICY.md` before writing new production code against this spec; conflicts are resolved in favor of the policy document.
 
 ### 11.1 Option Plumbing
 
@@ -342,7 +349,7 @@ This section is advisory. It records the expected implementation shape so that r
 
 ### 11.3 `strftime` And `localtime_r`
 
-- The `libc`-boundary guard in [src/sys/mod.rs](../../src/sys/mod.rs) requires all `strftime` / `localtime_r` / `time` calls to live under `src/sys/`. Two new helpers are added to [src/sys/time.rs](../../src/sys/time.rs):
+- The `libc`-boundary rule documented in [docs/IMPLEMENTATION_POLICY.md](../IMPLEMENTATION_POLICY.md) (and enforced by `scripts/check-libc-boundary.sh`) requires all `strftime` / `localtime_r` / `time` calls to live under `src/sys/`. Two new helpers are added to [src/sys/time.rs](../../src/sys/time.rs):
     - `local_time_now() -> LocalTime`: a thin wrapper over `time(3)` plus `localtime_r(3)` returning a plain-data struct mirroring `struct tm`.
     - `format_strftime(format: &[u8], tm: &LocalTime, cap: usize) -> Vec<u8>`: invokes `strftime(3)` into a fixed-size stack buffer of `cap` bytes and returns the written bytes. On `strftime` returning 0 the helper returns an empty `Vec`.
 - Both helpers are gated by the existing `sys::` boundary test.
@@ -417,11 +424,13 @@ Bash 5.1 introduced `\N` (a user-controllable "nickname" escape) gated by a shop
 
 ## 14. Testing
 
+The structure and conventions of every test listed below shall follow [docs/TEST_WRITING_GUIDE.md](../TEST_WRITING_GUIDE.md): the unit-vs-integration split described in its opening table, the `trace_entries!` / `syscall_test!` macro conventions for fake-syscall unit tests, and the PTY-harness conventions for interactive integration tests. In particular, unit tests shall route their syscalls through `crate::sys::test_support` and shall build their traces via `trace_entries!` rather than hand-rolled `Vec`s, and integration tests that need real PTYs shall share the helpers in [tests/integration/interactive_common/](../../tests/integration/interactive_common/). If this section and `TEST_WRITING_GUIDE.md` disagree, the guide wins.
+
 Conformance with this spec is verified by:
 
-- Unit tests colocated with the escape decoder implementation in [src/interactive/prompt.rs](../../src/interactive/prompt.rs), covering each escape in Section 6.1 against hand-authored input vectors.
-- Unit tests for the session counter (Section 6.4) and the `\$` root/non-root dispatch (Section 6.1) using the existing shell-state test harness in [src/shell/test_support.rs](../../src/shell/test_support.rs).
-- Integration tests in [tests/integration/prompt.rs](../../tests/integration/prompt.rs) that drive the shell with both `set -o bash_compat` and `set +o bash_compat` and assert the rendered byte stream.
+- Unit tests colocated with the escape decoder implementation in [src/interactive/prompt.rs](../../src/interactive/prompt.rs), covering each escape in Section 6.1 against hand-authored input vectors. These are pure-logic tests and should use `assert_no_syscalls` per the guide.
+- Unit tests for the session counter (Section 6.4) and the `\$` root/non-root dispatch (Section 6.1) using the existing shell-state test harness in [src/shell/test_support.rs](../../src/shell/test_support.rs), with any `geteuid` call expressed via a `trace_entries![geteuid() -> ...]` entry rather than a real syscall.
+- Integration tests in [tests/integration/prompt.rs](../../tests/integration/prompt.rs) that drive the shell with both `set -o bash_compat` and `set +o bash_compat` and assert the rendered byte stream. Any `libc` usage needed by these tests (for PTY or signal setup) shall live in [tests/integration/sys.rs](../../tests/integration/sys.rs) per the policy in [docs/IMPLEMENTATION_POLICY.md](../IMPLEMENTATION_POLICY.md).
 - PTY tests in [tests/integration/interactive_common/](../../tests/integration/interactive_common/) that assert cursor placement after prompts containing `\[\e[31m\]\u\[\e[0m\]@\h` (ANSI color inside non-printing regions).
 - A locale-sensitive test that sets `LC_TIME=fr_FR.UTF-8` (or an equivalent locale available on the CI host) and asserts that `\D{%A}` in `PS1` produces French day names.
 
