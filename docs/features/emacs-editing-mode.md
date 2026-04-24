@@ -55,7 +55,10 @@ This specification intentionally omits a number of features that exist in the re
 
 ### 2.5 Default State
 
-- Meiksh has no default editing mode. On shell startup, neither `emacs` nor `vi` is enabled unless explicitly requested. This is a meiksh deviation from bash (which defaults to emacs) and from ksh (which infers the mode from `$VISUAL` / `$EDITOR`).
+- Meiksh shall start with `emacs` mode **enabled** and `vi` mode disabled. This matches bash's default and mirrors the behavior expected by every interactive-shell user who has not explicitly opted into vi. It supersedes the earlier "no default editing mode" behavior.
+- The default shall apply uniformly to interactive and non-interactive shells: the `set -o` report shall list `emacs on` regardless of whether the shell is reading from a terminal. Non-interactive shells do not enter the REPL, so the flag has no observable effect on script execution (§ 2.3), but mirroring the value ensures that a `set -o` dump captured from one kind of invocation can be re-applied to another without surprise.
+- A user who prefers vi editing may set it explicitly — either via `set -o vi` at runtime, or via `set editing-mode vi` in `$HOME/.inputrc` (Section 13.2) — which shall flip emacs off per Section 2.2.
+- A user who wants no editing mode at all may issue `set +o emacs` to fall back to canonical (line-buffered) terminal input, matching the behavior previously reached by the startup state.
 
 ## 3. Terminal Preconditions
 

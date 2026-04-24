@@ -34,10 +34,11 @@ Before any file is sourced, `meiksh` exports the shell variable `MEIKSH_VERSION`
 ```sh
 if [ -n "${MEIKSH_VERSION:-}" ]; then
     # meiksh-specific setup
-    set -o emacs         # opt into emacs-mode line editing
     set -o bash_compat   # opt into bash-compatible prompt escapes (\u, \h, \w, \D{…}, …)
 fi
 ```
+
+(`emacs` editing mode is on by default, matching bash, so there is no need to enable it from `~/.profile`.)
 
 Setuid/setgid shells skip all three files (the same conservative guard POSIX requires for `$ENV`, extended to the profile files) but still export the `MEIKSH_VERSION` marker.
 

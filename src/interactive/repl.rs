@@ -524,7 +524,15 @@ mod tests {
             ],
             || {
                 let mut shell = test_shell();
-                shell.options.vi_mode = true;
+                // Route through the named-option setter rather than
+                // flipping the boolean directly so the mutual-exclusion
+                // rule from `docs/features/emacs-editing-mode.md`
+                // § 2.2 is honored — emacs is the default (§ 2.5) and
+                // must be flipped off as a side effect of enabling vi.
+                shell
+                    .options
+                    .set_named_option(b"vi", true)
+                    .expect("set -o vi");
                 let status = run_loop(&mut shell).expect("vi mode eof");
                 assert_eq!(status, 0);
             },

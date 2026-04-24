@@ -17,7 +17,7 @@ pub(crate) enum CompatMode {
     Bash,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub(crate) struct ShellOptions {
     pub(crate) allexport: bool,
     pub(crate) command_string: Option<Box<[u8]>>,
@@ -42,6 +42,44 @@ pub(crate) struct ShellOptions {
     /// bash_compat` / `set +o bash_compat` move this between `Posix`
     /// and `Bash`.
     pub(crate) compat_mode: CompatMode,
+}
+
+impl Default for ShellOptions {
+    /// Meiksh defaults match bash: `emacs` editing mode is **on**, all
+    /// other toggleable options are off, and the compat-mode slot sits
+    /// in the strict-POSIX position. A fresh interactive shell
+    /// therefore enters its REPL with emacs-style line editing without
+    /// the user having to run `set -o emacs` or ship a `.profile`.
+    /// Non-interactive shells never enter the REPL so the flag has no
+    /// observable effect on scripts, but `set -o` still reports
+    /// `emacs on` there (mirroring bash).
+    ///
+    /// See `docs/features/emacs-editing-mode.md` § 2.5 for the
+    /// normative statement of this default.
+    fn default() -> Self {
+        Self {
+            allexport: false,
+            command_string: None,
+            errexit: false,
+            syntax_check_only: false,
+            force_interactive: false,
+            hashall: false,
+            monitor: false,
+            noclobber: false,
+            noglob: false,
+            notify: false,
+            nounset: false,
+            pipefail: false,
+            verbose: false,
+            xtrace: false,
+            script_path: None,
+            shell_name_override: None,
+            positional: Vec::new(),
+            vi_mode: false,
+            emacs_mode: true,
+            compat_mode: CompatMode::Posix,
+        }
+    }
 }
 
 const REPORTABLE_OPTION_NAMES: [(&[u8], u8); 11] = [
@@ -212,6 +250,15 @@ mod tests {
     }
 
     #[test]
+    fn default_options_enable_emacs_mode() {
+        // `docs/features/emacs-editing-mode.md` § 2.5 specifies that a
+        // fresh shell starts in emacs mode, matching bash.
+        let opts = ShellOptions::default();
+        assert!(opts.emacs_mode);
+        assert!(!opts.vi_mode);
+    }
+
+    #[test]
     fn set_named_option_emacs_flips_vi() {
         let mut opts = ShellOptions::default();
         opts.set_named_option(b"vi", true).expect("vi on");
@@ -224,8 +271,8 @@ mod tests {
 
     #[test]
     fn set_named_option_vi_flips_emacs() {
+        // Default is already emacs=on; setting vi flips it off.
         let mut opts = ShellOptions::default();
-        opts.set_named_option(b"emacs", true).expect("emacs on");
         assert!(opts.emacs_mode);
         opts.set_named_option(b"vi", true).expect("vi on");
         assert!(opts.vi_mode);
@@ -235,7 +282,6 @@ mod tests {
     #[test]
     fn set_named_option_off_leaves_other_mode_alone() {
         let mut opts = ShellOptions::default();
-        opts.set_named_option(b"emacs", true).expect("emacs on");
         opts.set_named_option(b"emacs", false).expect("emacs off");
         assert!(!opts.emacs_mode);
         assert!(!opts.vi_mode);

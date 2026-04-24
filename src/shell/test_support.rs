@@ -22,8 +22,21 @@ pub fn t_stderr(msg: &str) -> crate::sys::test_support::TraceEntry {
 }
 
 pub fn test_shell() -> Shell {
+    // Unit tests that drive the REPL / readers directly were written
+    // against the canonical (line-buffered) input path and specify
+    // `read(STDIN, ...)` traces that do not include the `tcgetattr`
+    // / `tcsetattr` raw-mode transitions the emacs reader performs.
+    // `docs/features/emacs-editing-mode.md` § 2.5 makes emacs the
+    // default for real shells; keeping `test_shell()` on the canonical
+    // branch preserves the pre-existing test contract without
+    // retrofitting raw-mode traces into every fixture, while new
+    // tests that specifically want emacs behavior can still flip it
+    // on via `shell.options.set_named_option(b"emacs", true)` or by
+    // instantiating the `emacs_editing` reader directly.
+    let mut options = ShellOptions::default();
+    options.emacs_mode = false;
     Shell {
-        options: ShellOptions::default(),
+        options,
         shell_name: b"meiksh"[..].into(),
         shared: Rc::new(SharedEnv {
             vars: crate::shell::vars::VarTable::default(),
