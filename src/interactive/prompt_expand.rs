@@ -645,4 +645,204 @@ mod tests {
         assert_eq!(p.bytes, b"x");
         assert!(p.invisible.is_empty());
     }
+
+    // === Spec § 6.5 (Octal) additional coverage ===================
+
+    /// § 6.5: a fourth octal digit shall begin a fresh run of literal
+    /// bytes and shall not extend the octal escape.
+    #[test]
+    fn fourth_octal_digit_starts_fresh_literal_run() {
+        // `\1011` — `\101` decodes to 'A', the trailing '1' is a
+        // literal byte.
+        let p = decode_default(b"\\1011");
+        assert_eq!(p.bytes, b"A1");
+    }
+
+    /// § 6.5: an octal value greater than 0o377 shall keep the low 8
+    /// bits. `\777` has value 511 = 0x1FF; the emitted byte is 0xFF.
+    #[test]
+    fn octal_value_above_0o377_keeps_low_eight_bits() {
+        let p = decode_default(b"\\777");
+        assert_eq!(p.bytes, b"\xff");
+    }
+
+    /// § 6.5: `\0` alone emits the NUL byte.
+    #[test]
+    fn octal_escape_nul_byte() {
+        let p = decode_default(b"a\\0b");
+        assert_eq!(p.bytes, b"a\x00b");
+    }
+
+    // === Spec § 6.2 (CWD) additional coverage =====================
+
+    /// § 6.2: if `$HOME` is unset, `\w` emits the absolute path
+    /// unchanged.
+    #[test]
+    fn w_without_home_emits_absolute_path() {
+        let mut env = base_env();
+        env.home = None;
+        env.cwd = Some(b"/var/lib/spool".to_vec());
+        let p = decode(b"\\w", &env, &fixed_tm());
+        assert_eq!(p.bytes, b"/var/lib/spool");
+    }
+
+    /// § 6.2: if `$HOME` is empty, `\w` emits the absolute path
+    /// unchanged (empty is treated the same as unset).
+    #[test]
+    fn w_with_empty_home_emits_absolute_path() {
+        let mut env = base_env();
+        env.home = Some(Vec::new());
+        env.cwd = Some(b"/var/log".to_vec());
+        let p = decode(b"\\w", &env, &fixed_tm());
+        assert_eq!(p.bytes, b"/var/log");
+    }
+
+    /// § 6.2: `$HOME` must be a proper prefix *followed by `/`* for
+    /// `\w` to collapse. If CWD merely happens to start with the
+    /// bytes of `$HOME` but is not a `/`-delimited extension, the
+    /// absolute path is emitted verbatim (e.g. HOME=/foo, CWD=/foobar).
+    #[test]
+    fn w_does_not_collapse_non_proper_home_prefix() {
+        let mut env = base_env();
+        env.home = Some(b"/home/alic".to_vec());
+        env.cwd = Some(b"/home/alice/work".to_vec());
+        let p = decode(b"\\w", &env, &fixed_tm());
+        assert_eq!(p.bytes, b"/home/alice/work");
+    }
+
+    // === Spec § 6.3 (Time) additional coverage ====================
+
+    /// § 6.3: `\D{format}` output buffer is capped at 256 bytes; a
+    /// format that would produce more than that shall be truncated
+    /// silently (strftime returns 0 → empty output per the graceful-
+    /// degradation contract in § 10.2).
+    #[test]
+    fn d_format_output_capped_at_256_bytes() {
+        // A repeated literal filler of 300 bytes will overflow the
+        // 256-byte buffer; strftime returns 0 and the decoder emits
+        // nothing for that escape. Surrounding literal text proves
+        // the decoder continued rather than aborted.
+        let filler = b"A".repeat(300);
+        let mut raw = Vec::from(&b"[\\D{"[..]);
+        raw.extend_from_slice(&filler);
+        raw.extend_from_slice(b"}]");
+        let p = decode(&raw, &base_env(), &fixed_tm());
+        assert_eq!(p.bytes, b"[]");
+    }
+
+    // === Spec § 6.4 (Session counter) =============================
+
+    /// § 6.4: `\#` shall emit a decimal integer; it starts at 1 on
+    /// shell startup and is decoupled from `\!`.
+    #[test]
+    fn session_counter_starts_at_one() {
+        let mut env = base_env();
+        env.session_counter = 1;
+        env.history_number = 12;
+        let p = decode(b"(\\#)|(\\!)", &env, &fixed_tm());
+        assert_eq!(p.bytes, b"(1)|(12)");
+    }
+
+    // === Spec § 6.1 (`\v` / `\V`) =================================
+
+    /// § 6.1: `\v` is `MAJOR.MINOR`; `\V` is `MAJOR.MINOR.PATCH`. Both
+    /// are independent of the shell name.
+    #[test]
+    fn version_escapes_independent_of_shell_name() {
+        let mut env = base_env();
+        env.version_short = b"9.42".to_vec();
+        env.version_long = b"9.42.7".to_vec();
+        env.shell_name = b"other".to_vec();
+        let p = decode(b"\\v|\\V", &env, &fixed_tm());
+        assert_eq!(p.bytes, b"9.42|9.42.7");
+    }
+
+    // === Spec § 6.1 (`\s` basename) ===============================
+
+    /// § 6.1: `\s` is the basename of `$0`. A trailing-slash path
+    /// (edge case) must not panic and yields the empty string.
+    #[test]
+    fn shell_name_with_trailing_slash_emits_empty() {
+        let mut env = base_env();
+        env.shell_name = b"/tmp/".to_vec();
+        let p = decode(b"<\\s>", &env, &fixed_tm());
+        assert_eq!(p.bytes, b"<>");
+    }
+
+    // === Spec § 6.1 (`\u` user priority) ==========================
+
+    /// § 6.1: `\u` shall prefer `$USER` over `getpwuid(geteuid())`.
+    /// The `PromptEnv` carries a single already-resolved `user` so
+    /// we verify the emit path, and show that an empty user value
+    /// falls back to `?`.
+    #[test]
+    fn user_empty_falls_back_to_question_mark() {
+        let mut env = base_env();
+        env.user = Some(Vec::new());
+        let p = decode(b"\\u", &env, &fixed_tm());
+        assert_eq!(p.bytes, b"?");
+    }
+
+    // === Spec § 6.1 (`\h` / `\H`) =================================
+
+    /// § 6.1: `\h` is the host up to but not including the first `.`.
+    /// A hostname with no dot must be emitted in full for `\h`.
+    #[test]
+    fn short_host_with_no_dot_is_emitted_in_full() {
+        let mut env = base_env();
+        env.hostname = Some(b"localhost".to_vec());
+        let p = decode(b"\\h", &env, &fixed_tm());
+        assert_eq!(p.bytes, b"localhost");
+    }
+
+    /// § 6.1: an empty hostname (distinguished from `None`) still
+    /// falls back to `?` per the graceful-degradation contract.
+    #[test]
+    fn empty_hostname_renders_question_mark() {
+        let mut env = base_env();
+        env.hostname = Some(Vec::new());
+        let p = decode(b"\\h|\\H", &env, &fixed_tm());
+        assert_eq!(p.bytes, b"?|?");
+    }
+
+    // === Spec § 8.3 (mask threading) ==============================
+
+    /// § 8.3: the mask refers to byte offsets in the decoder output.
+    /// This test ensures that two non-adjacent regions produce two
+    /// non-overlapping sorted ranges (monotonic byte offsets) with
+    /// the visible text in between reported as *not* invisible.
+    #[test]
+    fn two_invisible_regions_produce_non_overlapping_sorted_ranges() {
+        let p = decode_default(b"\\[AA\\]V\\[BB\\]");
+        assert_eq!(p.bytes, b"AAVBB");
+        assert_eq!(p.invisible, vec![(0, 2), (3, 5)]);
+        // `V` is visible.
+        assert!(!p.is_invisible(2));
+    }
+
+    // === Spec § 6.1 (`\j` zero jobs) ==============================
+
+    /// § 6.1: `\j` emits the decimal job count; zero is a valid value.
+    #[test]
+    fn job_count_zero_emits_literal_zero() {
+        let mut env = base_env();
+        env.jobs_count = 0;
+        let p = decode(b"[\\j]", &env, &fixed_tm());
+        assert_eq!(p.bytes, b"[0]");
+    }
+
+    // === Spec § 6.3 (Time shorthand equivalences) =================
+
+    /// § 6.3 shorthand table: `\d` is `\D{%a %b %e}`. At our fixed
+    /// time 2024-01-15 (Monday) the output starts with "Mon Jan" in
+    /// the C locale. We allow locale-specific day/month names by
+    /// only asserting that the day-of-month digit appears.
+    #[test]
+    fn backslash_d_renders_date_shorthand() {
+        let p = decode_default(b"\\d");
+        let s = p.bytes;
+        assert!(!s.is_empty());
+        // Day-of-month 15 must appear somewhere in the output.
+        assert!(s.windows(2).any(|w| w == b"15"), "got: {:?}", s);
+    }
 }

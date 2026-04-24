@@ -131,11 +131,13 @@ pub(super) fn run_loop(shell: &mut Shell) -> Result<i32, ShellError> {
         if !command_is_fc(trimmed) {
             shell.add_history(trimmed);
         }
-        // Per ps1-prompt-extensions.md § 6.1 (\#), the per-session
+        // Per ps1-prompt-extensions.md § 6.4 (\#), the per-session
         // counter is bumped exactly once per accepted, non-empty input
         // unit — immediately before the command runs, so the next
         // prompt (PS1 for the following unit) observes the new value.
-        shell.session_command_counter = shell.session_command_counter.saturating_add(1);
+        // It wraps modulo 2^63 on overflow (practically unreachable).
+        shell.session_command_counter =
+            shell.session_command_counter.wrapping_add(1) & 0x7FFF_FFFF_FFFF_FFFF;
         match shell.execute_string(&source) {
             Ok(status) => shell.last_status = status,
             Err(error) => {
