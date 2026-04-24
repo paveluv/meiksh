@@ -35,29 +35,29 @@ fn inputrc_recursion_guard_reports_diagnostic() {
         let _ = std::fs::remove_file(&path);
         return;
     };
-    let _ = drain_until_contains(&mut pty, b"$ ");
-    pty.send(b"set -o emacs\n");
-    // Sync on the bracketed-paste enable sequence `\x1b[?2004h` that
-    // `emacs_editing::read_line` emits on entry — that comes strictly
-    // AFTER `ensure_startup_loaded`, so when we see it the inputrc
-    // diagnostic has definitely already been written. If we instead
-    // raced ahead to typing `echo RCDONE\n`, the kernel-echoed copy of
-    // those bytes could satisfy `drain_until_contains(b"RCDONE\r\n")`
-    // before the diagnostic lands, producing a flaky false negative.
-    // Capture this preamble and carry it forward so the assertion
-    // inspects the full transcript (diagnostic + post-emacs-mode
-    // output), not just the final echo tail.
-    let preamble = drain_until_contains(&mut pty, b"\x1b[?2004h");
+    // Emacs is now the default editing mode
+    // (`docs/features/emacs-editing-mode.md` § 2.5), which means
+    // `emacs_editing::read_line` fires for the FIRST prompt and
+    // `ensure_startup_loaded` runs before the shell emits its initial
+    // `$ ` — the recursion diagnostic therefore lands in the startup
+    // preamble, not after our `set -o emacs` toggle. Capture the
+    // preamble, then continue driving the shell to prove it is still
+    // responsive (the diagnostic must not abort the editor).
+    let startup = drain_until_contains(&mut pty, b"$ ");
     pty.send(b"echo RCDONE\n");
     let tail = drain_until_contains(&mut pty, b"RCDONE\r\n");
     let _ = pty.exit_and_wait();
     let _ = std::fs::remove_file(&path);
-    let mut out = preamble;
+    let mut out = startup;
     out.extend_from_slice(&tail);
     let text = String::from_utf8_lossy(&out);
     assert!(
         text.contains("recursive $include"),
         "expected recursion diagnostic, got {text:?}"
+    );
+    assert!(
+        text.contains("RCDONE"),
+        "shell must continue past the recursion diagnostic"
     );
 }
 
@@ -70,19 +70,15 @@ fn inputrc_unknown_variable_reports_but_does_not_abort() {
         let _ = std::fs::remove_file(&path);
         return;
     };
-    // Startup inputrc is consulted on first emacs-mode read_line.
-    let _ = drain_until_contains(&mut pty, b"$ ");
-    pty.send(b"set -o emacs\n");
-    // Sync on the bracketed-paste enable sequence `\x1b[?2004h`
-    // emitted by `emacs_editing::read_line` on entry — it lands
-    // strictly AFTER the inputrc diagnostic. See
-    // `inputrc_recursion_guard_reports_diagnostic` for the full
-    // race analysis. Preserve the preamble so the assertion inspects
-    // the complete transcript, not just the final echo tail.
-    let preamble = drain_until_contains(&mut pty, b"\x1b[?2004h");
+    // Emacs is default-on (`docs/features/emacs-editing-mode.md`
+    // § 2.5), so the inputrc — and therefore its unknown-variable
+    // diagnostic — is processed before the first `$ ` prompt appears.
+    // Capture the startup preamble so the assertion sees the
+    // diagnostic in full transcript.
+    let startup = drain_until_contains(&mut pty, b"$ ");
     pty.send(b"echo DONEMARK\n");
     let tail = drain_until_contains(&mut pty, b"DONEMARK\r\n");
-    let mut out = preamble;
+    let mut out = startup;
     out.extend_from_slice(&tail);
     let _ = pty.exit_and_wait();
     let _ = std::fs::remove_file(&path);

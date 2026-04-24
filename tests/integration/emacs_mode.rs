@@ -84,9 +84,11 @@ fn drain_brief(pty: &mut PtyChild) -> Vec<u8> {
 // § 2. Activation and Lifecycle
 // =====================================================================
 
-/// § 2.5: Default editing mode is neither emacs nor vi.
+/// § 2.5: Default editing mode is emacs (matching bash). Scripts and
+/// users that have not made an explicit choice shall find emacs on at
+/// startup.
 #[test]
-fn emacs_mode_default_off_at_startup() {
+fn emacs_mode_default_on_at_startup() {
     let Some(mut pty) = spawn_or_skip() else {
         return;
     };
@@ -96,9 +98,47 @@ fn emacs_mode_default_off_at_startup() {
     let out = drain_until_contains(&mut pty, b"END\r\n");
     let _ = pty.exit_and_wait();
     let text = String::from_utf8_lossy(&out);
+    // Locate the `emacs` row of `set -o` output and confirm it reports
+    // `on`. Grep's echoed argument string also contains the bytes
+    // "emacs" and "off"/"on", so we match on the structured
+    // `<option><whitespace>on` form that `set -o` actually produces.
+    let emacs_line = text
+        .lines()
+        .find(|l| l.starts_with("emacs ") || l.starts_with("emacs\t"))
+        .unwrap_or("");
     assert!(
-        text.contains("emacs") && text.contains("off"),
-        "expected `emacs ... off` in default-state set -o output: {text:?}"
+        emacs_line.contains("on"),
+        "expected `emacs ... on` in default-state set -o output: {text:?}"
+    );
+}
+
+/// § 2.5: A user who wants cooked/canonical input (no editing mode)
+/// reaches that state via `set +o emacs`. Verify the fallback still
+/// works now that emacs is default-on. Note that after `set +o emacs`
+/// succeeds, subsequent typed input is processed in canonical mode, so
+/// the prompt `$ ` can land on the same terminal row as the grep
+/// output — we match the LAST line that both contains "emacs" and
+/// "off" rather than insisting on column-0 alignment.
+#[test]
+fn set_plus_o_emacs_from_default_reports_off() {
+    let Some(mut pty) = spawn_or_skip() else {
+        return;
+    };
+    let _ = drain_until_contains(&mut pty, b"$ ");
+    pty.send(b"set +o emacs\n");
+    pty.send(b"set -o | grep emacs\n");
+    pty.send(END_SENTINEL_INPUT);
+    let out = drain_until_contains(&mut pty, b"END\r\n");
+    let _ = pty.exit_and_wait();
+    let text = String::from_utf8_lossy(&out);
+    let last = text
+        .lines()
+        .filter(|l| l.contains("emacs"))
+        .last()
+        .unwrap_or("");
+    assert!(
+        last.contains("off"),
+        "expected `emacs ... off` after `set +o emacs` from default, last emacs line was {last:?}; full text: {text:?}"
     );
 }
 

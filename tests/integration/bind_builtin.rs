@@ -91,10 +91,16 @@ fn bind_builtin_covers_all_options() {
 
     // The `bind` builtin is independent of whether the emacs line
     // editor is currently active (it mutates the globally shared
-    // keymap). Leaving emacs mode OFF avoids the per-keystroke redraw
+    // keymap). Turning emacs mode OFF avoids the per-keystroke redraw
     // that makes long command lines painfully slow to drive through
-    // the PTY. Wait for the initial prompt so the cooked-mode line
-    // discipline is fully ready before we start typing.
+    // the PTY. Now that emacs is the default editing mode
+    // (`docs/features/emacs-editing-mode.md` § 2.5), the opt-out has
+    // to happen explicitly. Wait for the initial prompt first so the
+    // raw-mode teardown from `set +o emacs` cannot race the startup
+    // banner — otherwise we would see the `set +o emacs` line itself
+    // redrawn character-by-character through the editor.
+    let _ = drain_until_contains(&mut pty, b"$ ");
+    pty.send(b"set +o emacs\n");
     let _ = drain_until_contains(&mut pty, b"$ ");
 
     // `bind -l` must enumerate at least the three canonical function
