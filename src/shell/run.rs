@@ -151,6 +151,7 @@ impl Shell {
             lineno: 0,
             mail_last_check: 0,
             session_command_counter: 1,
+            subshell_nesting_level: 0,
             expand_scratch: Some(crate::expand::scratch::ExpandScratch::new()),
             exec_scratch_pool: crate::exec::scratch::ExecScratchPool::new(),
             bytes_pool: crate::exec::scratch::BytesPool::new(),
@@ -233,6 +234,7 @@ impl Shell {
             lineno: 0,
             mail_last_check: 0,
             session_command_counter: 1,
+            subshell_nesting_level: 0,
             expand_scratch: Some(crate::expand::scratch::ExpandScratch::new()),
             exec_scratch_pool: crate::exec::scratch::ExecScratchPool::new(),
             bytes_pool: crate::exec::scratch::BytesPool::new(),
@@ -450,6 +452,7 @@ impl Shell {
             // clone.
             self.owns_terminal = false;
             self.in_subshell = true;
+            self.subshell_nesting_level = self.subshell_nesting_level.saturating_add(1);
             self.restore_signals_for_child();
             let _ = self.reset_traps_for_subshell();
             let status = self.execute_program(program).unwrap_or(1);
@@ -491,6 +494,7 @@ impl Shell {
             // clone.
             self.owns_terminal = false;
             self.in_subshell = true;
+            self.subshell_nesting_level = self.subshell_nesting_level.saturating_add(1);
             self.restore_signals_for_child();
             let _ = self.reset_traps_for_subshell();
             let status = self.execute_string(source).unwrap_or(1);

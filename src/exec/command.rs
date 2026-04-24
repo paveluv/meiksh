@@ -41,6 +41,7 @@ pub(super) fn execute_command_inner(
                 // `vars_mut()` skip `Rc::make_mut`'s deep hash-map clone.
                 shell.owns_terminal = false;
                 shell.in_subshell = true;
+                shell.subshell_nesting_level = shell.subshell_nesting_level.saturating_add(1);
                 shell.restore_signals_for_child();
                 let _ = shell.reset_traps_for_subshell();
                 let status = match execute_nested_program(shell, program) {

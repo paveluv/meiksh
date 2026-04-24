@@ -303,7 +303,21 @@ fn write_xtrace_parts(shell: &mut Shell, assignments: &[(Vec<u8>, Vec<u8>)], arg
     // ps1-prompt-extensions.md § 3.5 / § 9.4. The invisible-region
     // mask is discarded because the xtrace writer is not
     // cursor-positioned.
-    let mut line = crate::interactive::prompt::expand_ps4(shell);
+    let expanded_ps4 = crate::interactive::prompt::expand_ps4(shell);
+    // Per spec § 3.5: "When the rendered value of PS4 is longer than
+    // a single character, the first character shall be duplicated
+    // once per level of subshell nesting, matching bash." We hold the
+    // PS4 rendering unchanged at the top level and add one leading
+    // copy of its first byte per nested subshell (`++`, `+++`, ...).
+    let nesting = shell.subshell_nesting_level as usize;
+    let mut line = Vec::with_capacity(expanded_ps4.len() + nesting);
+    if expanded_ps4.len() > 1 && nesting > 0 {
+        let first = expanded_ps4[0];
+        for _ in 0..nesting {
+            line.push(first);
+        }
+    }
+    line.extend_from_slice(&expanded_ps4);
     for (name, value) in assignments {
         line.extend_from_slice(name);
         line.push(b'=');

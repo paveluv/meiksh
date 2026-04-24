@@ -373,7 +373,6 @@ fn ps4_is_re_expanded_between_commands() {
 /// string MUST NOT run through the backslash-escape pass. Un-ignore
 /// this test once `read -p` is wired up.
 #[test]
-#[ignore = "read -p not yet implemented; spec § 12.3 contract"]
 fn read_dash_p_prompt_is_not_subject_to_escape_pass() {
     // § 12.3: "read -p writes the literal bytes of prompt to stderr,
     // matching POSIX and bash (bash's read -p explicitly does not run
@@ -392,6 +391,37 @@ fn read_dash_p_prompt_is_not_subject_to_escape_pass() {
     assert!(
         stderr.contains("literal:\\u> "),
         "read -p must emit its prompt verbatim, got: {stderr}"
+    );
+}
+
+#[test]
+fn read_dash_p_prompt_emits_literal_bytes_in_posix_mode() {
+    // § 12.3 in POSIX mode — same contract: the `-p` argument is
+    // written verbatim to stderr, with no prompt pipeline applied.
+    let output = Command::new(meiksh())
+        .args(["-c", "read -p 'say: ' VAR < /dev/null"])
+        .output()
+        .expect("run meiksh");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("say: "),
+        "read -p prompt must land on stderr, got: {stderr:?}"
+    );
+}
+
+#[test]
+fn read_dash_p_joined_short_form_writes_prompt() {
+    // Bash accepts both `-p PROMPT` and `-pPROMPT`. The joined form
+    // is widely used in shell scripts; verify it round-trips
+    // identically.
+    let output = Command::new(meiksh())
+        .args(["-c", "read -phello_world VAR < /dev/null"])
+        .output()
+        .expect("run meiksh");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("hello_world"),
+        "joined -pPROMPT form must write PROMPT, got: {stderr:?}"
     );
 }
 
@@ -454,29 +484,58 @@ fn next_prompt_observes_updated_compat_mode() {
 
 // === § 3.5 — PS4 first char duplicates per subshell nesting level =====
 
-/// Marked `#[ignore]`: spec § 3.5 requires the first char of a
-/// multi-byte PS4 to be duplicated once per subshell nesting level
-/// ("++ ", "+++ ", ...). meiksh currently emits a single copy of the
-/// first character regardless of depth. This test exists to pin the
-/// contract; removing `#[ignore]` is the TODO that lands alongside
-/// the tracer change in `src/exec/simple.rs`.
 #[test]
-#[ignore = "PS4 first-char subshell duplication not yet implemented"]
 fn ps4_first_char_duplicates_per_subshell_nesting() {
+    // § 3.5: "When the rendered value of PS4 is longer than a single
+    // character, the first character shall be duplicated once per
+    // level of subshell nesting, matching bash." A single `(...)`
+    // nests once, a `( (...) )` nests twice.
     let output = Command::new(meiksh())
         .args([
             "-c",
             "PS4='+X '\n\
              set -x\n\
-             ( echo inner )",
+             ( echo one )\n\
+             ( ( echo two ) )",
+        ])
+        .output()
+        .expect("run meiksh");
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("++X echo one"),
+        "expected '++X echo one' under one subshell level, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("+++X echo two"),
+        "expected '+++X echo two' under two subshell levels, got: {stderr}"
+    );
+}
+
+#[test]
+fn ps4_single_character_does_not_duplicate_in_subshell() {
+    // § 3.5 guards the duplication on "longer than a single
+    // character"; a one-byte PS4 must stay one byte deep.
+    let output = Command::new(meiksh())
+        .args([
+            "-c",
+            "PS4='+'\n\
+             set -x\n\
+             ( echo hi )",
         ])
         .output()
         .expect("run meiksh");
     assert!(output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
+    // The traced line should start with a single `+` directly
+    // followed by `echo hi`, no extra copies.
     assert!(
-        stderr.contains("++X echo inner"),
-        "expected '++X echo inner' under one subshell level, got: {stderr}"
+        stderr.contains("+echo hi"),
+        "one-char PS4 must not duplicate, got: {stderr}"
     );
 }
 
@@ -509,33 +568,72 @@ fn w_prefers_pwd_over_getcwd() {
     );
 }
 
-// === § 6.4 — counter increments per accepted input line ===============
+// === § 6.4 — counter increments per accepted input line (PTY) =========
 
-/// Marked `#[ignore]`: the counter increment happens in the
-/// interactive REPL path (`src/interactive/repl.rs`), which requires
-/// a TTY. A piped `-s` invocation goes through
-/// `Shell::run_standard_input` which parses the whole stream at
-/// once and never calls the per-line increment. The interactive-
-/// path behavior is covered by the `session_command_counter`
-/// increment logic inline in `repl.rs`; a PTY harness test will
-/// exercise it end-to-end once the harness is available.
+/// § 6.4: "The counter shall ... increment by 1 each time the shell
+/// accepts an input line from the interactive reader". Driving this
+/// end-to-end requires a real PTY so that the REPL path in
+/// `src/interactive/repl.rs` actually runs.
 #[test]
-#[ignore = "needs PTY harness; non-interactive -s has no per-line reader"]
-fn session_counter_increments_across_repl_lines() {
-    // § 6.4: "The counter shall ... increment by 1 each time the
-    // shell accepts an input line from the interactive reader".
-    //
-    // Placeholder: enable once the PTY harness can drive three
-    // successive PS1 reads and observe the xtrace output.
+fn session_counter_increments_across_accepted_interactive_lines() {
+    use super::interactive_common::spawn_meiksh_pty;
+    use std::time::Duration;
+
+    let Some(mut pty) = spawn_meiksh_pty(&[]) else {
+        return;
+    };
+
+    pty.send(b"set -o bash_compat\n");
+    pty.send(b"PS1='<\\#>MARK '\n");
+    pty.send(b"true\n");
+    pty.send(b"true\n");
+    let out = pty.drain_until(
+        |b| b.windows(7).any(|w| w == b"<5>MARK"),
+        Duration::from_secs(5),
+    );
+    let _ = pty.exit_and_wait();
+
+    let text = String::from_utf8_lossy(&out);
+    // After each accepted line the counter bumps by one. After
+    // `PS1='<\#>MARK '` (the 2nd accepted line) the new prompt
+    // renders with counter 3, then 4 after the first `true`, 5
+    // after the second.
+    assert!(
+        text.contains("<3>MARK") && text.contains("<4>MARK") && text.contains("<5>MARK"),
+        "\\# must advance 3 → 4 → 5 across accepted lines, got: {text:?}"
+    );
 }
 
-/// Marked `#[ignore]` for the same reason as above.
+/// § 6.4: "The counter shall not decrement." A failed command still
+/// counts as an accepted line, so the subsequent prompt must observe
+/// a strictly greater counter value.
 #[test]
-#[ignore = "needs PTY harness; non-interactive -s has no per-line reader"]
-fn session_counter_never_decrements_on_error() {
-    // § 6.4: "The counter shall not decrement." Verify under PTY
-    // that a failing command still bumps the counter for the next
-    // accepted line.
+fn session_counter_never_decrements_on_failure_interactive() {
+    use super::interactive_common::spawn_meiksh_pty;
+    use std::time::Duration;
+
+    let Some(mut pty) = spawn_meiksh_pty(&[]) else {
+        return;
+    };
+
+    pty.send(b"set -o bash_compat\n");
+    pty.send(b"PS1='<\\#>TAG '\n");
+    pty.send(b"false\n");
+    pty.send(b"true\n");
+    let out = pty.drain_until(
+        |b| b.windows(6).any(|w| w == b"<5>TAG"),
+        Duration::from_secs(5),
+    );
+    let _ = pty.exit_and_wait();
+
+    let text = String::from_utf8_lossy(&out);
+    // Initial prompt (counter 1) uses the default PS1 — no TAG. The
+    // first `<N>TAG` prompt appears *after* `PS1=...` is accepted
+    // (counter 3). Then `false` (counter 4) and `true` (counter 5).
+    assert!(
+        text.contains("<3>TAG") && text.contains("<4>TAG") && text.contains("<5>TAG"),
+        "\\# must advance past a failed command, got: {text:?}"
+    );
 }
 
 // === § 6.4 — counter stays fixed in non-interactive shells ============
@@ -579,35 +677,107 @@ fn session_counter_is_stable_across_non_interactive_commands() {
 
 // === § 7.2 — `!` from parameter expansion is scanned by history pass ==
 
-/// Marked `#[ignore]` until a PTY-driven PS1 harness lands — we can't
-/// observe `!` history substitution in PS4 (spec § 3.1 disables the
-/// history pass for PS4) and driving PS1 interactively requires a
-/// TTY. The behavior is exercised at the unit level by
-/// `prompt::tests::expand_prompt_exclamation_covers_all_branches`,
-/// which confirms the history-pass helper treats every `!` alike.
+/// § 7.2: "A `!` introduced by parameter expansion shall be subject
+/// to this pass exactly like a `!` written directly in `PS1`". We
+/// set a variable to `!`, reference it from `PS1`, and observe that
+/// the rendered prompt substitutes a decimal digit (the history
+/// number) rather than a literal `!`.
 #[test]
-#[ignore = "needs PTY harness to observe PS1 expansion; unit-covered"]
-fn bang_from_parameter_expansion_is_scanned_by_history_pass() {
-    // § 7.2: "A `!` introduced by parameter expansion shall be
-    // subject to this pass exactly like a `!` written directly in
-    // `PS1`". Placeholder test body for when the PTY harness is
-    // wired in; see emacs-editing-mode / inputrc PTY tests for
-    // reference.
+fn bang_from_parameter_expansion_is_scanned_by_history_pass_interactive() {
+    use super::interactive_common::spawn_meiksh_pty;
+    use std::time::Duration;
+
+    let Some(mut pty) = spawn_meiksh_pty(&[]) else {
+        return;
+    };
+
+    pty.send(b"set -o bash_compat\n");
+    pty.send(b"VAR='!'\n");
+    pty.send(b"PS1='<${VAR}>DONE '\n");
+    pty.send(b"true\n");
+    let out = pty.drain_until(
+        |b| {
+            // Look for `<N>DONE ` where N is one or more digits.
+            let mut i = 0;
+            while i + 7 <= b.len() {
+                if b[i] == b'<' {
+                    let mut j = i + 1;
+                    while j < b.len() && b[j].is_ascii_digit() {
+                        j += 1;
+                    }
+                    if j > i + 1 && j + 5 <= b.len() && &b[j..j + 5] == b">DONE" {
+                        return true;
+                    }
+                }
+                i += 1;
+            }
+            false
+        },
+        Duration::from_secs(5),
+    );
+    let _ = pty.exit_and_wait();
+
+    let text = String::from_utf8_lossy(&out);
+    // The literal `<!>DONE` must never appear — that would mean the
+    // history pass failed to scan the output of parameter expansion.
+    assert!(
+        !text.contains("<!>DONE"),
+        "literal `!` must be substituted by history pass, got: {text:?}"
+    );
+    // And we must see the substituted form with a decimal digit.
+    let saw_substituted = text
+        .split("DONE")
+        .any(|chunk| chunk.ends_with(|c: char| c == '>') && chunk.contains('<'))
+        && text.contains(">DONE");
+    assert!(
+        saw_substituted,
+        "expected `<<digits>>DONE` in transcript, got: {text:?}"
+    );
 }
 
-// === § 10.1 — \u fallback when both USER and getpwuid fail ============
+// === § 10.1 — \u fallback when $USER is empty =========================
 
-/// Marked `#[ignore]`: forcing `getpwuid(geteuid())` to fail from an
-/// integration test would require a child process with no passwd
-/// entry (e.g. container with `/etc/passwd` missing), which is too
-/// brittle for CI. The failure path is covered by the
-/// `user_falls_back_to_question_mark_when_missing` unit test in
-/// `src/interactive/prompt_expand.rs`, which exercises the decoder
-/// under `PromptEnv { user: None, .. }` — the exact shape that
-/// `build_prompt_env` produces when both sources fail.
 #[test]
-#[ignore = "covered by unit test on PromptEnv { user: None }"]
-fn user_escape_falls_back_to_question_mark_when_both_sources_fail() {}
+fn user_escape_falls_back_to_pwuid_when_user_env_is_empty() {
+    // § 10.1 / § 6.1 (`\u`): "If `$USER` is unset or empty, the
+    // shell shall call `getpwuid(geteuid())` and emit its `pw_name`
+    // field." We clear `$USER` at invocation time and observe that
+    // `\u` in PS4 emits a non-empty, non-`?` login name (i.e. the
+    // fallback path produced a real answer).
+    let output = Command::new(meiksh())
+        .env_remove("USER")
+        .env("LOGNAME", "")
+        .args([
+            "-c",
+            "set -o bash_compat\n\
+             PS4='<\\u> '\n\
+             set -x\n\
+             echo hi",
+        ])
+        .output()
+        .expect("run meiksh");
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    // Extract the value between `<` and `> echo hi` on the trace line.
+    let line = stderr
+        .lines()
+        .find(|l| l.contains("> echo hi"))
+        .expect("trace line missing");
+    let start = line.find('<').expect("open angle");
+    let end = line.find("> echo hi").expect("close angle");
+    let value = &line[start + 1..end];
+    assert!(
+        !value.is_empty(),
+        "\\u must produce a non-empty fallback, got: {line:?}"
+    );
+    // On a normal host getpwuid succeeds, so the value is a real
+    // login name. If the host is pathological (no passwd entry), the
+    // spec requires `?` — accept either outcome.
+    assert!(
+        value == "?" || value.chars().all(|c| c.is_ascii() && !c.is_whitespace()),
+        "\\u fallback must be `?` or a plain login name, got: {value:?}"
+    );
+}
 
 // === § 13.8 — \N is emitted as two raw bytes ==========================
 

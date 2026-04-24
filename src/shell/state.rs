@@ -81,6 +81,13 @@ pub(crate) struct Shell {
     pub(crate) errexit_suppressed: bool,
     pub(crate) owns_terminal: bool,
     pub(crate) in_subshell: bool,
+    /// Depth of subshell nesting. `0` in the top-level shell,
+    /// incremented by exactly one every time we transition to a
+    /// subshell context (command substitution, `(...)`, left-side of
+    /// a background or piped command, etc.). Used by the `xtrace`
+    /// writer to duplicate the first character of `PS4` once per
+    /// level per `docs/features/ps1-prompt-extensions.md` § 3.5.
+    pub(crate) subshell_nesting_level: u32,
     pub(crate) wait_was_interrupted: bool,
     pub(crate) pid: sys::types::Pid,
     pub(crate) lineno: usize,
