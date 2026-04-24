@@ -5,7 +5,7 @@
 //! can be observed from outside the shell: the test-visible stream is
 //! stderr, which receives the expanded PS4 value once per traced
 //! command. Every assertion below sets `PS4` explicitly so that each
-//! escape or compat-mode combination is isolated.
+//! escape or prompts-mode combination is isolated.
 //!
 //! The interactive (`PS1` / `PS2`) paths exercise the same decoder
 //! through `interactive::prompt::expand_full_prompt` and are covered
@@ -448,7 +448,7 @@ fn bash_prompts_double_bang_renders_single_bang_in_ps1() {
 // === § 2.3 — next prompt observes updated selector ====================
 
 #[test]
-fn next_prompt_observes_updated_compat_mode() {
+fn next_prompt_observes_updated_prompts_mode() {
     // § 2.3: "The next prompt expansion shall observe the updated
     // selector. There is no hysteresis and no deferred flip."
     //

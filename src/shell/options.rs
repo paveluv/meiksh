@@ -1,20 +1,22 @@
 use crate::bstr::ByteWriter;
 
-/// Exclusive "compat mode" slot. At most one mode may be active at any
-/// time; `Posix` means no compat extensions are enabled. Future values
-/// (for example `Zsh`, `Ksh`) slot in here and inherit the mutual
-/// exclusion rule for free.
+/// Exclusive prompt-language selector. At most one language may be
+/// active at any time; `Posix` means no non-POSIX prompt escapes are
+/// decoded. Future values (for example `Zsh`, `Ksh`) slot in here and
+/// inherit the mutual exclusion rule for free.
 ///
 /// The slot is currently flipped by `set -o bash_prompts` (the
 /// bash-style prompt-escape language, named after its source shell per
 /// the zsh convention of provenance-prefixed option names; see
 /// `docs/features/ps1-prompt-extensions.md` § 2.2). Today the slot and
 /// that option are effectively synonyms because `bash_prompts` is the
-/// only non-POSIX feature gated this way; if meiksh grows additional
-/// provenance-prefixed options that coexist with each other, this
-/// enum will give way to independent feature booleans.
+/// only non-POSIX prompt feature gated this way. The enum is named
+/// `PromptsMode` (matching the `bash_prompts` option) rather than a
+/// broader "compat mode" because its scope is strictly prompt
+/// expansion: non-prompt bash-isms we borrow later will get their own
+/// independent `bash_*` options rather than riding on this selector.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) enum CompatMode {
+pub(crate) enum PromptsMode {
     /// Strict POSIX. This is the meiksh default: a fresh interactive or
     /// non-interactive shell starts in this mode.
     #[default]
@@ -45,15 +47,15 @@ pub(crate) struct ShellOptions {
     pub(crate) positional: Vec<Vec<u8>>,
     pub(crate) vi_mode: bool,
     pub(crate) emacs_mode: bool,
-    /// Current compat-mode selection (default `Posix`). `set -o
+    /// Current prompt-language selection (default `Posix`). `set -o
     /// bash_prompts` / `set +o bash_prompts` move this between `Posix`
     /// and `Bash`.
-    pub(crate) compat_mode: CompatMode,
+    pub(crate) prompts_mode: PromptsMode,
 }
 
 impl Default for ShellOptions {
     /// Meiksh defaults match bash: `emacs` editing mode is **on**, all
-    /// other toggleable options are off, and the compat-mode slot sits
+    /// other toggleable options are off, and the prompts-mode slot sits
     /// in the strict-POSIX position. A fresh interactive shell
     /// therefore enters its REPL with emacs-style line editing without
     /// the user having to run `set -o emacs` or ship a `.profile`.
@@ -84,7 +86,7 @@ impl Default for ShellOptions {
             positional: Vec::new(),
             vi_mode: false,
             emacs_mode: true,
-            compat_mode: CompatMode::Posix,
+            prompts_mode: PromptsMode::Posix,
         }
     }
 }
@@ -151,15 +153,16 @@ impl ShellOptions {
             return Ok(());
         }
         if name == b"bash_prompts" {
-            // The compat-mode slot is a single-valued selector. Enabling
-            // `bash_prompts` sets it to `Bash`; disabling it returns
-            // the selector to `Posix`. Per ps1-prompt-extensions.md
-            // § 2.2, disabling the currently-active compat option does
-            // NOT reactivate a previously-selected sibling.
-            self.compat_mode = if enabled {
-                CompatMode::Bash
+            // The prompts-mode slot is a single-valued selector.
+            // Enabling `bash_prompts` sets it to `Bash`; disabling it
+            // returns the selector to `Posix`. Per
+            // ps1-prompt-extensions.md § 2.2, disabling the
+            // currently-active prompts option does NOT reactivate a
+            // previously-selected sibling.
+            self.prompts_mode = if enabled {
+                PromptsMode::Bash
             } else {
-                CompatMode::Posix
+                PromptsMode::Posix
             };
             return Ok(());
         }
@@ -177,7 +180,7 @@ impl ShellOptions {
             (b"allexport" as &[u8], self.allexport),
             (
                 b"bash_prompts",
-                matches!(self.compat_mode, CompatMode::Bash),
+                matches!(self.prompts_mode, PromptsMode::Bash),
             ),
             (b"emacs", self.emacs_mode),
             (b"errexit", self.errexit),
@@ -314,13 +317,13 @@ mod tests {
     #[test]
     fn bash_prompts_named_option_toggles_selector() {
         let mut opts = ShellOptions::default();
-        assert_eq!(opts.compat_mode, CompatMode::Posix);
+        assert_eq!(opts.prompts_mode, PromptsMode::Posix);
         opts.set_named_option(b"bash_prompts", true)
             .expect("bash_prompts on");
-        assert_eq!(opts.compat_mode, CompatMode::Bash);
+        assert_eq!(opts.prompts_mode, PromptsMode::Bash);
         opts.set_named_option(b"bash_prompts", false)
             .expect("bash_prompts off");
-        assert_eq!(opts.compat_mode, CompatMode::Posix);
+        assert_eq!(opts.prompts_mode, PromptsMode::Posix);
     }
 
     #[test]
