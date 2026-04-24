@@ -5,15 +5,22 @@ use crate::bstr::ByteWriter;
 /// (for example `Zsh`, `Ksh`) slot in here and inherit the mutual
 /// exclusion rule for free.
 ///
-/// See `docs/features/ps1-prompt-extensions.md` § 2.2.
+/// The slot is currently flipped by `set -o bash_prompts` (the
+/// bash-style prompt-escape language, named after its source shell per
+/// the zsh convention of provenance-prefixed option names; see
+/// `docs/features/ps1-prompt-extensions.md` § 2.2). Today the slot and
+/// that option are effectively synonyms because `bash_prompts` is the
+/// only non-POSIX feature gated this way; if meiksh grows additional
+/// provenance-prefixed options that coexist with each other, this
+/// enum will give way to independent feature booleans.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum CompatMode {
     /// Strict POSIX. This is the meiksh default: a fresh interactive or
     /// non-interactive shell starts in this mode.
     #[default]
     Posix,
-    /// Bash-compatible prompt expansion (and, in the future, other
-    /// bash-specific extensions). Enabled via `set -o bash_compat`.
+    /// Bash-style prompt expansion (`\u`, `\h`, `\w`, `\D{...}`, `\[`,
+    /// `\]`, `\!`, and so on). Enabled via `set -o bash_prompts`.
     Bash,
 }
 
@@ -39,7 +46,7 @@ pub(crate) struct ShellOptions {
     pub(crate) vi_mode: bool,
     pub(crate) emacs_mode: bool,
     /// Current compat-mode selection (default `Posix`). `set -o
-    /// bash_compat` / `set +o bash_compat` move this between `Posix`
+    /// bash_prompts` / `set +o bash_prompts` move this between `Posix`
     /// and `Bash`.
     pub(crate) compat_mode: CompatMode,
 }
@@ -143,12 +150,12 @@ impl ShellOptions {
             }
             return Ok(());
         }
-        if name == b"bash_compat" {
+        if name == b"bash_prompts" {
             // The compat-mode slot is a single-valued selector. Enabling
-            // `bash_compat` sets it to `Bash`; disabling it returns the
-            // selector to `Posix`. Per ps1-prompt-extensions.md § 2.2,
-            // disabling the currently-active compat option does NOT
-            // reactivate a previously-selected sibling.
+            // `bash_prompts` sets it to `Bash`; disabling it returns
+            // the selector to `Posix`. Per ps1-prompt-extensions.md
+            // § 2.2, disabling the currently-active compat option does
+            // NOT reactivate a previously-selected sibling.
             self.compat_mode = if enabled {
                 CompatMode::Bash
             } else {
@@ -168,7 +175,10 @@ impl ShellOptions {
     pub(crate) fn reportable_options(&self) -> [(&'static [u8], bool); 15] {
         [
             (b"allexport" as &[u8], self.allexport),
-            (b"bash_compat", matches!(self.compat_mode, CompatMode::Bash)),
+            (
+                b"bash_prompts",
+                matches!(self.compat_mode, CompatMode::Bash),
+            ),
             (b"emacs", self.emacs_mode),
             (b"errexit", self.errexit),
             (b"hashall", self.hashall),
@@ -302,34 +312,47 @@ mod tests {
     }
 
     #[test]
-    fn bash_compat_named_option_toggles_selector() {
+    fn bash_prompts_named_option_toggles_selector() {
         let mut opts = ShellOptions::default();
         assert_eq!(opts.compat_mode, CompatMode::Posix);
-        opts.set_named_option(b"bash_compat", true)
-            .expect("bash_compat on");
+        opts.set_named_option(b"bash_prompts", true)
+            .expect("bash_prompts on");
         assert_eq!(opts.compat_mode, CompatMode::Bash);
-        opts.set_named_option(b"bash_compat", false)
-            .expect("bash_compat off");
+        opts.set_named_option(b"bash_prompts", false)
+            .expect("bash_prompts off");
         assert_eq!(opts.compat_mode, CompatMode::Posix);
     }
 
     #[test]
-    fn bash_compat_shows_up_in_reportable_options() {
+    fn bash_prompts_shows_up_in_reportable_options() {
         let mut opts = ShellOptions::default();
         let reported = opts.reportable_options();
         let row = reported
             .iter()
-            .find(|(n, _)| *n == b"bash_compat")
-            .expect("bash_compat row");
-        assert!(!row.1, "default bash_compat should be off");
+            .find(|(n, _)| *n == b"bash_prompts")
+            .expect("bash_prompts row");
+        assert!(!row.1, "default bash_prompts should be off");
 
-        opts.set_named_option(b"bash_compat", true).unwrap();
+        opts.set_named_option(b"bash_prompts", true).unwrap();
         let reported = opts.reportable_options();
         let row = reported
             .iter()
-            .find(|(n, _)| *n == b"bash_compat")
-            .expect("bash_compat row");
-        assert!(row.1, "reported bash_compat should flip on");
+            .find(|(n, _)| *n == b"bash_prompts")
+            .expect("bash_prompts row");
+        assert!(row.1, "reported bash_prompts should flip on");
+    }
+
+    #[test]
+    fn old_bash_compat_option_name_is_rejected() {
+        // The option was renamed from `bash_compat` to `bash_prompts`
+        // at 0.1.0; the old name is not an alias. See
+        // `docs/features/ps1-prompt-extensions.md` § 2.1.
+        let mut opts = ShellOptions::default();
+        let err = opts.set_named_option(b"bash_compat", true);
+        assert!(
+            matches!(err, Err(OptionError::InvalidName(_))),
+            "legacy `bash_compat` must surface an invalid-name error, got {err:?}"
+        );
     }
 
     #[test]

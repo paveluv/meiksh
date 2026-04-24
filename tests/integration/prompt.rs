@@ -18,9 +18,9 @@
 use super::common::*;
 use std::process::Command;
 
-fn run_xtrace(ps4: &str, bash_compat: bool) -> String {
-    let setup = if bash_compat {
-        "set -o bash_compat\n"
+fn run_xtrace(ps4: &str, bash_prompts: bool) -> String {
+    let setup = if bash_prompts {
+        "set -o bash_prompts\n"
     } else {
         ""
     };
@@ -48,17 +48,17 @@ fn posix_mode_does_not_decode_backslash_escapes_in_ps4() {
 }
 
 #[test]
-fn bash_compat_mode_decodes_basic_escapes_in_ps4() {
+fn bash_prompts_mode_decodes_basic_escapes_in_ps4() {
     // `\j` is deterministic (job count = 0 outside pipelines).
     let stderr = run_xtrace("'[\\j] '", true);
     assert!(
         stderr.contains("[0] echo hi"),
-        "bash_compat should decode \\j, got: {stderr}"
+        "bash_prompts should decode \\j, got: {stderr}"
     );
 }
 
 #[test]
-fn bash_compat_mode_renders_dollar_escape() {
+fn bash_prompts_mode_renders_dollar_escape() {
     // `\$` decodes to `$` for non-root. Our test runner is not root.
     let stderr = run_xtrace("'\\$ '", true);
     assert!(
@@ -68,7 +68,7 @@ fn bash_compat_mode_renders_dollar_escape() {
 }
 
 #[test]
-fn bash_compat_mode_emits_literal_for_unknown_escape() {
+fn bash_prompts_mode_emits_literal_for_unknown_escape() {
     // `\q` is not in the escape table (spec § 6.6).
     let stderr = run_xtrace("'[\\q] '", true);
     assert!(
@@ -78,7 +78,7 @@ fn bash_compat_mode_emits_literal_for_unknown_escape() {
 }
 
 #[test]
-fn bash_compat_mode_decodes_octal_escapes() {
+fn bash_prompts_mode_decodes_octal_escapes() {
     // \101 == 'A', \60 == '0'.
     let stderr = run_xtrace(r"'\101\60 '", true);
     assert!(
@@ -88,7 +88,7 @@ fn bash_compat_mode_decodes_octal_escapes() {
 }
 
 #[test]
-fn bash_compat_mode_emits_shell_name() {
+fn bash_prompts_mode_emits_shell_name() {
     let stderr = run_xtrace("'<\\s> '", true);
     assert!(
         stderr.contains("<meiksh> echo hi") || stderr.contains("<sh> echo hi"),
@@ -97,7 +97,7 @@ fn bash_compat_mode_emits_shell_name() {
 }
 
 #[test]
-fn bash_compat_discards_invisible_mask_in_ps4_output() {
+fn bash_prompts_discards_invisible_mask_in_ps4_output() {
     // Bytes inside \[...\] are NOT visible to the editor, but the
     // xtrace writer emits them verbatim per spec § 9.4.
     let stderr = run_xtrace(r"'\[X\]Y '", true);
@@ -108,7 +108,7 @@ fn bash_compat_discards_invisible_mask_in_ps4_output() {
 }
 
 #[test]
-fn set_o_lists_bash_compat_option() {
+fn set_o_lists_bash_prompts_option() {
     let output = Command::new(meiksh())
         .args(["-c", "set -o"])
         .output()
@@ -116,27 +116,27 @@ fn set_o_lists_bash_compat_option() {
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("bash_compat off"),
-        "set -o should list bash_compat, got: {stdout}"
+        stdout.contains("bash_prompts off"),
+        "set -o should list bash_prompts, got: {stdout}"
     );
 }
 
 #[test]
-fn set_o_bash_compat_toggles_reported_state() {
+fn set_o_bash_prompts_toggles_reported_state() {
     let output = Command::new(meiksh())
-        .args(["-c", "set -o bash_compat; set +o | grep bash_compat"])
+        .args(["-c", "set -o bash_prompts; set +o | grep bash_prompts"])
         .output()
         .expect("run meiksh");
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("set -o bash_compat"),
-        "`set +o` should report bash_compat on, got: {stdout}"
+        stdout.contains("set -o bash_prompts"),
+        "`set +o` should report bash_prompts on, got: {stdout}"
     );
 }
 
 #[test]
-fn bash_compat_backslash_bang_renders_history_number_in_ps4() {
+fn bash_prompts_backslash_bang_renders_history_number_in_ps4() {
     // `\!` runs through the escape pass (which runs for PS4), not
     // through the history pass (which doesn't). The history number
     // in a fresh -c invocation is 1.
@@ -150,7 +150,7 @@ fn bash_compat_backslash_bang_renders_history_number_in_ps4() {
 #[test]
 fn ps4_skips_literal_bang_history_substitution() {
     // Per spec § 3.1 PS4 does NOT run the history pass, so a
-    // literal `!` is emitted verbatim even in bash_compat mode.
+    // literal `!` is emitted verbatim even in bash_prompts mode.
     let stderr = run_xtrace("'<! '", true);
     assert!(
         stderr.contains("<! echo hi"),
@@ -167,21 +167,21 @@ fn posix_mode_keeps_literal_bang_in_prompt() {
     );
 }
 
-// === § 2.1 / § 13.6 — bash_compat does not get a short-option letter ===
+// === § 2.1 / § 13.6 — bash_prompts does not get a short-option letter ===
 
 #[test]
-fn bash_compat_does_not_appear_in_dollar_dash() {
-    // § 2.1: "bash_compat shall not be exposed through a short option
+fn bash_prompts_does_not_appear_in_dollar_dash() {
+    // § 2.1: "bash_prompts shall not be exposed through a short option
     // letter. The value of $- shall not gain a new character when
-    // bash_compat is enabled."
+    // bash_prompts is enabled."
     let output = Command::new(meiksh())
-        .args(["-c", "set -o bash_compat; printf '%s\\n' \"$-\""])
+        .args(["-c", "set -o bash_prompts; printf '%s\\n' \"$-\""])
         .output()
         .expect("run meiksh");
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     // `$-` must contain only shell-option short letters (e.g. `hB`);
-    // no letter shall be added for bash_compat.
+    // no letter shall be added for bash_prompts.
     assert!(
         !stdout.contains('B'),
         "$- gained an unexpected 'B' letter: {stdout}"
@@ -194,18 +194,18 @@ fn bash_compat_does_not_appear_in_dollar_dash() {
 // === § 2.1 — default state is off on startup ==========================
 
 #[test]
-fn bash_compat_default_state_is_off_on_startup() {
-    // § 2.1: "The default value of bash_compat on shell startup shall
+fn bash_prompts_default_state_is_off_on_startup() {
+    // § 2.1: "The default value of bash_prompts on shell startup shall
     // be off, for both interactive and non-interactive shells."
     let output = Command::new(meiksh())
-        .args(["-c", "set -o | grep '^bash_compat'"])
+        .args(["-c", "set -o | grep '^bash_prompts'"])
         .output()
         .expect("run meiksh");
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("bash_compat off"),
-        "bash_compat must default to off, got: {stdout}"
+        stdout.contains("bash_prompts off"),
+        "bash_prompts must default to off, got: {stdout}"
     );
 }
 
@@ -314,7 +314,7 @@ fn w_collapses_home_prefix_in_ps4() {
     let output = Command::new(meiksh())
         .args([
             "-c",
-            "set -o bash_compat\n\
+            "set -o bash_prompts\n\
              HOME=/tmp\n\
              cd /tmp\n\
              PS4='<\\w> '\n\
@@ -343,7 +343,7 @@ fn ps4_is_re_expanded_between_commands() {
     let output = Command::new(meiksh())
         .args([
             "-c",
-            "set -o bash_compat\n\
+            "set -o bash_prompts\n\
              PS4='<$TAG> '\n\
              set -x\n\
              TAG=first\n\
@@ -376,12 +376,12 @@ fn ps4_is_re_expanded_between_commands() {
 fn read_dash_p_prompt_is_not_subject_to_escape_pass() {
     // § 12.3: "read -p writes the literal bytes of prompt to stderr,
     // matching POSIX and bash (bash's read -p explicitly does not run
-    // the PS1 expansion pipeline)." Even under bash_compat, `\u` in
+    // the PS1 expansion pipeline)." Even under bash_prompts, `\u` in
     // the read prompt shall appear as the two raw bytes `\u`.
     let output = Command::new(meiksh())
         .args([
             "-c",
-            "set -o bash_compat\n\
+            "set -o bash_prompts\n\
              read -p 'literal:\\u> ' line < /dev/null\n\
              true",
         ])
@@ -428,7 +428,7 @@ fn read_dash_p_joined_short_form_writes_prompt() {
 // === § 7.2 — !! renders as single literal ! in the history pass =====
 
 #[test]
-fn bash_compat_double_bang_renders_single_bang_in_ps1() {
+fn bash_prompts_double_bang_renders_single_bang_in_ps1() {
     // § 7.2: "The sequence !! in the expanded prompt shall render as
     // a single literal !." We can't drive PS1 without a PTY, but we
     // can drive the `expand_prompt_exclamation` rule indirectly via
@@ -452,23 +452,23 @@ fn next_prompt_observes_updated_compat_mode() {
     // § 2.3: "The next prompt expansion shall observe the updated
     // selector. There is no hysteresis and no deferred flip."
     //
-    // We toggle bash_compat between two xtrace-ed commands and
+    // We toggle bash_prompts between two xtrace-ed commands and
     // confirm the escape decoder switches accordingly.
     let output = Command::new(meiksh())
         .args([
             "-c",
-            "set -o bash_compat\n\
+            "set -o bash_prompts\n\
              PS4='<\\u> '\n\
              set -x\n\
              echo a\n\
-             set +o bash_compat\n\
+             set +o bash_prompts\n\
              echo b",
         ])
         .output()
         .expect("run meiksh");
     assert!(output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    // First echo runs under bash_compat — \u is decoded.
+    // First echo runs under bash_prompts — \u is decoded.
     let first = stderr.lines().find(|l| l.contains("echo a")).unwrap_or("");
     assert!(
         !first.contains("\\u"),
@@ -551,7 +551,7 @@ fn w_prefers_pwd_over_getcwd() {
     let output = Command::new(meiksh())
         .args([
             "-c",
-            "set -o bash_compat\n\
+            "set -o bash_prompts\n\
              PWD='/synthetic/not-real'\n\
              HOME=/root\n\
              PS4='<\\w> '\n\
@@ -583,7 +583,7 @@ fn session_counter_increments_across_accepted_interactive_lines() {
         return;
     };
 
-    pty.send(b"set -o bash_compat\n");
+    pty.send(b"set -o bash_prompts\n");
     pty.send(b"PS1='<\\#>MARK '\n");
     pty.send(b"true\n");
     pty.send(b"true\n");
@@ -616,7 +616,7 @@ fn session_counter_never_decrements_on_failure_interactive() {
         return;
     };
 
-    pty.send(b"set -o bash_compat\n");
+    pty.send(b"set -o bash_prompts\n");
     pty.send(b"PS1='<\\#>TAG '\n");
     pty.send(b"false\n");
     pty.send(b"true\n");
@@ -657,7 +657,7 @@ fn session_counter_is_stable_across_non_interactive_commands() {
         .as_mut()
         .unwrap()
         .write_all(
-            b"set -o bash_compat\n\
+            b"set -o bash_prompts\n\
               PS4='<\\#> '\n\
               set -x\n\
               echo a\n\
@@ -691,7 +691,7 @@ fn bang_from_parameter_expansion_is_scanned_by_history_pass_interactive() {
         return;
     };
 
-    pty.send(b"set -o bash_compat\n");
+    pty.send(b"set -o bash_prompts\n");
     pty.send(b"VAR='!'\n");
     pty.send(b"PS1='<${VAR}>DONE '\n");
     pty.send(b"true\n");
@@ -749,7 +749,7 @@ fn user_escape_falls_back_to_pwuid_when_user_env_is_empty() {
         .env("LOGNAME", "")
         .args([
             "-c",
-            "set -o bash_compat\n\
+            "set -o bash_prompts\n\
              PS4='<\\u> '\n\
              set -x\n\
              echo hi",
@@ -805,7 +805,7 @@ fn parameter_expansion_error_in_ps4_does_not_abort_xtrace() {
     let output = Command::new(meiksh())
         .args([
             "-c",
-            "set -o bash_compat\n\
+            "set -o bash_prompts\n\
              set -u\n\
              PS4='<${UNDEFINED}> '\n\
              set -x\n\

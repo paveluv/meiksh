@@ -2,13 +2,13 @@
 
 ## Status
 
-**Implemented.** The `bash_compat` shell option is accepted by `set -o` / `set +o` ([src/shell/options.rs](../../src/shell/options.rs)) and is mutually exclusive with the implicit POSIX mode. The backslash-escape decoder, the `Prompt` type that carries an invisible mask for `\[...\]` regions, and the per-session command counter (`\#`) live in [src/interactive/prompt_expand.rs](../../src/interactive/prompt_expand.rs). PS1/PS2 expansion, PS4 xtrace expansion, and the line editor's cursor-column arithmetic consume the invisible mask via `display_width_visible` in [src/interactive/editor/redraw.rs](../../src/interactive/editor/redraw.rs). Locale-aware `\D{format}` uses the `strftime(3)` wrapper in [src/sys/time.rs](../../src/sys/time.rs). The `PS4` first-character duplication per subshell nesting level (§ 3.5) is implemented in the xtrace writer ([src/exec/simple.rs](../../src/exec/simple.rs)) using a per-shell depth counter set at every subshell-entry site. The `read -p` prompt option (§ 12.3) is implemented in [src/builtin/read.rs](../../src/builtin/read.rs) and writes its argument verbatim — explicitly bypassing the escape pass. User-visible behavior is verified by unit tests colocated with the decoder, the `read` builtin unit suite, and integration tests in [tests/integration/prompt.rs](../../tests/integration/prompt.rs); the interactive `\#` increment and `!`-from-parameter-expansion paths are exercised end-to-end through the PTY harness in [tests/integration/interactive_common/](../../tests/integration/interactive_common/).
+**Implemented.** The `bash_prompts` shell option is accepted by `set -o` / `set +o` ([src/shell/options.rs](../../src/shell/options.rs)) and is mutually exclusive with the implicit POSIX mode. The backslash-escape decoder, the `Prompt` type that carries an invisible mask for `\[...\]` regions, and the per-session command counter (`\#`) live in [src/interactive/prompt_expand.rs](../../src/interactive/prompt_expand.rs). PS1/PS2 expansion, PS4 xtrace expansion, and the line editor's cursor-column arithmetic consume the invisible mask via `display_width_visible` in [src/interactive/editor/redraw.rs](../../src/interactive/editor/redraw.rs). Locale-aware `\D{format}` uses the `strftime(3)` wrapper in [src/sys/time.rs](../../src/sys/time.rs). The `PS4` first-character duplication per subshell nesting level (§ 3.5) is implemented in the xtrace writer ([src/exec/simple.rs](../../src/exec/simple.rs)) using a per-shell depth counter set at every subshell-entry site. The `read -p` prompt option (§ 12.3) is implemented in [src/builtin/read.rs](../../src/builtin/read.rs) and writes its argument verbatim — explicitly bypassing the escape pass. User-visible behavior is verified by unit tests colocated with the decoder, the `read` builtin unit suite, and integration tests in [tests/integration/prompt.rs](../../tests/integration/prompt.rs); the interactive `\#` increment and `!`-from-parameter-expansion paths are exercised end-to-end through the PTY harness in [tests/integration/interactive_common/](../../tests/integration/interactive_common/).
 
 ## 1. Scope
 
 This document is the authoritative specification of the prompt-rendering language used by meiksh for `PS1`, `PS2`, `PS3`, and `PS4`. It defines:
 
-- A compat-mode gate (`bash_compat`) that distinguishes strict POSIX prompt expansion from the bash-style extended language.
+- A compat-mode gate (`bash_prompts`) that distinguishes strict POSIX prompt expansion from the bash-style extended language.
 - The full expansion pipeline and its order of operations.
 - The set of backslash escape sequences recognized inside prompts.
 - The semantics of the non-printing-region delimiters `\[` and `\]` and the contract between them and the line editor's cursor arithmetic.
@@ -43,18 +43,24 @@ This specification is written against two project-wide policy documents, which t
 
 ## 2. Compat-Mode Gate
 
-### 2.1 The `bash_compat` Option
+### 2.1 The `bash_prompts` Option
 
-- `set -o bash_compat` shall enable the bash-style prompt expansion language defined by this document.
-- `set +o bash_compat` shall disable it, reverting every prompt variable to strict POSIX parameter expansion as defined in Section 4.
-- The default value of `bash_compat` on shell startup shall be off, for both interactive and non-interactive shells. A fresh meiksh invocation is strict POSIX.
-- The reportable options output produced by `set -o` shall include the line `bash_compat      on` or `bash_compat      off` reflecting the current state, using the same column formatting used by the other POSIX `set -o` options.
-- `bash_compat` shall not be exposed through a short option letter. The value of `$-` shall not gain a new character when `bash_compat` is enabled.
+- `set -o bash_prompts` shall enable the bash-style prompt expansion language defined by this document.
+- `set +o bash_prompts` shall disable it, reverting every prompt variable to strict POSIX parameter expansion as defined in Section 4.
+- The default value of `bash_prompts` on shell startup shall be off, for both interactive and non-interactive shells. A fresh meiksh invocation is strict POSIX.
+- The reportable options output produced by `set -o` shall include the line `bash_prompts      on` or `bash_prompts      off` reflecting the current state, using the same column formatting used by the other POSIX `set -o` options.
+- `bash_prompts` shall not be exposed through a short option letter. The value of `$-` shall not gain a new character when `bash_prompts` is enabled.
+
+#### 2.1.1 Naming Rationale
+
+The option name encodes two facts: **what** the option enables (a prompt-escape language) and **whose** escape syntax it implements (bash's — Brian Fox introduced `\u`, `\h`, `\w`, `\d`, `\t`, `\!`, `\#`, `\$`, `\[`, `\]`, `\D{…}` with bash 1.0 in 1989, predating ksh93 and zsh adoptions of any subset). This follows the zsh convention of naming cross-shell-borrowed options after their source shell (`BASH_REMATCH`, `KSH_ARRAYS`, `CSH_NULL_GLOB`, `POSIX_CD`, …) so the provenance is visible at the call site.
+
+The narrower name — `bash_prompts` rather than an umbrella like `bash_compat` — reflects that the option gates exactly one feature today. If meiksh grows additional bash-flavored extensions later (bash arrays, `[[ ]]`, process substitution, `=~`), each shall be gated by its own `bash_*` option. A top-level `bash_mode` flag or `emulate bash` builtin is out of scope for this document; see Appendix B, Package 8 for the sketch of how such a bundler would sit on top of the per-feature options.
 
 ### 2.2 The Compat-Mode Slot
 
 - The shell shall maintain a single-valued compat-mode selector. At any given time at most one compat mode may be active; the default selector value is "POSIX", meaning no compat mode.
-- Enabling `bash_compat` shall set the selector to `Bash`. Disabling `bash_compat` shall set the selector to `POSIX`.
+- Enabling `bash_prompts` shall set the selector to `Bash`. Disabling `bash_prompts` shall set the selector to `POSIX`.
 - Future compat options (for example `zsh_compat`, `ksh_compat`) shall share the same selector. Enabling one of them shall atomically disable every sibling. This mirrors the mutual exclusion between `set -o vi` and `set -o emacs`.
 - Disabling the currently-active compat option shall leave the selector at `POSIX`; it shall not reactivate a previously-selected compat option.
 
@@ -65,7 +71,7 @@ This specification is written against two project-wide policy documents, which t
 
 ### 2.4 Non-Interactive Shells
 
-- Non-interactive shells shall honor `set -o bash_compat` to the extent that prompt variables are expanded at all (notably `PS4` for `xtrace`). `set -o bash_compat` in a non-interactive shell shall therefore enable bash-style escapes in the `PS4` trace output.
+- Non-interactive shells shall honor `set -o bash_prompts` to the extent that prompt variables are expanded at all (notably `PS4` for `xtrace`). `set -o bash_prompts` in a non-interactive shell shall therefore enable bash-style escapes in the `PS4` trace output.
 
 ## 3. Prompt Variables
 
@@ -73,18 +79,18 @@ This specification is written against two project-wide policy documents, which t
 
 Meiksh recognizes four prompt variables. Their defaults and escape behavior are:
 
-| Variable | Default value | Escape pass when `bash_compat` is on | Parameter + arithmetic + `$(...)` | `!` history substitution |
+| Variable | Default value | Escape pass when `bash_prompts` is on | Parameter + arithmetic + `$(...)` | `!` history substitution |
 |---|---|---|---|---|
 | `PS1` | Implementation-defined string ending in `$ ` or `# ` (see Section 3.2) | Yes | Yes | Yes |
 | `PS2` | `> ` | Yes | Yes | Yes |
 | `PS3` | `#? ` | No (bash parity) | Yes | No |
 | `PS4` | `+ ` | Yes | Yes | No |
 
-With `bash_compat` off, every row collapses to "parameter expansion only, no `!` expansion, no escape decoding" per Section 4.
+With `bash_prompts` off, every row collapses to "parameter expansion only, no `!` expansion, no escape decoding" per Section 4.
 
 ### 3.2 PS1 Default
 
-The default value of `PS1` shall be the literal string `\s-\v\$ ` when `bash_compat` is enabled and the shell is started without inheriting a `PS1` value from the environment. When `bash_compat` is disabled and `PS1` is unset, the default value shall be the literal string `$ ` for a non-root effective UID and `# ` for the root effective UID. The `\s-\v\$ ` form is chosen for parity with bash; the `$ ` / `# ` form is chosen because strict POSIX has no way to express the "user vs root" distinction without backslash escapes.
+The default value of `PS1` shall be the literal string `\s-\v\$ ` when `bash_prompts` is enabled and the shell is started without inheriting a `PS1` value from the environment. When `bash_prompts` is disabled and `PS1` is unset, the default value shall be the literal string `$ ` for a non-root effective UID and `# ` for the root effective UID. The `\s-\v\$ ` form is chosen for parity with bash; the `$ ` / `# ` form is chosen because strict POSIX has no way to express the "user vs root" distinction without backslash escapes.
 
 ### 3.3 PS2 Default
 
@@ -96,7 +102,7 @@ The default value of `PS2` shall be the literal string `> ` regardless of compat
 
 ### 3.5 PS4 Default
 
-`PS4` is read by the shell when tracing command execution under `set -o xtrace`. Its default value shall be `+ `. When the rendered value of `PS4` is longer than a single character, the first character shall be duplicated once per level of subshell nesting, matching bash. The backslash-escape pass is applied to `PS4` when `bash_compat` is on; the invisible-region mask from `\[...\]` is discarded because xtrace output is not cursor-positioned.
+`PS4` is read by the shell when tracing command execution under `set -o xtrace`. Its default value shall be `+ `. When the rendered value of `PS4` is longer than a single character, the first character shall be duplicated once per level of subshell nesting, matching bash. The backslash-escape pass is applied to `PS4` when `bash_prompts` is on; the invisible-region mask from `\[...\]` is discarded because xtrace output is not cursor-positioned.
 
 ### 3.6 Lifecycle
 
@@ -104,7 +110,7 @@ The default value of `PS2` shall be the literal string `> ` regardless of compat
 - A prompt variable that becomes unset shall fall back to its default from Sections 3.2-3.5.
 - A prompt variable that is set to the empty string shall produce an empty prompt; the shell shall not substitute the default.
 
-## 4. Strict POSIX Expansion (`bash_compat` off)
+## 4. Strict POSIX Expansion (`bash_prompts` off)
 
 When the compat-mode selector is `POSIX`, the prompt expansion pipeline shall consist of a single pass:
 
@@ -149,7 +155,7 @@ flowchart LR
 
 ## 6. Backslash Escape Set
 
-This section is active only when `bash_compat` is on. In POSIX mode the bytes described here are emitted verbatim.
+This section is active only when `bash_prompts` is on. In POSIX mode the bytes described here are emitted verbatim.
 
 The table below enumerates every backslash escape recognized by the escape pass. Escapes not listed shall be emitted as their raw two bytes (the backslash followed by the next byte). This is the bash-compatible "unknown escape" behavior and shall not produce a diagnostic.
 
@@ -236,7 +242,7 @@ A backslash as the final byte of the prompt value shall be emitted as a single l
 
 ## 7. History Substitution Interaction
 
-History substitution inside prompts is a bash extension; it shall run only when `bash_compat` is on.
+History substitution inside prompts is a bash extension; it shall run only when `bash_prompts` is on.
 
 ### 7.1 `\!` Versus Literal `!`
 
@@ -248,15 +254,15 @@ History substitution inside prompts is a bash extension; it shall run only when 
 
 - After the parameter pass, the output is scanned for literal `!` bytes. Each literal `!` shall be replaced with the decimal history number of the command about to be read.
 - The sequence `!!` in the expanded prompt shall render as a single literal `!`. This matches the `expand_prompt_exclamation` pass already implemented in [src/interactive/prompt.rs](../../src/interactive/prompt.rs).
-- A `!` introduced by parameter expansion shall be subject to this pass exactly like a `!` written directly in `PS1`; this matches bash behavior and is what the `promptvars` option would toggle in bash (meiksh has no equivalent toggle: the behavior is unconditional when `bash_compat` is on).
+- A `!` introduced by parameter expansion shall be subject to this pass exactly like a `!` written directly in `PS1`; this matches bash behavior and is what the `promptvars` option would toggle in bash (meiksh has no equivalent toggle: the behavior is unconditional when `bash_prompts` is on).
 
 ### 7.3 POSIX Mode
 
-When `bash_compat` is off, a literal `!` in any prompt variable shall be emitted verbatim. There is no history substitution inside prompts in POSIX mode.
+When `bash_prompts` is off, a literal `!` in any prompt variable shall be emitted verbatim. There is no history substitution inside prompts in POSIX mode.
 
 ## 8. Non-Printing Regions (`\[` and `\]`)
 
-This section is active only when `bash_compat` is on.
+This section is active only when `bash_prompts` is on.
 
 ### 8.1 Semantics
 
@@ -303,7 +309,7 @@ The prompt write in `read_line` / `write_prompt` in [src/interactive/prompt.rs](
 
 ### 9.4 `PS4` In `xtrace`
 
-The `xtrace` path in [src/exec/simple.rs](../../src/exec/simple.rs) shall run the same escape-plus-parameter pipeline on `PS4` when `bash_compat` is on, but shall discard the non-printing mask. The xtrace writer is not cursor-positioned; color codes inside `\[...\]` will therefore appear as literal bytes in trace output, which matches bash.
+The `xtrace` path in [src/exec/simple.rs](../../src/exec/simple.rs) shall run the same escape-plus-parameter pipeline on `PS4` when `bash_prompts` is on, but shall discard the non-printing mask. The xtrace writer is not cursor-positioned; color codes inside `\[...\]` will therefore appear as literal bytes in trace output, which matches bash.
 
 ## 10. Diagnostics And Graceful Degradation
 
@@ -338,7 +344,7 @@ This section is advisory. It records the expected implementation shape so that r
 
 ### 11.1 Option Plumbing
 
-- `ShellOptions` in [src/shell/options.rs](../../src/shell/options.rs) gains a `compat_mode: CompatMode` field, where `CompatMode` is an enum `{ Posix, Bash }` with `Posix` as the default. `set_named_option` accepts the name `bash_compat` and sets the field to `Bash` (`enabled = true`) or `Posix` (`enabled = false`).
+- `ShellOptions` in [src/shell/options.rs](../../src/shell/options.rs) gains a `compat_mode: CompatMode` field, where `CompatMode` is an enum `{ Posix, Bash }` with `Posix` as the default. `set_named_option` accepts the name `bash_prompts` and sets the field to `Bash` (`enabled = true`) or `Posix` (`enabled = false`).
 - Adding `zsh_compat` later is a single new enum variant and one additional arm in `set_named_option`; the exclusivity rule falls out of the assignment.
 - The `set -o` output routine iterates the compat modes by name and prints one row per known mode.
 
@@ -368,7 +374,7 @@ This section is advisory. It records the expected implementation shape so that r
 
 ### 12.1 `set -o emacs` / `set -o vi`
 
-The prompt extensions defined here are independent of the editing-mode selection. Every editing mode (emacs, vi, canonical) shall render prompts through the pipeline of Section 4 or Section 5 according to the value of `bash_compat`. There is no editing-mode-specific prompt behavior.
+The prompt extensions defined here are independent of the editing-mode selection. Every editing mode (emacs, vi, canonical) shall render prompts through the pipeline of Section 4 or Section 5 according to the value of `bash_prompts`. There is no editing-mode-specific prompt behavior.
 
 ### 12.2 `bind` Builtin
 
@@ -400,7 +406,7 @@ Bash's `PROMPT_COMMAND` array is a pre-prompt hook that runs before every `PS1` 
 
 ### 13.3 zsh `%` Prompt Escapes
 
-zsh implements a parallel prompt-escape language using `%` rather than `\`, with escapes such as `%n`, `%m`, `%~`, `%F{color}`, `%B`, and the `%{...%}` non-printing delimiter. Meiksh shall not recognize the `%` language under `bash_compat`. It is reserved for a future `zsh_compat` option. See Appendix B, Package 4.
+zsh implements a parallel prompt-escape language using `%` rather than `\`, with escapes such as `%n`, `%m`, `%~`, `%F{color}`, `%B`, and the `%{...%}` non-printing delimiter. Meiksh shall not recognize the `%` language under `bash_prompts`. It is reserved for a future `zsh_compat` option. See Appendix B, Package 4.
 
 ### 13.4 `PROMPT_DIRTRIM`
 
@@ -410,13 +416,13 @@ Bash's `PROMPT_DIRTRIM` variable causes `\w` to keep only the last N path compon
 
 Bash's `shopt -s promptvars` toggles whether parameter expansion runs on `PS1`. Meiksh has no equivalent toggle: parameter expansion runs unconditionally in every mode (POSIX requires it). See Appendix B, Package 5.
 
-### 13.6 Short-Letter Option For `bash_compat`
+### 13.6 Short-Letter Option For `bash_prompts`
 
-Unlike every short option in `$-` (`e`, `u`, `x`, ...), `bash_compat` has no single-letter alias. `$-` shall not gain a letter for this option.
+Unlike every short option in `$-` (`e`, `u`, `x`, ...), `bash_prompts` has no single-letter alias. `$-` shall not gain a letter for this option.
 
 ### 13.7 Versioned Compat Modes
 
-Bash's `BASH_COMPAT` variable targets a specific bash minor version for compatibility. Meiksh's `bash_compat` is a single boolean: either the bash-style prompt language is on or it is off. There is no notion of "bash 4.x prompt semantics" distinct from "bash 5.x prompt semantics". See Appendix B, Package 6.
+Bash's `BASH_COMPAT` variable targets a specific bash minor version for compatibility. Meiksh's `bash_prompts` is a single boolean: either the bash-style prompt language is on or it is off. There is no notion of "bash 4.x prompt semantics" distinct from "bash 5.x prompt semantics". See Appendix B, Package 6.
 
 ### 13.8 `\N` And Other Bash 5.1+ Escapes
 
@@ -430,7 +436,7 @@ Conformance with this spec is verified by:
 
 - Unit tests colocated with the escape decoder implementation in [src/interactive/prompt.rs](../../src/interactive/prompt.rs), covering each escape in Section 6.1 against hand-authored input vectors. These are pure-logic tests and should use `assert_no_syscalls` per the guide.
 - Unit tests for the session counter (Section 6.4) and the `\$` root/non-root dispatch (Section 6.1) using the existing shell-state test harness in [src/shell/test_support.rs](../../src/shell/test_support.rs), with any `geteuid` call expressed via a `trace_entries![geteuid() -> ...]` entry rather than a real syscall.
-- Integration tests in [tests/integration/prompt.rs](../../tests/integration/prompt.rs) that drive the shell with both `set -o bash_compat` and `set +o bash_compat` and assert the rendered byte stream. Any `libc` usage needed by these tests (for PTY or signal setup) shall live in [tests/integration/sys.rs](../../tests/integration/sys.rs) per the policy in [docs/IMPLEMENTATION_POLICY.md](../IMPLEMENTATION_POLICY.md).
+- Integration tests in [tests/integration/prompt.rs](../../tests/integration/prompt.rs) that drive the shell with both `set -o bash_prompts` and `set +o bash_prompts` and assert the rendered byte stream. Any `libc` usage needed by these tests (for PTY or signal setup) shall live in [tests/integration/sys.rs](../../tests/integration/sys.rs) per the policy in [docs/IMPLEMENTATION_POLICY.md](../IMPLEMENTATION_POLICY.md).
 - PTY tests in [tests/integration/interactive_common/](../../tests/integration/interactive_common/) that assert cursor placement after prompts containing `\[\e[31m\]\u\[\e[0m\]@\h` (ANSI color inside non-printing regions).
 - A locale-sensitive test that sets `LC_TIME=fr_FR.UTF-8` (or an equivalent locale available on the CI host) and asserts that `\D{%A}` in `PS1` produces French day names.
 
@@ -441,7 +447,7 @@ Conformance with this spec is verified by:
 | Feature | meiksh | bash 5.2 | ksh93 | zsh |
 |---|---|---|---|---|
 | Default compat mode | POSIX (off) | Always on (no gate) | Always on (no gate) | `%`-language (different) |
-| Gate option | `set -o bash_compat` | none | none | `setopt PROMPT_SUBST` (partial) |
+| Gate option | `set -o bash_prompts` | none | none | `setopt PROMPT_SUBST` (partial) |
 | `\u`, `\h`, `\w` | Same | Same | Same | No (uses `%n`, `%m`, `%~`) |
 | `\D{strftime}` | Same | Same | No | No (uses `%D`) |
 | `\!` | Same | Same | Same | No (uses `%h`) |
@@ -456,7 +462,7 @@ Conformance with this spec is verified by:
 ### A.2 Sample `PS1` In Bash-Compat Mode
 
 ```text
-set -o bash_compat
+set -o bash_prompts
 PS1='\[\e[01;32m\]\u@\h\[\e[00m\]:\[\e[01;34m\]\w\[\e[00m\]\$ '
 ```
 
@@ -468,12 +474,12 @@ This renders as bold-green `user@host` followed by a colon, bold-blue working di
 PS1='${LOGNAME:-?}:$PWD\$ '
 ```
 
-This renders as `LOGNAME`, a colon, the current `PWD`, and a literal `\$ ` (backslash, dollar, space), because POSIX mode does not decode `\$`. Users who want the backslash stripped shall opt into `set -o bash_compat`.
+This renders as `LOGNAME`, a colon, the current `PWD`, and a literal `\$ ` (backslash, dollar, space), because POSIX mode does not decode `\$`. Users who want the backslash stripped shall opt into `set -o bash_prompts`.
 
 ### A.4 Sample `PS1` With A Locale-Aware Clock
 
 ```text
-set -o bash_compat
+set -o bash_prompts
 export LC_TIME=fr_FR.UTF-8
 PS1='\D{%A %H:%M} \u:\w\$ '
 ```
@@ -518,10 +524,21 @@ Add a `shopt -s promptvars` / `shopt -u promptvars` toggle that gates pass 2 of 
 
 **Effort**: medium. **Dependencies**: none.
 
-Replace the boolean `bash_compat` with an integer-valued compat level (matching bash's `BASH_COMPAT` variable values 42, 43, 44, 50, 51, 52). Prompt-language behavior is largely stable across bash versions but other compat-gated features (for example `globskipdots`) would key off the same integer. Cuts addressed: 13.7.
+Replace the boolean `bash_prompts` with an integer-valued compat level (matching bash's `BASH_COMPAT` variable values 42, 43, 44, 50, 51, 52). Prompt-language behavior is largely stable across bash versions but other compat-gated features (for example `globskipdots`) would key off the same integer. Cuts addressed: 13.7.
 
 ### B.7 Package 7 - `\N` Nickname Escape
 
 **Effort**: tiny. **Dependencies**: none.
 
 Recognize `\N` in the escape pass and expand it to the user's "nickname" (an implementation-defined string configurable via a new shell variable, for example `PROMPT_NICK`). This feature is almost unused in the wild; it is listed here for completeness. Cuts addressed: 13.8.
+
+### B.8 Package 8 - Bundled `emulate bash` / `bash_mode`
+
+**Effort**: small at first, growing with each new `bash_*` option. **Dependencies**: two or more independent `bash_*` options (today there is only `bash_prompts`, so this package is dormant until the second one lands).
+
+Once meiksh has multiple provenance-prefixed options (for example `bash_prompts`, `bash_arrays`, `bash_double_brackets`, …), add a convenience bundler for flipping them as a group. Two plausible shapes:
+
+- **Virtual `set -o bash_mode`**: a derived option whose value is read as "on iff every `bash_*` option is on" and whose assignment cascades to the constituents. `set -o bash_mode` flips every `bash_*` on; `set +o bash_mode` flips every `bash_*` off. No new state; the bundle is sugar over the fine-grained options.
+- **`emulate` builtin (zsh shape)**: a new builtin `emulate bash | ksh | zsh | posix | meiksh` that computes and applies the correct set of fine-grained toggles for the named flavor. Not representable in `set -o` output; one-shot semantics. `emulate meiksh` returns to native defaults. Parallel to zsh's `emulate(1)` builtin.
+
+The second shape composes better with future `ksh_*`, `zsh_*` options and avoids the "what does it mean to turn off a bundle?" ambiguity that plagues model C bundlers; the first shape is cheaper to add and keeps the user-visible surface inside `set -o`. This document picks neither prematurely. Whichever shape lands, the per-feature options defined here remain the normative interface; the bundler is a convenience layer.

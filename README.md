@@ -34,7 +34,8 @@ Before any file is sourced, `meiksh` exports the shell variable `MEIKSH_VERSION`
 ```sh
 if [ -n "${MEIKSH_VERSION:-}" ]; then
     # meiksh-specific setup
-    set -o bash_compat   # opt into bash-compatible prompt escapes (\u, \h, \w, \D{…}, …)
+    set -o bash_prompts  # opt into bash-style prompt escapes (\u, \h, \w, \D{…}, …)
+    PS1="\u@\h:\w \\$ " # classic bash-style prompt: user@host:cwd $
 fi
 ```
 

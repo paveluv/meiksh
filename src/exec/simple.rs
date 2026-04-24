@@ -299,7 +299,7 @@ fn write_xtrace_parts(shell: &mut Shell, assignments: &[(Vec<u8>, Vec<u8>)], arg
         return;
     }
     // PS4 goes through the full prompt expansion pipeline — including
-    // the backslash-escape pass when `bash_compat` is on — per
+    // the backslash-escape pass when `bash_prompts` is on — per
     // ps1-prompt-extensions.md § 3.5 / § 9.4. The invisible-region
     // mask is discarded because the xtrace writer is not
     // cursor-positioned.
