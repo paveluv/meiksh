@@ -1,6 +1,6 @@
 use crate::bstr;
 use crate::expand::word;
-use crate::shell::options::CompatMode;
+use crate::shell::options::PromptsMode;
 use crate::shell::state::Shell;
 use crate::sys;
 
@@ -66,7 +66,7 @@ pub(crate) enum PromptKind {
 
 /// Full prompt expansion per ps1-prompt-extensions.md.
 ///
-/// Dispatches on the captured value of `compat_mode`:
+/// Dispatches on the captured value of `prompts_mode`:
 ///
 /// - `Posix`: parameter expansion only; no backslash-escape decoding;
 ///   no history `!` substitution.
@@ -81,22 +81,22 @@ pub(crate) fn expand_full_prompt(
     let raw = shell.get_var(var).map(|v| v.to_vec()).unwrap_or_else(|| {
         // If unset and bash_prompts is on, PS1 falls back to "\s-\v\$".
         // See spec § 3.2. Other slots use their static default.
-        if var == b"PS1" && matches!(shell.options.compat_mode, CompatMode::Bash) {
+        if var == b"PS1" && matches!(shell.options.prompts_mode, PromptsMode::Bash) {
             b"\\s-\\v\\$ ".to_vec()
         } else {
             default.to_vec()
         }
     });
-    let compat = shell.options.compat_mode;
+    let mode = shell.options.prompts_mode;
     let histnum = shell.history_number();
 
-    match compat {
-        CompatMode::Posix => {
+    match mode {
+        PromptsMode::Posix => {
             // No escape pass; parameter expansion only; no history.
             let expanded = word::expand_parameter_text(shell, &raw).unwrap_or_else(|_| raw.clone());
             Prompt::new(expanded)
         }
-        CompatMode::Bash => {
+        PromptsMode::Bash => {
             let run_escape_pass = !matches!(kind, PromptKind::Ps3);
             let stage1 = if run_escape_pass {
                 let env = build_prompt_env(shell, histnum);
