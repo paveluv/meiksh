@@ -1112,6 +1112,69 @@ begin test "colon-plus with omitted word substitutes empty when set"
 end test "colon-plus with omitted word substitutes empty when set"
 ```
 
+#### Test: quoted default expansion of unset parameter yields one empty field
+
+A double-quoted `${parameter-word}` expansion with an unset parameter and an
+empty default word is a quoted expansion that substitutes the null word. Per
+§2.6.5, a field containing quoting characters cannot be removed by field
+splitting, so assigning it to the positional parameters yields one empty field,
+not zero.
+
+```
+begin test "quoted default expansion of unset parameter yields one empty field"
+  script
+    unset foo
+    set -- "${foo-}"
+    echo "$#"
+    echo "<$1>"
+  expect
+    stdout "1\n<>"
+    stderr ""
+    exit_code 0
+end test "quoted default expansion of unset parameter yields one empty field"
+```
+
+#### Test: quoted colon-dash expansion of unset parameter yields one empty field
+
+Same as the previous test but with the `:-` variant, which fires on both unset
+and null parameters. The quoted empty substitution must still be preserved as
+exactly one field.
+
+```
+begin test "quoted colon-dash expansion of unset parameter yields one empty field"
+  script
+    unset foo
+    set -- "${foo:-}"
+    echo "$#"
+    echo "<$1>"
+  expect
+    stdout "1\n<>"
+    stderr ""
+    exit_code 0
+end test "quoted colon-dash expansion of unset parameter yields one empty field"
+```
+
+#### Test: quoted colon-plus with omitted word yields one empty field when set
+
+A double-quoted `${parameter:+word}` expansion with a set, non-null parameter
+and an omitted word substitutes the null word. The quoted null must be
+preserved as exactly one empty field, observable via
+`set -- … ; echo "$#"`.
+
+```
+begin test "quoted colon-plus with omitted word yields one empty field when set"
+  script
+    foo=value
+    set -- "${foo:+}"
+    echo "$#"
+    echo "<$1>"
+  expect
+    stdout "1\n<>"
+    stderr ""
+    exit_code 0
+end test "quoted colon-plus with omitted word yields one empty field when set"
+```
+
 #### Test: fallback word not expanded when parameter set
 
 When the parameter is set, the fallback `word` in `${parameter:-word}` shall

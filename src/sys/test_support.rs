@@ -62,6 +62,19 @@ pub(crate) fn set_test_terminal_columns(cols: Option<usize>) {
 }
 
 pub(super) fn trace_effective_uid_is_root() -> bool {
+    // When the caller installed synthetic process IDs via
+    // [`with_process_ids_for_test`], derive the predicate from the
+    // effective UID in that tuple so a single helper controls both
+    // `has_same_real_and_effective_ids` and `effective_uid_is_root` —
+    // otherwise a test that simulates a root shell via
+    // `with_process_ids_for_test((0, 0, 0, 0), …)` would still see this
+    // helper return `false` and take the non-root branch. Falls back to
+    // the dedicated `TEST_EUID_IS_ROOT` thread-local when no process-id
+    // override is active, preserving the default of "not root" for
+    // tests that do not care.
+    if let Some((_uid, euid, _gid, _egid)) = TEST_PROCESS_IDS.with(|c| *c.borrow()) {
+        return euid == 0;
+    }
     TEST_EUID_IS_ROOT.with(|c| *c.borrow())
 }
 

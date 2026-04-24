@@ -81,7 +81,7 @@ Meiksh recognizes four prompt variables. Their defaults and escape behavior are:
 
 | Variable | Default value | Escape pass when `bash_prompts` is on | Parameter + arithmetic + `$(...)` | `!` history substitution |
 |---|---|---|---|---|
-| `PS1` | Implementation-defined string ending in `$ ` or `# ` (see Section 3.2) | Yes | Yes | Yes |
+| `PS1` | `$ ` for a non-root effective UID, `# ` for root (see Section 3.2) | Yes | Yes | Yes |
 | `PS2` | `> ` | Yes | Yes | Yes |
 | `PS3` | `#? ` | No (bash parity) | Yes | No |
 | `PS4` | `+ ` | Yes | Yes | No |
@@ -90,7 +90,9 @@ With `bash_prompts` off, every row collapses to "parameter expansion only, no `!
 
 ### 3.2 PS1 Default
 
-The default value of `PS1` shall be the literal string `\s-\v\$ ` when `bash_prompts` is enabled and the shell is started without inheriting a `PS1` value from the environment. When `bash_prompts` is disabled and `PS1` is unset, the default value shall be the literal string `$ ` for a non-root effective UID and `# ` for the root effective UID. The `\s-\v\$ ` form is chosen for parity with bash; the `$ ` / `# ` form is chosen because strict POSIX has no way to express the "user vs root" distinction without backslash escapes.
+The default value of `PS1` shall be the literal string `$ ` for a non-root effective UID and `# ` for the root effective UID, regardless of the `bash_prompts` setting. The `bash_prompts` option gates backslash-escape *decoding* on whatever raw `PS1` value is in effect; it never substitutes a different default. In particular, enabling `bash_prompts` without setting `PS1` shall not produce a bash-style `\s-\v\$ ` prompt — `\s-\v\$ ` is not treated as a default anywhere in meiksh. Users who want the shell name and version in their prompt shall set `PS1` explicitly.
+
+The `$ ` / `# ` default value is selected at shell-startup time based on `geteuid()` and is seeded into the shell's variable store *before* any startup file is sourced (see `load_startup_files` in [src/interactive/startup.rs](../../src/interactive/startup.rs)). Seeding early ensures that `/etc/profile` gates of the form `[ "${PS1-}" ]` observe `PS1` as set and proceed with their interactive-shell configuration. The seed is not exported; child processes that need `PS1` shall set it themselves. A shell that inherits `PS1` from its environment keeps the inherited value unchanged. The default value is chosen because strict POSIX explicitly prescribes `"$ "` as the `PS1` value unless the user is privileged, in which case an implementation-defined alternative ending in `# ` is conventional across historical UNIX shells.
 
 ### 3.3 PS2 Default
 

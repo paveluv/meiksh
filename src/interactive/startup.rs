@@ -45,6 +45,28 @@ pub(super) fn load_startup_files(shell: &mut Shell) -> Result<(), ShellError> {
     let _ = shell.set_var(MEIKSH_MARKER_NAME, MEIKSH_MARKER_VALUE);
     shell.mark_exported(MEIKSH_MARKER_NAME);
 
+    // Seed `PS1` with the POSIX-spec default before sourcing any
+    // startup file, so that scripts like `/etc/profile` whose outer
+    // gate tests `[ "${PS1-}" ]` observe the variable as set and
+    // proceed with their interactive-shell configuration. Per POSIX
+    // XCU §2 <https://pubs.opengroup.org/onlinepubs/9799919799/>,
+    // the default `PS1` value is `"$ "`; a privileged user (effective
+    // UID 0) gets the implementation-defined alternative `"# "`,
+    // matching the historical-superuser convention codified in
+    // `docs/features/ps1-prompt-extensions.md` §3.2. The seed is
+    // intentionally **not exported** — bash does not export `PS1`
+    // either, and the module's `is_exported` assertions for
+    // `MEIKSH_VERSION` depend on that invariant. Users who already
+    // set `PS1` (e.g. via inherited environment) keep their value.
+    if shell.get_var(b"PS1").is_none() {
+        let default: &[u8] = if sys::process::effective_uid_is_root() {
+            b"# "
+        } else {
+            b"$ "
+        };
+        let _ = shell.set_var(b"PS1", default);
+    }
+
     // Spec § 4: setuid / setgid shells skip every file under § 3.
     if !sys::process::has_same_real_and_effective_ids() {
         return Ok(());
@@ -401,6 +423,93 @@ mod tests {
             assert!(shell.is_exported(b"MEIKSH_VERSION"));
             assert_eq!(shell.get_var(b"FROM_ENV_FILE"), None);
             assert_eq!(shell.get_var(b"FROM_HOME_PROFILE"), None);
+            // Even under the setuid guard, `PS1` is still seeded: a
+            // locked-down privileged shell still needs a functional
+            // prompt, and the seed runs before the guard bail-out by
+            // design (see the comment in `load_startup_files`).
+            assert_eq!(shell.get_var(b"PS1"), Some(b"$ ".as_ref()));
+            assert!(!shell.is_exported(b"PS1"));
+        });
+    }
+
+    #[test]
+    fn seeds_default_ps1_when_unset_and_non_root() {
+        // Non-root effective UID → POSIX default `"$ "`. Trace verifies
+        // that the seed happens before the `/etc/profile` access() so
+        // the profile's `[ "${PS1-}" ]` gate sees `PS1` as set.
+        run_trace(
+            trace_entries![
+                access(str("/etc/profile"), int(0)) -> err(sys::constants::ENOENT),
+            ],
+            || {
+                let mut shell = test_shell();
+                sys::test_support::with_process_ids_for_test((1000, 1000, 1000, 1000), || {
+                    load_startup_files(&mut shell).expect("startup");
+                });
+                assert_eq!(shell.get_var(b"PS1"), Some(b"$ ".as_ref()));
+                // PS1 must **not** be exported — bash does not export
+                // it either, and the interactive shell's assertions
+                // about which variables cross `exec` rely on this.
+                assert!(!shell.is_exported(b"PS1"));
+            },
+        );
+    }
+
+    #[test]
+    fn seeds_default_ps1_when_unset_and_root() {
+        // Effective UID 0 → implementation-defined alternative `"# "`
+        // per POSIX XCU §2 and `docs/features/ps1-prompt-extensions.md`
+        // §3.2.
+        run_trace(
+            trace_entries![
+                access(str("/etc/profile"), int(0)) -> err(sys::constants::ENOENT),
+            ],
+            || {
+                let mut shell = test_shell();
+                sys::test_support::with_process_ids_for_test((0, 0, 0, 0), || {
+                    load_startup_files(&mut shell).expect("startup");
+                });
+                assert_eq!(shell.get_var(b"PS1"), Some(b"# ".as_ref()));
+                assert!(!shell.is_exported(b"PS1"));
+            },
+        );
+    }
+
+    #[test]
+    fn preserves_user_ps1_when_already_set() {
+        // A `PS1` inherited from the parent environment (or set by the
+        // user at startup via command-line assignment) must not be
+        // overwritten by the seed. The seed is strictly "unset → POSIX
+        // default"; any value — including empty — takes precedence.
+        run_trace(
+            trace_entries![
+                access(str("/etc/profile"), int(0)) -> err(sys::constants::ENOENT),
+            ],
+            || {
+                let mut shell = test_shell();
+                shell
+                    .env_mut()
+                    .insert(b"PS1".to_vec(), b"custom> ".to_vec());
+                load_startup_files(&mut shell).expect("startup");
+                assert_eq!(shell.get_var(b"PS1"), Some(b"custom> ".as_ref()));
+            },
+        );
+    }
+
+    #[test]
+    fn seeds_ps1_even_when_startup_files_are_skipped() {
+        // The MEIKSH_SKIP_STARTUP_FILES early-return happens *after*
+        // the `PS1` seed: a shell that skips startup sourcing still
+        // needs a sensible prompt, and the seed is free of any
+        // side effects that would conflict with the skip contract.
+        run_trace(trace_entries![], || {
+            let mut shell = test_shell();
+            shell
+                .env_mut()
+                .insert(b"MEIKSH_SKIP_STARTUP_FILES".to_vec(), b"1".to_vec());
+            load_startup_files(&mut shell).expect("startup");
+            assert_eq!(shell.get_var(b"PS1"), Some(b"$ ".as_ref()));
+            assert!(!shell.is_exported(b"PS1"));
         });
     }
 
