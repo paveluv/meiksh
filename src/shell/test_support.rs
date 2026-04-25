@@ -53,6 +53,7 @@ pub fn test_shell() -> Shell {
         jobs: Vec::new(),
         known_pid_statuses: HashMap::new(),
         known_job_statuses: HashMap::new(),
+        pending_notifications: Vec::new(),
         trap_actions: BTreeMap::new(),
         ignored_on_entry: BTreeSet::new(),
         subshell_saved_traps: None,

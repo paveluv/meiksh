@@ -2,7 +2,7 @@ use crate::bstr::{self, ByteWriter};
 use crate::shell::state::Shell;
 use crate::sys;
 
-use super::editor::input::{bell, read_byte, write_bytes};
+use super::editor::input::{bell, read_byte_with_signal_handler, write_bytes};
 use super::editor::raw_mode::RawMode;
 use super::editor::redraw::{
     char_len_at, display_width_range, last_char_start, prev_char_start, redraw,
@@ -1150,7 +1150,27 @@ pub(super) fn read_line(
     let mut state = ViState::new(erase_char, hist_len);
 
     loop {
-        let byte = match read_byte()? {
+        // The vi editor's blocking byte read shares the same
+        // `EINTR` / `SIGCHLD` policy as the emacs editor — see
+        // [`crate::interactive::editor::input::read_byte_with_signal_handler`]
+        // for the rationale and POSIX § 2.11 references. Without
+        // this wrapper, a background-job change-of-state would
+        // crash the shell with "Interrupted system call" because
+        // we always install `SIGCHLD` for the entire interactive
+        // session (so the editor can wake up to deliver immediate
+        // `set -b` notifications).
+        //
+        // The redraw closure runs *before* each blocking `read()`
+        // whenever `set -b` just wrote a status line to stderr, so
+        // the user sees a fresh prompt below the asynchronous
+        // notification even if no keystroke ever arrives. With the
+        // default `set +b` the notification is stashed for the
+        // next prompt and the closure is not invoked.
+        let (maybe_byte, _intr) = read_byte_with_signal_handler(shell, || {
+            write_bytes(b"\r\n");
+            redraw(&state.line, state.cursor, prompt);
+        })?;
+        let byte = match maybe_byte {
             Some(b) => b,
             None => {
                 if state.line.is_empty() && state.cursor == 0 {

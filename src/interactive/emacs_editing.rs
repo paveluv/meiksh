@@ -32,7 +32,7 @@ use super::editor::bracketed_paste::{
     FrameDetector, FrameEvent, enter_paste_mode, leave_paste_mode,
 };
 use super::editor::history_search::Direction;
-use super::editor::input::{bell, read_byte, write_bytes};
+use super::editor::input::{bell, read_byte_with_signal_handler, write_bytes};
 use super::editor::raw_mode::RawMode;
 use super::editor::redraw::redraw;
 
@@ -85,7 +85,30 @@ fn dispatch_loop(
     let mut in_paste = false;
 
     loop {
-        let byte = match read_byte()? {
+        // The dispatch loop's blocking byte-level read is the *one*
+        // place a `SIGCHLD` (job-status change) is allowed to
+        // interrupt the editor. `read_byte_with_signal_handler`
+        // drains pending notifications via
+        // `crate::interactive::notify::stash_or_print_notifications`
+        // (POSIX § 2.11): with `set -b` it writes immediately and
+        // signals back via `printed_now` so we can re-emit the
+        // current edit line; with `set +b` it queues for the next
+        // prompt and the editor never sees any output. Other read
+        // sites in this module (the inner `quoted-insert` byte and
+        // the incremental-search loop) reuse the same helper so the
+        // notification policy stays uniform.
+        // The redraw closure runs *before* each blocking `read()`
+        // whenever `set -b` just wrote a status line to stderr, so
+        // the user (and matrix tests) see a fresh prompt + buffer
+        // below the asynchronous notification — even if no further
+        // keystroke ever arrives. With the default `set +b` the
+        // notification is stashed for the next prompt and the
+        // closure is not invoked.
+        let (maybe_byte, _intr) = read_byte_with_signal_handler(shell, || {
+            write_bytes(b"\r\n");
+            redraw(&state.buf, state.cursor, prompt);
+        })?;
+        let byte = match maybe_byte {
             Some(b) => b,
             None => {
                 // EOF: if buffer is empty return None so the REPL
@@ -210,7 +233,23 @@ fn dispatch_function(
         return Ok(Some(Some(line)));
     }
     if outcome.quoted_insert {
-        if let Some(b) = read_byte()? {
+        // Quoted-insert (`C-q` / `C-v`): the user wants the *next*
+        // raw byte inserted literally into the buffer. We must still
+        // tolerate `EINTR` here — otherwise a `SIGCHLD` arriving
+        // between `C-q` and the user's next keystroke would crash
+        // the editor with "Interrupted system call". The helper
+        // drains notifications transparently and retries the read,
+        // so the byte the user finally types is still inserted
+        // verbatim. The redraw closure here is the same one used by
+        // the outer dispatch loop — if a `set -b` notification fires
+        // between `C-q` and the user's next keystroke, we re-emit
+        // the prompt + buffer so the literal byte they're about to
+        // type still lands on a clean line.
+        let (maybe_byte, _intr) = read_byte_with_signal_handler(shell, || {
+            write_bytes(b"\r\n");
+            redraw(&state.buf, state.cursor, prompt);
+        })?;
+        if let Some(b) = maybe_byte {
             state.insert_bytes_at_cursor(&[b]);
         }
     }
@@ -235,7 +274,23 @@ fn run_incremental_search(
     let mut search = IncrementalSearch::new(&history, direction);
     draw_search_prompt(&search);
     loop {
-        let byte = match read_byte()? {
+        // Same `EINTR` policy as the outer dispatch loop: drain
+        // notifications, redraw the search mini-buffer if a
+        // status line was just emitted, then continue. We cannot
+        // simply use `redraw(&state.buf, …)` here because the
+        // search UI lives in its own mini-buffer rendered by
+        // `draw_search_prompt`; a notification is followed by a
+        // CRLF + redraw of the search prompt so the user keeps
+        // their typed pattern. With `set -b` the notification fires
+        // immediately and the closure re-emits the search
+        // mini-buffer below it; with `set +b` it stays stashed and
+        // appears at the next regular prompt after the search
+        // terminates.
+        let (maybe_byte, _intr) = read_byte_with_signal_handler(shell, || {
+            write_bytes(b"\r\n");
+            draw_search_prompt(&search);
+        })?;
+        let byte = match maybe_byte {
             Some(b) => b,
             None => {
                 state.buf = saved_buf;

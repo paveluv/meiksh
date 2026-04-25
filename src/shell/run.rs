@@ -135,6 +135,7 @@ impl Shell {
             jobs: Vec::new(),
             known_pid_statuses: HashMap::new(),
             known_job_statuses: HashMap::new(),
+            pending_notifications: Vec::new(),
             trap_actions,
             ignored_on_entry,
             subshell_saved_traps: None,
@@ -219,6 +220,7 @@ impl Shell {
             jobs: Vec::new(),
             known_pid_statuses: HashMap::new(),
             known_job_statuses: HashMap::new(),
+            pending_notifications: Vec::new(),
             trap_actions: BTreeMap::new(),
             ignored_on_entry: BTreeSet::new(),
             subshell_saved_traps: None,
@@ -463,17 +465,35 @@ impl Shell {
         let mut output = Vec::new();
         let mut buf = [0u8; 4096];
         loop {
-            let n = sys::fd_io::read_fd(read_fd, &mut buf)
-                .map_err(|e| self.diagnostic_syserr(1, &e))?;
+            // The interactive shell installs a `SIGCHLD` handler
+            // unconditionally so the editor's blocking read can
+            // wake on background-job state changes. That same
+            // handler can interrupt this `read()` while we are
+            // collecting the substitution's output; treating
+            // `EINTR` as fatal here would surface as "Interrupted
+            // system call" mid-command. POSIX § 2.4.4 (asynchronous
+            // events) explicitly allows the implementation to
+            // restart the read, which is what we do.
+            let n = match sys::fd_io::read_fd(read_fd, &mut buf) {
+                Ok(n) => n,
+                Err(ref e) if e.is_eintr() => continue,
+                Err(e) => return Err(self.diagnostic_syserr(1, &e)),
+            };
             if n == 0 {
                 break;
             }
             output.extend_from_slice(&buf[..n]);
         }
         sys::fd_io::close_fd(read_fd).map_err(|e| self.diagnostic_syserr(1, &e))?;
-        let ws = sys::process::wait_pid(pid, false)
-            .map_err(|e| self.diagnostic_syserr(1, &e))?
-            .expect("child status");
+        let ws = loop {
+            // Same EINTR rationale as the read loop above.
+            match sys::process::wait_pid(pid, false) {
+                Ok(Some(ws)) => break ws,
+                Ok(None) => continue,
+                Err(ref e) if e.is_eintr() => continue,
+                Err(e) => return Err(self.diagnostic_syserr(1, &e)),
+            }
+        };
         let status = sys::process::decode_wait_status(ws.status);
         self.last_status = status;
         Ok(output)

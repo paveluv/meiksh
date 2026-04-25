@@ -69,6 +69,16 @@ pub(crate) struct Shell {
     pub(crate) jobs: Vec<Job>,
     pub(crate) known_pid_statuses: HashMap<sys::types::Pid, i32>,
     pub(crate) known_job_statuses: HashMap<usize, i32>,
+    /// Pre-formatted job-status notification messages whose printing
+    /// has been deferred to the next prompt. Populated by
+    /// [`crate::interactive::notify::stash_or_print_notifications`]
+    /// when the editor's blocking read is woken by `SIGCHLD` while
+    /// `set -b` (the `notify` option) is *off* — POSIX § 2.11 then
+    /// requires the message to be written "before the next prompt".
+    /// Drained at the top of the REPL loop (see
+    /// [`crate::interactive::repl`]). Always empty in non-interactive
+    /// shells.
+    pub(crate) pending_notifications: Vec<Vec<u8>>,
     pub(crate) trap_actions: BTreeMap<TrapCondition, TrapAction>,
     pub(crate) ignored_on_entry: BTreeSet<TrapCondition>,
     pub(crate) subshell_saved_traps: Option<BTreeMap<TrapCondition, TrapAction>>,

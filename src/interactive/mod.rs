@@ -7,6 +7,7 @@ pub(crate) mod emacs_editing;
 mod history;
 pub(crate) mod inputrc;
 mod mail;
+pub(crate) mod notify;
 pub(crate) mod prompt;
 mod prompt_expand;
 mod repl;
