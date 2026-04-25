@@ -14,7 +14,7 @@ This document is the authoritative specification of the prompt-rendering languag
 - The semantics of the non-printing-region delimiters `\[` and `\]` and the contract between them and the line editor's cursor arithmetic.
 - The interaction between `\!`, literal `!`, and history substitution.
 
-No external standard describes extended prompt expansion. POSIX.1-2024 specifies only that prompt variables are subjected to parameter expansion before being written; everything else in this document is a non-POSIX extension. The GNU Bash manual, `ksh93` manual, and `zshmisc(1)` are product documentation for their respective implementations, not specifications. Meiksh therefore owns its own spec for this feature, aligned with bash where bash, ksh, and zsh converge, and deliberately divergent where the three disagree.
+POSIX.1-2024 (§ 2.5.3 *PS1*) specifies that `PS1` is subjected to **two** mandatory passes — parameter expansion *and* exclamation-mark expansion (where `!` expands to the next-command history number and `!!` collapses to a single literal `!`) — and leaves command/arithmetic substitution unspecified. POSIX is silent on backslash-escape decoding (`\u`, `\h`, `\w`, …), `\[ … \]` invisible regions, and most of the other non-POSIX prompt-language features in this document; those are extensions. The GNU Bash manual, `ksh93` manual, and `zshmisc(1)` are product documentation for their respective implementations, not specifications. Meiksh therefore owns its own spec for the extended set, aligned with bash where bash, ksh, and zsh converge, and deliberately divergent where the three disagree — but the two POSIX-mandated passes for `PS1` run in **every** prompts mode (Section 4 and Section 7).
 
 ### 1.1 Conformance Language
 
@@ -81,12 +81,12 @@ Meiksh recognizes four prompt variables. Their defaults and escape behavior are:
 
 | Variable | Default value | Escape pass when `bash_prompts` is on | Parameter + arithmetic + `$(...)` | `!` history substitution |
 |---|---|---|---|---|
-| `PS1` | `$ ` for a non-root effective UID, `# ` for root (see Section 3.2) | Yes | Yes | Yes |
-| `PS2` | `> ` | Yes | Yes | Yes |
+| `PS1` | `$ ` for a non-root effective UID, `# ` for root (see Section 3.2) | Yes | Yes | **Yes (POSIX-mandated, runs in every mode)** |
+| `PS2` | `> ` | Yes | Yes | Yes (matches bash; POSIX neither requires nor forbids it for `PS2`) |
 | `PS3` | `#? ` | No (bash parity) | Yes | No |
 | `PS4` | `+ ` | Yes | Yes | No |
 
-With `bash_prompts` off, every row collapses to "parameter expansion only, no `!` expansion, no escape decoding" per Section 4.
+With `bash_prompts` off the **escape pass** is suppressed, but the parameter pass and the `!` history pass for `PS1`/`PS2` continue to run. POSIX.1-2024 § 2.5.3 explicitly requires `!` expansion for `PS1`; gating it on `bash_prompts` would make meiksh's default mode non-conformant. See Section 4 and Section 7.
 
 ### 3.2 PS1 Default
 
@@ -112,17 +112,19 @@ The default value of `PS2` shall be the literal string `> ` regardless of prompt
 - A prompt variable that becomes unset shall fall back to its default from Sections 3.2-3.5.
 - A prompt variable that is set to the empty string shall produce an empty prompt; the shell shall not substitute the default.
 
-## 4. Strict POSIX Expansion (`bash_prompts` off)
+## 4. POSIX Expansion (`bash_prompts` off)
 
-When the prompts-mode selector is `POSIX`, the prompt expansion pipeline shall consist of a single pass:
+When the prompts-mode selector is `POSIX`, the prompt expansion pipeline for `PS1` shall consist of two passes — parameter expansion (POSIX.1-2024 § 2.6) and the `!` history pass of Section 7 — applied in either order; meiksh runs parameter first, then history, matching the unspecified-but-overwhelmingly-common ordering. POSIX requires both passes for `PS1` even though only parameter expansion is mandated for `PS2`/`PS3`/`PS4`.
 
-- `PS1`, `PS2`, `PS3`, `PS4` shall each be subjected to parameter expansion per POSIX.1-2024 §2.6. This includes `$name`, `${name}`, `${name:-word}`, command substitution `$(...)` and backticks, and arithmetic expansion `$((...))`.
-- Backslashes shall be literal bytes. The sequences `\u`, `\h`, `\w`, `\t`, `\$`, `\[`, `\]`, `\D{...}`, and every other escape listed in Section 6 shall be emitted as their raw two-byte forms.
-- A literal `!` in the prompt shall be emitted as `!`. The `expand_prompt_exclamation` pass defined for bash mode (Section 7) shall not run.
+The pipeline shall therefore be:
+
+- `PS1`, `PS2`, `PS3`, `PS4` shall each be subjected to parameter expansion per POSIX.1-2024 § 2.6. This includes `$name`, `${name}`, `${name:-word}`, command substitution `$(...)` and backticks, and arithmetic expansion `$((...))`.
+- The `!` history pass of Section 7 shall run on `PS1` and `PS2`. It is **POSIX-mandated** for `PS1`; meiksh extends it to `PS2` to match bash/ksh/dash and consistent with POSIX leaving `PS2` extensions unspecified.
+- The `!` history pass shall NOT run on `PS3` or `PS4`. Bash treats both identically; POSIX is silent.
+- Backslashes shall be literal bytes. The sequences `\u`, `\h`, `\w`, `\t`, `\$`, `\[`, `\]`, `\D{...}`, and every other escape listed in Section 6 shall be emitted as their raw two-byte forms — except `\!`, which has no special meaning in this mode and is also emitted as the two raw bytes (a subsequent `!` would still be substituted by the history pass; users who need a literal `!` shall write `!!`).
 - The output of expansion is a byte string only; there is no invisible-region mask, and the line editor shall treat every rendered byte as visible for cursor-column math (after normal multibyte and wide-char handling).
-- `PS3` and `PS4` in POSIX mode behave identically to `PS1`: parameter expansion only.
 
-This pipeline matches POSIX.1-2024 §2.5.3 literally. It is the meiksh default.
+This pipeline matches POSIX.1-2024 § 2.5.3 literally. It is the meiksh default.
 
 ## 5. Bash-Prompts Expansion Pipeline
 
@@ -144,14 +146,15 @@ The pipeline is summarized below.
 flowchart LR
     Raw["PS1 raw value"]
     Gate{"prompts_mode"}
-    Posix["Parameter expansion only<br>(POSIX.1-2024)"]
+    PosixParam["Parameter expansion<br>(POSIX.1-2024 § 2.6)"]
+    PosixHist["`!` history substitution<br>(Section 7, POSIX-mandated for PS1)"]
     Esc["Pass 1: backslash escape decoder<br>(Section 6) produces bytes + invisible mask"]
     Param["Pass 2: parameter + arithmetic + command substitution<br>(Section 5)"]
     Hist["Pass 3: `!` history substitution<br>(Section 7)"]
     Out["Rendered prompt + invisible mask"]
 
     Raw --> Gate
-    Gate -->|"Posix"| Posix --> Out
+    Gate -->|"Posix"| PosixParam --> PosixHist --> Out
     Gate -->|"Bash"| Esc --> Param --> Hist --> Out
 ```
 
@@ -244,7 +247,7 @@ A backslash as the final byte of the prompt value shall be emitted as a single l
 
 ## 7. History Substitution Interaction
 
-History substitution inside prompts is a bash extension; it shall run only when `bash_prompts` is on.
+The literal-`!` history pass on `PS1` is **POSIX-mandated** (POSIX.1-2024 § 2.5.3 *PS1*: "the value of this variable shall be subjected to parameter expansion … and exclamation-mark expansion") and therefore runs in every prompts mode, including the default `Posix` selector. The `\!` escape decoder is bash-only and shall continue to run only when `bash_prompts` is on; that is what this section's "shall run only when `bash_prompts` is on" wording originally referred to.
 
 ### 7.1 `\!` Versus Literal `!`
 
@@ -260,7 +263,7 @@ History substitution inside prompts is a bash extension; it shall run only when 
 
 ### 7.3 POSIX Mode
 
-When `bash_prompts` is off, a literal `!` in any prompt variable shall be emitted verbatim. There is no history substitution inside prompts in POSIX mode.
+When `bash_prompts` is off, the `\!` escape decoder shall NOT run (backslashes are literal in POSIX mode per Section 4), but Section 7.2 — substitution of literal `!` bytes by the history number, with `!!` collapsing to a single `!` — shall continue to run on `PS1` and `PS2`. This is the POSIX.1-2024 § 2.5.3 behavior: `PS1` is "subjected to parameter expansion … and exclamation-mark expansion" *unconditionally*, with no opt-out. `PS3` and `PS4` skip the history pass per Section 3.1.
 
 ## 8. Non-Printing Regions (`\[` and `\]`)
 
@@ -352,7 +355,7 @@ This section is advisory. It records the expected implementation shape so that r
 
 ### 11.2 Escape Decoder
 
-- The decoder lives in [src/interactive/prompt.rs](../../src/interactive/prompt.rs) as a new function `expand_full_prompt(shell, var, default) -> Prompt`. It reads `shell.options().prompts_mode` once and dispatches to either the POSIX branch (parameter expansion only) or the Bash branch (escape decoder + parameter expansion + history substitution).
+- The decoder lives in [src/interactive/prompt.rs](../../src/interactive/prompt.rs) as `expand_full_prompt(shell, var, default, kind) -> Prompt`. It reads `shell.options().prompts_mode` once. In the POSIX branch it skips the bash escape pass and runs parameter expansion followed (for `Ps1Or2`) by the POSIX-mandated `!` history pass. In the Bash branch it runs escape decoder → parameter expansion → (for `Ps1Or2`) `!` history pass. The history-pass call is shared between the two branches so the POSIX-conformance contract is single-sourced.
 - The decoder consumes the prompt value byte-by-byte into a state machine with states `Literal`, `AfterBackslash`, `InDFormat`, `InInvisible`, `AfterBackslashInInvisible`. The `InInvisible` state records its opening offset for the mask output.
 
 ### 11.3 `strftime` And `localtime_r`
@@ -448,8 +451,8 @@ Conformance with this spec is verified by:
 
 | Feature | meiksh | bash 5.2 | ksh93 | zsh |
 |---|---|---|---|---|
-| Default prompts mode | POSIX (off) | Always on (no gate) | Always on (no gate) | `%`-language (different) |
-| Gate option | `set -o bash_prompts` | none | none | `setopt PROMPT_SUBST` (partial) |
+| Default prompts mode | POSIX (off — but POSIX-mandated `!` history pass still runs) | Always on (no gate) | Always on (no gate) | `%`-language (different) |
+| Gate option | `set -o bash_prompts` (gates the **escape pass and `\!`**, not the literal-`!` history pass) | none | none | `setopt PROMPT_SUBST` (partial) |
 | `\u`, `\h`, `\w` | Same | Same | Same | No (uses `%n`, `%m`, `%~`) |
 | `\D{strftime}` | Same | Same | No | No (uses `%D`) |
 | `\!` | Same | Same | Same | No (uses `%h`) |

@@ -68,10 +68,15 @@ pub(crate) enum PromptKind {
 ///
 /// Dispatches on the captured value of `prompts_mode`:
 ///
-/// - `Posix`: parameter expansion only; no backslash-escape decoding;
-///   no history `!` substitution.
-/// - `Bash`: escape decoder, then parameter expansion, then (for
-///   `Ps1Or2`) history `!` substitution.
+/// - `Posix`: parameter expansion plus history (`!`/`!!`) substitution
+///   for `Ps1Or2`. The history pass is **POSIX-mandated** for `PS1`
+///   (POSIX.1-2024 § 2.5.3 *PS1*: "the value of this variable shall be
+///   subjected to parameter expansion … and exclamation-mark
+///   expansion"). meiksh applies it to `PS2` as well, matching bash /
+///   ksh / dash and consistent with POSIX leaving extensions to
+///   `PS2` unspecified.
+/// - `Bash`: backslash-escape decoder, then parameter expansion, then
+///   (for `Ps1Or2`) the same history `!` substitution.
 pub(crate) fn expand_full_prompt(
     shell: &mut Shell,
     var: &[u8],
@@ -85,41 +90,49 @@ pub(crate) fn expand_full_prompt(
     let mode = shell.options.prompts_mode;
     let histnum = shell.history_number();
 
-    match mode {
-        PromptsMode::Posix => {
-            // No escape pass; parameter expansion only; no history.
-            let expanded = word::expand_parameter_text(shell, &raw).unwrap_or_else(|_| raw.clone());
-            Prompt::new(expanded)
-        }
+    let stage1 = match mode {
+        // POSIX mode: no backslash-escape decoder; the raw bytes go
+        // straight into the parameter pass.
+        PromptsMode::Posix => Prompt::new(raw.clone()),
         PromptsMode::Bash => {
             let run_escape_pass = !matches!(kind, PromptKind::Ps3);
-            let stage1 = if run_escape_pass {
+            if run_escape_pass {
                 let env = build_prompt_env(shell, histnum);
                 let tm = sys::time::local_time_now();
                 prompt_expand::decode(&raw, &env, &tm)
             } else {
                 Prompt::new(raw.clone())
-            };
-            // Pass 2: parameter expansion on the rendered bytes. The
-            // invisible mask is preserved as-is; in practice mask
-            // ranges wrap literal bytes (color escapes) which
-            // parameter expansion leaves alone. Mask alignment under
-            // substitution-driven byte shifts is a known limitation
-            // covered by spec § 8.3 ("implementation-defined
-            // representation"), and is outside the scope of this
-            // initial implementation.
-            let after_param =
-                word::expand_parameter_text(shell, &stage1.bytes).unwrap_or(stage1.bytes);
-            let bytes = if matches!(kind, PromptKind::Ps1Or2) {
-                expand_prompt_exclamation(&after_param, histnum)
-            } else {
-                after_param
-            };
-            Prompt {
-                bytes,
-                invisible: stage1.invisible,
             }
         }
+    };
+
+    // Pass 2: parameter expansion on the (possibly escape-decoded)
+    // bytes. The invisible mask is preserved as-is; in practice mask
+    // ranges wrap literal bytes (color escapes) which parameter
+    // expansion leaves alone. Mask alignment under substitution-driven
+    // byte shifts is a known limitation covered by
+    // ps1-prompt-extensions.md § 8.3 ("implementation-defined
+    // representation"), and is outside the scope of this initial
+    // implementation.
+    let after_param = word::expand_parameter_text(shell, &stage1.bytes).unwrap_or(stage1.bytes);
+
+    // Pass 3: POSIX-mandated `!`/`!!` history substitution. Runs for
+    // `Ps1Or2` in BOTH `Posix` and `Bash` modes. Earlier revisions
+    // gated this on `bash_prompts`, which made meiksh non-conformant
+    // with POSIX.1-2024 § 2.5.3 (`PS1` "shall be subjected to
+    // parameter expansion … and exclamation-mark expansion") in its
+    // default mode. `PS3` and `PS4` are excluded — the spec only
+    // requires `!` expansion for `PS1`, and bash treats `PS3`/`PS4`
+    // identically.
+    let bytes = if matches!(kind, PromptKind::Ps1Or2) {
+        expand_prompt_exclamation(&after_param, histnum)
+    } else {
+        after_param
+    };
+
+    Prompt {
+        bytes,
+        invisible: stage1.invisible,
     }
 }
 
@@ -286,20 +299,51 @@ mod tests {
 
     // === Full-pipeline behavior (expand_full_prompt) ==================
 
-    /// § 5: the bash-compat pipeline runs escape → parameter →
-    /// history in order. With bash_prompts off, none of those passes
-    /// decode `\u`; with bash_prompts on, `\u` resolves to a username
-    /// or `?` and a literal `!` is replaced by the history number.
+    /// POSIX.1-2024 § 2.5.3 *PS1*: in default (POSIX) mode, the
+    /// escape pass does NOT run (so `\u`/`\h`/`\w` survive verbatim
+    /// as backslash-letter pairs) but the **`!`/`!!` history pass
+    /// is mandatory** ("the value of this variable shall be subjected
+    /// to parameter expansion … and exclamation-mark expansion").
+    /// `test_shell()` has a fresh history with `history_number() == 1`,
+    /// so a bare `!foo` expands to `1foo`.
     #[test]
-    fn expand_full_prompt_posix_mode_is_parameter_only() {
+    fn expand_full_prompt_posix_mode_runs_history_pass_only() {
         let mut shell = test_shell();
         shell
             .env_mut()
             .insert(b"PS1".to_vec(), b"\\u@\\h:\\w!foo$ ".to_vec());
         let out = expand_full_prompt(&mut shell, b"PS1", b"", PromptKind::Ps1Or2);
-        // Every backslash-pair survives; literal `!` stays literal.
-        assert_eq!(out.bytes, b"\\u@\\h:\\w!foo$ ");
+        // Backslash-letter pairs survive (no bash escape pass);
+        // literal `!` is replaced by the history number per POSIX.
+        assert_eq!(out.bytes, b"\\u@\\h:\\w1foo$ ");
         assert!(out.invisible.is_empty());
+    }
+
+    /// POSIX.1-2024 § 2.5.3 also defines `!!` as the escape for a
+    /// literal `!` ("An `<exclamation-mark>` character escaped by
+    /// another `<exclamation-mark>` character (that is, `\"!!\"`)
+    /// shall expand to a single `<exclamation-mark>` character"). In
+    /// POSIX mode this rule must hold without `set -o bash_prompts`.
+    #[test]
+    fn expand_full_prompt_posix_mode_double_bang_emits_single_bang() {
+        let mut shell = test_shell();
+        shell
+            .env_mut()
+            .insert(b"PS1".to_vec(), b"cmd !!> ".to_vec());
+        let out = expand_full_prompt(&mut shell, b"PS1", b"", PromptKind::Ps1Or2);
+        assert_eq!(out.bytes, b"cmd !> ");
+    }
+
+    /// POSIX.1-2024 § 2.5.3 only requires `!` expansion for `PS1`.
+    /// `PS4` (xtrace) shall NOT undergo the history pass; a literal
+    /// `!` in `PS4` survives verbatim. Tested through `Ps4` so the
+    /// `PromptKind` gate is exercised.
+    #[test]
+    fn expand_full_prompt_ps4_does_not_run_history_pass() {
+        let mut shell = test_shell();
+        shell.env_mut().insert(b"PS4".to_vec(), b"+!+ ".to_vec());
+        let out = expand_full_prompt(&mut shell, b"PS4", b"+ ", PromptKind::Ps4);
+        assert_eq!(out.bytes, b"+!+ ");
     }
 
     /// § 5 + § 7.1: `\!` decodes during the escape pass to the
