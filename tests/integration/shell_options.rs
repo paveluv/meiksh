@@ -498,6 +498,17 @@ fn interactive_shell_sources_env_file() {
 
     let output = Command::new(meiksh())
         .arg("-i")
+        // Sandbox HOME at the temp dir so the developer's real
+        // `$HOME/.profile` does not leak into the test. On a typical
+        // FreeBSD install ~/.profile contains `ENV=$HOME/.shrc;
+        // export ENV`, which is sourced *before* the spec § 3.3
+        // `$ENV` step and therefore overwrites the test-provided
+        // `ENV=<tmp>/env.sh` — making this test silently fail when
+        // run by a developer with a default-shipped home dir. The
+        // temp dir has no `.profile`, so the sourcing chain
+        // collapses to /etc/profile (no ENV override there) → noop
+        // missing ~/.profile → our caller-provided $ENV.
+        .env("HOME", root.path())
         .env("ENV", &path)
         .env("HISTFILE", &history)
         .stdin(std::process::Stdio::piped())
