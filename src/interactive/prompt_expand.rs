@@ -413,7 +413,7 @@ mod tests {
             history_number: 42,
             session_counter: 7,
             version_short: b"0.1".to_vec(),
-            version_long: b"0.1.0".to_vec(),
+            version_long: b"0.1.1".to_vec(),
         }
     }
 
@@ -624,7 +624,7 @@ mod tests {
     #[test]
     fn version_escapes() {
         let p = decode_default(b"\\s-\\v | \\V");
-        assert_eq!(p.bytes, b"meiksh-0.1 | 0.1.0");
+        assert_eq!(p.bytes, b"meiksh-0.1 | 0.1.1");
     }
 
     #[test]

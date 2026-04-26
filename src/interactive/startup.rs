@@ -21,7 +21,7 @@ const SYSTEM_PROFILE_PATH: &[u8] = b"/etc/profile";
 const MEIKSH_MARKER_NAME: &[u8] = b"MEIKSH_VERSION";
 
 /// Value assigned to [`MEIKSH_MARKER_NAME`]. The crate's SemVer
-/// string — e.g. `"0.1.0"` — sourced at compile time from Cargo so
+/// string — e.g. `"0.1.1"` — sourced at compile time from Cargo so
 /// the exported value stays in lockstep with every release. See
 /// spec § 5 for the forward-compatibility contract.
 const MEIKSH_MARKER_VALUE: &[u8] = env!("CARGO_PKG_VERSION").as_bytes();
