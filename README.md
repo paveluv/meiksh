@@ -29,7 +29,7 @@ When started interactively, `meiksh` sources the following files, in this order,
 
 Non-interactive shells (including `sh script.sh` and `sh -c '...'`) source none of these files, so scripts always run in a predictable, user-independent environment.
 
-Before any file is sourced, `meiksh` exports the shell variable `MEIKSH_VERSION` (set to the crate's SemVer string, e.g. `0.1.0`), following the convention established by `BASH_VERSION`, `ZSH_VERSION`, and `KSH_VERSION`. Unlike those shells, meiksh *exports* the marker so that `/etc/profile` and `~/.profile` — which are commonly shared across shells — can detect meiksh reliably. Portable startup scripts can branch on shell identity with the standard idiom:
+Before any file is sourced, `meiksh` exports the shell variable `MEIKSH_VERSION` (set to the crate's SemVer string, e.g. `0.1.1`), following the convention established by `BASH_VERSION`, `ZSH_VERSION`, and `KSH_VERSION`. Unlike those shells, meiksh *exports* the marker so that `/etc/profile` and `~/.profile` — which are commonly shared across shells — can detect meiksh reliably. Portable startup scripts can branch on shell identity with the standard idiom:
 
 ```sh
 if [ -n "${MEIKSH_VERSION:-}" ]; then

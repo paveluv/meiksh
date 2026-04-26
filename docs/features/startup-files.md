@@ -57,7 +57,7 @@ The `MEIKSH_VERSION` marker in Section 5 shall still be established under this g
 
 At the beginning of interactive startup, *before* any file from Section 3 is sourced and *before* the identity guard is evaluated, meiksh shall:
 
-1. Set the shell variable `MEIKSH_VERSION` to the crate's SemVer string (for example, `0.1.0`). The exact value is determined at compile time from Cargo's package version.
+1. Set the shell variable `MEIKSH_VERSION` to the crate's SemVer string (for example, `0.1.1`). The exact value is determined at compile time from Cargo's package version.
 2. Mark `MEIKSH_VERSION` exported, so that any child process spawned by a startup file — or by any command run later in the interactive session — inherits it via `execve(2)`.
 
 This name mirrors the convention used by every other major interactive shell: `BASH_VERSION`, `ZSH_VERSION`, `KSH_VERSION`, `FISH_VERSION`. Unlike bash's and zsh's markers, `MEIKSH_VERSION` is **exported** by default so that `/etc/profile` and `$HOME/.profile` — which are routinely shared across shells — can detect meiksh from inside the same startup pass that decides what shell-specific configuration to apply.
