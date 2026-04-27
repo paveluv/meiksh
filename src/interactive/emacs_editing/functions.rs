@@ -6,6 +6,7 @@
 //! testable in isolation; coverage for the I/O side is provided by the
 //! PTY integration tests in `tests/integration/emacs_mode.rs`.
 
+use crate::hash::ShellSet;
 use crate::shell::state::Shell;
 use crate::sys;
 
@@ -893,8 +894,9 @@ fn terminal_columns() -> usize {
     if let Some(cols) = sys::tty::terminal_columns_from_stdio() {
         return cols;
     }
-    if let Ok(val) = std::env::var("COLUMNS")
-        && let Ok(n) = val.parse::<usize>()
+    if let Some(val) = sys::env::env_var(b"COLUMNS")
+        && let Ok(text) = std::str::from_utf8(&val)
+        && let Ok(n) = text.parse::<usize>()
         && n > 0
     {
         return n;
@@ -972,10 +974,8 @@ fn gather_candidates(
 
 fn command_candidates(shell: &Shell, prefix: &[u8]) -> Vec<Candidate> {
     let mut out_cands: Vec<Candidate> = Vec::new();
-    let mut seen: std::collections::HashSet<Vec<u8>> = std::collections::HashSet::new();
-    let push = |cands: &mut Vec<Candidate>,
-                seen: &mut std::collections::HashSet<Vec<u8>>,
-                name: Vec<u8>| {
+    let mut seen: ShellSet<Vec<u8>> = ShellSet::default();
+    let push = |cands: &mut Vec<Candidate>, seen: &mut ShellSet<Vec<u8>>, name: Vec<u8>| {
         if !name.starts_with(prefix) {
             return;
         }
@@ -1087,7 +1087,8 @@ fn editor_temp_path() -> Vec<u8> {
 mod tests {
     use super::*;
     use crate::interactive::test_support::test_shell;
-    use crate::sys::test_support::assert_no_syscalls;
+    use crate::sys::test_support::{ArgMatcher, TraceResult, assert_no_syscalls, run_trace, t};
+    use crate::trace_entries;
 
     #[test]
     fn self_insert_appends_bytes() {
@@ -2305,23 +2306,18 @@ mod tests {
     #[test]
     fn terminal_columns_falls_back_to_columns_env_var() {
         // With no controlling tty, `terminal_columns` reads the
-        // `COLUMNS` env var (lines 896–900). We stash and restore the
-        // current value to keep the test parallel-safe.
+        // `COLUMNS` env var through the sys boundary.
         crate::sys::test_support::set_test_terminal_columns(None);
-        let prev = std::env::var_os("COLUMNS");
-        // SAFETY: tests are single-threaded with respect to env vars
-        // when each test reads/writes within its own scope.
-        unsafe {
-            std::env::set_var("COLUMNS", "55");
-        }
-        let cols = terminal_columns();
-        unsafe {
-            match prev {
-                Some(v) => std::env::set_var("COLUMNS", v),
-                None => std::env::remove_var("COLUMNS"),
-            }
-        }
-        assert_eq!(cols, 55);
+        run_trace(
+            trace_entries![
+                ..vec![t(
+                    "getenv",
+                    vec![ArgMatcher::Str(b"COLUMNS".to_vec())],
+                    TraceResult::StrVal(b"55".to_vec()),
+                )]
+            ],
+            || assert_eq!(terminal_columns(), 55),
+        );
     }
 
     #[test]

@@ -1,5 +1,5 @@
 use std::borrow::Cow;
-use std::collections::{HashSet, VecDeque};
+use std::collections::VecDeque;
 use std::rc::Rc;
 
 use super::ParseError;
@@ -8,7 +8,7 @@ use super::byte_class::{
     is_quote, is_special_param, is_tilde_user_break, is_word_break,
 };
 use super::word_part::{BracedName, BracedOp, ExpansionKind, WordPart};
-use crate::hash::ShellMap;
+use crate::hash::{ShellMap, ShellSet};
 
 struct AliasLayer<'a> {
     text: Cow<'a, [u8]>,
@@ -169,7 +169,7 @@ pub(super) struct Parser<'a> {
     pub(super) aliases: &'a ShellMap<Box<[u8]>, Box<[u8]>>,
     alias_stack: Vec<AliasLayer<'a>>,
     alias_depth: usize,
-    expanding_aliases: HashSet<Cow<'a, [u8]>>,
+    expanding_aliases: ShellSet<Cow<'a, [u8]>>,
     alias_trailing_blank_pending: bool,
     pushed_back_byte: Option<u8>,
     cached_token: Option<Token>,
@@ -203,7 +203,7 @@ impl<'a> Parser<'a> {
                 trailing_blank: false,
             }],
             alias_depth: 0,
-            expanding_aliases: HashSet::new(),
+            expanding_aliases: ShellSet::default(),
             alias_trailing_blank_pending: false,
             pushed_back_byte: None,
             cached_token: None,
@@ -2440,7 +2440,7 @@ fn unescape_backtick(raw: &[u8], in_double_quotes: bool) -> Vec<u8> {
 pub(super) struct SavedAliasState {
     layers: Vec<AliasLayer<'static>>,
     depth: usize,
-    expanding_aliases: HashSet<Vec<u8>>,
+    expanding_aliases: ShellSet<Vec<u8>>,
     trailing_blank_pending: bool,
 }
 

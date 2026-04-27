@@ -22,7 +22,7 @@ mod prompt;
 mod redirection;
 mod shell_options;
 
-use common::*;
+use common::meiksh;
 use std::process::Command;
 
 // ── Core execution ──

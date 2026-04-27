@@ -7,7 +7,7 @@ This document records project rules, POSIX implementation-defined choices, and t
 - Language: Rust
 - Dependency policy: keep dependencies minimal; low-level POSIX interface access lives in `src/sys/`
 - FFI boundary policy: `libc` is permitted only in two locations: (1) production `src/sys/`, and (2) `tests/integration/sys.rs`, the dedicated test-only sys-helpers module for integration tests. All other production and test modules must go through `src/sys/`-owned helpers (production) or `tests/integration/sys.rs` helpers (tests) instead of importing `libc` directly. `scripts/check-libc-boundary.sh` enforces this rule.
-- Portability policy: do not introduce `#[cfg(target_os = ...)]` switches as a normal implementation technique; platform differences should be absorbed through POSIX-facing helpers in `src/sys/`, preferably by relying on `libc`-provided types and constants rather than open-coding per-OS values
+- Portability policy: do not introduce `#[cfg(target_os = ...)]` switches as a normal implementation technique; platform differences should be absorbed through POSIX-facing helpers in `src/sys/`, preferably by relying on `libc`-provided types and constants rather than open-coding per-OS values. A narrow exception exists for `src/sys` ABI shims where the C interface itself is platform-specific (for example, `errno` and `MB_CUR_MAX` accessors).
 - Source policy: no reuse of existing shell source code
 - Semantic target: Issue 8 first, with Issue 7 compatibility notes when needed for documentation review
 - Conformance policy: POSIX behavior decisions must be based on the local POSIX reference documents in `docs/posix/`, not on probing whatever `/bin/sh` happens to do on the host system
@@ -20,7 +20,7 @@ This document records project rules, POSIX implementation-defined choices, and t
 - Code outside these three locations should express OS needs in terms of shell-owned helpers: production calls `src/sys/`, integration tests call `tests/integration/sys.rs` (which itself may call `src/sys/` or `libc`).
 - If a required interface or constant is missing, extend the appropriate sys module (production or test) instead of importing `libc` elsewhere.
 - `scripts/check-libc-boundary.sh` runs in the final validation step and fails the build if `libc` tokens appear outside the three permitted locations.
-- New platform-specific `target_os` branching is not an acceptable default approach for production code or tests.
+- New platform-specific `target_os` branching is not an acceptable default approach for production code or tests. If a platform branch is unavoidable, keep it inside `src/sys` or `tests/integration/sys.rs` and expose a platform-neutral helper to the rest of the codebase. The standalone matrix runner `tests/expect_pty.rs` may also contain platform branches for PTY setup because it intentionally lives outside the integration-test helper framework.
 - Do not copy the old test-local `target_os` pattern into new code; use `libc`-provided constants instead.
 
 ### Banned standard library usage
@@ -104,7 +104,7 @@ mod tests {
 
 - Variable values are stored as byte arrays (`Vec<u8>`), not Rust `String`.
 - `ENV` is only sourced when it expands to an absolute path that exists.
-- Default prompt is `meiksh$ ` unless `PS1` is set.
+- Default `PS1` is `$ ` for non-root effective UIDs and `# ` for effective UID 0 unless `PS1` is already set.
 - `umask` symbolic mode accepts `s` (setuid/setgid) and `X` (conditional execute); `s` contributes zero bits since `umask` only manages the 0o777 permission mask, accepted without error per POSIX's "unspecified" clause.
 - `exec_replace(file, argv)` takes a separate `file` (resolved path) and `argv` vector (where `argv[0]` is the command name as typed), per POSIX 2.9.1.6.
 - Executable text files that fail with `ENOEXEC` are interpreted by cloning the shell and sourcing the script, without depending on `/bin/sh`.

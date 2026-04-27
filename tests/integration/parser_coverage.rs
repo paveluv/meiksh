@@ -1,4 +1,4 @@
-use super::common::*;
+use super::common::meiksh;
 use std::process::Command;
 
 #[test]

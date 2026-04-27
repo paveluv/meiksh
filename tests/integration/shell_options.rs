@@ -1,4 +1,4 @@
-use super::common::*;
+use super::common::{TempDir, meiksh, run_meiksh_with_nonblocking_stdin};
 use std::fs;
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;

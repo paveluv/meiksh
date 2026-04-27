@@ -236,9 +236,10 @@ fn count_chars_c_vs_utf8() {
 | `set_test_locale_c()` | Switch the test locale to C (byte-level, ASCII-only). This is the default. |
 | `set_test_locale_utf8()` | Switch the test locale to C.UTF-8 (full Unicode). |
 
-**FD constants:** prefer `crate::sys::{STDIN_FILENO, STDOUT_FILENO,
-STDERR_FILENO}` (or `libc` names) in traces instead of raw `0`/`1`/`2` where
-it aids readability.
+**Constants:** prefer `crate::sys::constants::{STDIN_FILENO, STDOUT_FILENO,
+STDERR_FILENO, EBADF, ...}` in traces instead of raw integers where it aids
+readability. Do not import `libc` in tests outside `src/sys/` and
+`tests/integration/sys.rs`; use the project constants from `crate::sys` instead.
 
 ---
 
@@ -419,6 +420,7 @@ mod tests {
     use super::*;
 
     use crate::builtin::test_support::{diag, invoke, run_trace, test_shell};
+    use crate::sys::constants::EBADF;
     use crate::trace_entries;
 
     #[test]
@@ -426,7 +428,7 @@ mod tests {
         let msg = diag(b"echo: write error: Bad file descriptor");
         run_trace(
             trace_entries![
-                write(fd(1), bytes(b"hello\n")) -> err(libc::EBADF),
+                write(fd(1), bytes(b"hello\n")) -> err(EBADF),
                 write(fd(2), bytes(&msg)) -> auto,
             ],
             || {
@@ -572,19 +574,26 @@ script, and asserts on stdout, stderr, and exit status.
 tests/integration/
 ├── basic.rs            # entry point (mod declarations, core execution tests)
 ├── common.rs           # shared helpers (meiksh(), TempDir, run_*)
+├── bind_builtin.rs     # bind builtin and readline-compatible key bindings
 ├── builtins.rs         # builtin command tests
 ├── control_flow.rs     # if/while/for/case/subshell tests
+├── emacs_mode.rs       # emacs editing mode PTY tests
 ├── expansion.rs        # parameter expansion, globbing, tilde, arithmetic
+├── inputrc_parser.rs   # inputrc parser and loader tests
+├── interactive.rs      # interactive REPL behavior
+├── os_interface.rs     # executable-file and OS-boundary behavior
 ├── parser_coverage.rs  # tokenizer/parser edge cases
+├── prompt.rs           # prompt expansion and prompt-related behavior
 ├── redirection.rs      # redirections, heredocs, fd manipulation
-└── shell_options.rs    # set -e, set -u, set -f, etc.
+├── shell_options.rs    # set -e, set -u, set -f, startup files
+└── sys.rs              # integration-test-only OS helpers
 ```
 
 `basic.rs` is the crate root (`#[test]` binary).  It declares the other files
-as modules.  All modules use `use super::common::*` to access the shared
-helpers.  (This wildcard import is permitted because `common.rs` is a small,
-purpose-built helper module for the integration test crate — it is analogous
-to `use super::*` in unit test modules.)
+as modules.  Integration-test modules import only the shared helpers they use,
+for example `use super::common::{TempDir, meiksh, run_meiksh_with_stdin};`.
+Wildcard imports from `common.rs` are not allowed; this follows the import
+rules in `IMPLEMENTATION_POLICY.md`.
 
 ### Shared helpers (`common.rs`)
 

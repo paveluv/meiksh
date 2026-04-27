@@ -4,9 +4,8 @@
     clippy::disallowed_methods
 )]
 use crate::epty_parser;
-pub use crate::epty_parser::TestSuite;
 
-pub fn parse_md_suite(text: &str, filename: &str) -> Result<TestSuite, String> {
+pub fn parse_md_suite(text: &str, filename: &str) -> Result<epty_parser::TestSuite, String> {
     let lines: Vec<&str> = text.lines().collect();
     let total_lines = lines.len();
 
