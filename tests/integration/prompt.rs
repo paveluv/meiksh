@@ -15,7 +15,7 @@
 //! `tests/integration/interactive_common/` and are exercised by the
 //! emacs/vi suites.
 
-use super::common::*;
+use super::common::meiksh;
 use std::process::Command;
 
 fn run_xtrace(ps4: &str, bash_prompts: bool) -> String {

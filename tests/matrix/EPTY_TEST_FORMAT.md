@@ -1,17 +1,29 @@
-# `.epty` Test Format Reference
+# Matrix Test Block Format Reference
 
-This document describes the `.epty` test file format used by `expect_pty`.
-Read this before writing or modifying tests.
+This document describes the test block format parsed by `expect_pty` inside
+the Markdown suites under `tests/matrix/tests/`. Read this before writing or
+modifying matrix tests.
 
 ## File structure
 
-Every `.epty` file starts with a `testsuite` declaration, followed by
-requirement directives and test blocks.
+Every matrix suite is a Markdown file. The POSIX source text and explanatory
+prose live in Markdown; each `#### Test:` section contains exactly one fenced
+code block with one `begin test` or `begin interactive test` block.
+
+````markdown
+# Test Suite for <Title>
+
+## Standard Section
+
+<verbatim POSIX text from docs/posix/md/>
+
+### Tests
+
+#### Test: descriptive test name
+
+A short explanation of the requirement being tested.
 
 ```
-testsuite "Suite Name"
-
-requirement "REQ-ID" doc="Short description of the requirement."
 begin test "descriptive test name"
   script
     echo hello
@@ -21,24 +33,13 @@ begin test "descriptive test name"
     exit_code 0
 end test "descriptive test name"
 ```
+````
 
-- One `testsuite` per file. The name must be unique across all files.
-- Comments (`#`) and blank lines are allowed between blocks.
+- Test names must match between the `#### Test:` heading, `begin test`, and
+  `end test` lines.
+- Everything outside `#### Test:` sections is documentation ignored by the
+  runner.
 - Trailing whitespace is **forbidden** on any line.
-
-## Requirement directives
-
-```
-requirement "SHALL-2-2-1-002" doc="A <backslash> that is not quoted shall..."
-```
-
-- Placed immediately before the test(s) that cover them.
-- Multiple requirements can precede a single test if the test covers
-  several obligations.
-- The `doc` attribute is a brief human-readable summary.
-- Every requirement referenced in `requirements.json` must appear in
-  at least one `.epty` file, and every requirement linked to a test
-  must be present in `requirements.json`.
 
 ## Non-interactive tests
 
@@ -216,11 +217,11 @@ Multiple modes can be specified (`--script-modes dash-c,tempfile`). Each
 test runs once per mode. The default (`dash-c`) is sufficient for most
 tests.
 
-To run only one test by name from one or more `.epty` files, use
+To run only one test by name from one or more Markdown suites, use
 `--test`:
 
 ```
-cargo run --bin expect_pty -- --shell "/abs/path/to/sh -i" --test "test name" tests/matrix/tests/*.epty
+cargo run --bin expect_pty -- --shell "/abs/path/to/sh" --test "test name" tests/matrix/tests/*.md
 ```
 
 ## Integrity checking
@@ -232,11 +233,9 @@ cargo run --bin check_integrity -- tests/matrix
 ```
 
 This checks:
-- Every test referenced in a requirement's `tests` array exists in a
-  `.epty` file.
-- Every `requirement` directive in `.epty` files has a matching entry in
-  `requirements.json`.
-- Syntax errors in `.epty` files.
+- Syntax errors in Markdown test blocks.
+- Test heading/name consistency.
+- Citation integrity for verbatim POSIX text copied from `docs/posix/md/`.
 
 ## Common patterns
 

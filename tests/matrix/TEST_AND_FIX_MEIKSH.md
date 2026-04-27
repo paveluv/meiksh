@@ -111,12 +111,12 @@ For each meiksh bug, follow a **test-first** workflow:
 
 When writing the fix, apply these constraints strictly:
 
-- **Zero-copy philosophy**: minimize allocations and copies. Prefer
-  `&[u8]` / `Cow<'_, [u8]>` over `Vec<u8>`. Prefer slicing over cloning.
-  Prefer `Box<[u8]>` over `Vec<u8>` and `Box<[T]>` over `Vec<T>` for
-  frozen (immutable after creation) owned data — they drop the capacity
-  word and signal the value won't be mutated. (`String` and `str`-based
-  types are banned in production code — see `docs/IMPLEMENTATION_POLICY.md`.)
+- **Byte-correct data model**: use `&[u8]` / `Vec<u8>` for shell strings and
+  paths. Avoid `String` / `str` in production code. Prefer slicing over
+  cloning, and follow the collection guidance in `docs/IMPLEMENTATION_POLICY.md`:
+  use `Vec<T>` for collections built incrementally and reserve `Box<[T]>` for
+  long-lived, rarely rebuilt collections where the final length is already
+  known.
 - **No unnecessary allocations**: don't allocate a `Vec` when a fixed-size
   local or iterator suffices.
 - **Clean, minimal diffs**: change only what is necessary. Don't refactor
@@ -140,9 +140,10 @@ cargo fmt
 bash scripts/coverage.sh
 ```
 
-The final line prints production-only coverage. The target is **100.00%**.
+The final line prints production-only coverage. The policy floor is **99.5%**;
+do not lower it or introduce line-level coverage exemptions.
 
-### 4c. If coverage < 100%
+### 4c. If coverage is below policy
 
 Find missed production lines:
 
@@ -187,7 +188,8 @@ whichever level gives the shortest, most readable test.  See
 helpers (`test_shell()`, `run_trace`, `assert_no_syscalls`, `meiksh()`,
 `run_meiksh_with_stdin()`, etc.).
 
-Re-run `bash scripts/coverage.sh` and repeat until 100%.
+Re-run `bash scripts/coverage.sh` and repeat until coverage satisfies
+`docs/IMPLEMENTATION_POLICY.md`.
 
 ---
 

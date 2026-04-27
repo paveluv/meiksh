@@ -73,10 +73,14 @@ impl<'src> ParseSession<'src> {
     }
 }
 
-pub(crate) use byte_class::is_name;
+pub(crate) fn is_name(name: &[u8]) -> bool {
+    byte_class::is_name(name)
+}
 
 #[cfg(test)]
-pub(crate) use token::build_heredoc_parts;
+pub(crate) fn build_heredoc_parts(body: &[u8]) -> Vec<word_part::WordPart> {
+    token::build_heredoc_parts(body)
+}
 
 #[cfg(test)]
 #[allow(

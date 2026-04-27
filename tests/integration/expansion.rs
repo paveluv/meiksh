@@ -1,4 +1,4 @@
-use super::common::*;
+use super::common::{TempDir, meiksh};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::process::Command;

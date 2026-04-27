@@ -20,12 +20,13 @@ docs/posix/
 ## Required Local Mirror
 
 For routine shell work, `meiksh` relies on a local mirror that includes:
+- the publisher HTML tree under `docs/posix/susv5-html/`
+- a generated Markdown mirror under `docs/posix/md/`
 - Issue 8 shell language, `sh`, and shell rationale pages
-- Issue 7 shell language and `sh` pages for compatibility review
 - Issue 8 Base Definitions chapter pages that shell text frequently cross-references
-- shell-related utility pages under `docs/posix/utilities/`
-- shell-relevant system-interface pages under `docs/posix/functions/`
-- a publication index under `docs/posix/validation/`
+- shell-related utility pages under `docs/posix/md/utilities/`
+- shell-relevant system-interface pages under `docs/posix/md/functions/`
+- publication index pages under `docs/posix/md/idx/`
 
 The authoritative expected file list lives in `docs/posix-manifest.txt`.
 
@@ -37,11 +38,11 @@ Use the manifest-driven fetch script:
 ./docs/fetch-posix-docs.sh
 ```
 
-That script reads `docs/posix-manifest.txt`, downloads the POSIX tarball, and unpacks it under `docs/posix/`.
+That script reads `docs/posix-manifest.txt`, downloads the POSIX tarball, unpacks it under `docs/posix/`, and regenerates the Markdown mirror under `docs/posix/md/`.
 
 ## Policy
 
-- `docs/implementation-policy.md`: implementation-defined and temporary project choices
+- `docs/IMPLEMENTATION_POLICY.md`: implementation-defined and temporary project choices
 
 ## Non-POSIX Feature Specs
 

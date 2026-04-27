@@ -685,7 +685,7 @@ mod io_tests {
         );
     }
 
-    pub(crate) use super::test_helpers::with_fresh_global;
+    use super::test_helpers::with_fresh_global;
 
     #[test]
     fn ensure_startup_loaded_loads_inputrc_env_var() {
