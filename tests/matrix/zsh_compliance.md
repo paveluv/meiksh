@@ -3,7 +3,7 @@
 **Shell tested:** zsh 5.9 (x86_64-debian-linux-gnu)  
 **Standard:** POSIX.1-2024 (Issue 8)  
 **Date:** 2026-04-14  
-**Updated:** 2026-04-14 (added `emulate sh` testing results)
+**Updated:** 2026-04-26 (refreshed native and `emulate sh` matrix totals)
 
 This document intentionally lists **only verified zsh non-compliances** that
 can be reproduced directly with standard shell usage. Zsh is not a POSIX shell
@@ -18,13 +18,13 @@ predates Issue 8.
 
 | Metric | Native zsh | `zsh --emulate sh` |
 |---|---|---|
-| Total tests | 1759 | 1759 |
-| Passed | 1313 | 1599 |
-| Failed | 446 | 160 |
+| Total tests | 1858 | 1858 |
+| Passed | 1279 | 1582 |
+| Failed | 579 | 276 |
 
-`emulate sh` fixes 14 of the 28 original non-compliances (entries 1–3, 5–7,
-10–11, 13–14, 19, 22–23, 27). Each entry below notes its `emulate sh`
-status.
+Latest matrix run: 2026-04-26 with `--script-modes dash-c,tempfile,stdin`.
+Each entry below notes its independently reproduced `emulate sh` status where
+that status has been verified outside the test harness.
 
 ---
 

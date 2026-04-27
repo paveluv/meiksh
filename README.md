@@ -11,8 +11,8 @@ For comparison, every other major shell has verified non-compliances against the
 | Shell | Non-compliances |
 |---|---|
 | **meiksh** | **0** |
-| bash 5.2 `--posix` | 14 ([compliance report](tests/matrix/bash_compliance.md)) |
-| dash 0.5.12 | 20 ([compliance report](tests/matrix/dash_compliance.md)) |
+| bash 5.2.37 `--posix` | 14 ([compliance report](tests/matrix/bash_compliance.md)) |
+| dash 0.5.12-12 | 23 ([compliance report](tests/matrix/dash_compliance.md)) |
 | ksh93u+m 1.0.10 | 22 ([compliance report](tests/matrix/ksh_compliance.md)) |
 | zsh 5.9 | 49 native / 33 `emulate sh` ([compliance report](tests/matrix/zsh_compliance.md)) |
 | FreeBSD 15.0 `/bin/sh` (ash) | 21 ([compliance report](tests/matrix/ash_compliance.md)) |
