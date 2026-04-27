@@ -355,14 +355,14 @@ end test "command -V echo produces output mentioning echo"
 
 #### Test: command -V for nonexistent command fails
 
-When `command -V` is given a name that does not correspond to any utility, function, alias, or built-in, it must produce no output and return a non-zero exit status.
+When `command -V` is given a name that does not correspond to any utility, function, alias, or built-in, it must return a non-zero exit status. Unlike `command -v`, POSIX does not require empty output for this case.
 
 ```
 begin test "command -V for nonexistent command fails"
   script
     command -V nonexistent_cmd_xyzzy 2>/dev/null
   expect
-    stdout ""
+    stdout "(.|\n)*"
     stderr ""
     exit_code !=0
 end test "command -V for nonexistent command fails"

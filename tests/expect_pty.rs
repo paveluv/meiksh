@@ -2040,6 +2040,17 @@ fn remove_dir_all(path: &str) {
     let _ = fs::remove_dir_all(path);
 }
 
+fn reset_test_dirs(tmpdir: &str, workdir: &str) -> Result<(), String> {
+    remove_dir_all(tmpdir);
+    fs::create_dir(tmpdir).map_err(|e| format!("failed to recreate tmpdir: {e}"))?;
+    fs::create_dir(workdir).map_err(|e| format!("failed to recreate sandbox dir: {e}"))?;
+    Ok(())
+}
+
+fn normalize_harness_stderr(stderr: &str, tmpdir: &str, shell_path: &str) -> String {
+    stderr.replace(&format!("{tmpdir}/_test.sh"), shell_path)
+}
+
 // ── Non-interactive run command ──────────────────────────────────────────────
 
 fn run_command(
@@ -2111,9 +2122,15 @@ fn run_command(
                 .map_err(|e| format!("failed to wait for shell (stdin): {e}"))?
         }
     };
+    let stderr = normalize_harness_stderr(
+        &String::from_utf8_lossy(&output.stderr),
+        tmpdir,
+        &shell_argv[0],
+    );
+
     Ok(RunResult {
         stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+        stderr,
         exit_code: output.status.code().unwrap_or(128),
     })
 }
@@ -2164,6 +2181,7 @@ fn run_suite_test_inner(
         ));
         let mut reference: Option<RunResult> = None;
         for &mode in script_modes {
+            reset_test_dirs(tmpdir, workdir)?;
             let rr = run_command(script, shell_argv, &test_env, workdir, tmpdir, mode)?;
             if let Some(ref prev) = reference {
                 if rr.stdout != prev.stdout
@@ -3684,6 +3702,38 @@ end test \"bad\"
             parse_script_modes("dash-c,dash-c").unwrap(),
             vec![ScriptMode::DashC]
         );
+    }
+
+    #[test]
+    fn script_modes_do_not_share_filesystem_state() {
+        let input = "\
+requirement \"REQ-001\" doc=\"Test requirement.\"
+begin test \"isolated modes\"
+  script
+    mkdir created
+    printf '%s\\n' ok
+  expect
+    stdout \"ok\"
+    stderr \"\"
+    exit_code 0
+end test \"isolated modes\"
+";
+        let suite = parse_suite(input, "isolated.epty").unwrap();
+        let tmpdir = make_test_tmpdir().unwrap();
+        let workdir = format!("{tmpdir}/sandbox");
+        fs::create_dir(&workdir).unwrap();
+        let shell_argv = vec!["/bin/sh".to_string()];
+        let result = run_suite_test_inner(
+            &suite.tests[0],
+            &shell_argv,
+            "/bin/sh",
+            &tmpdir,
+            &workdir,
+            &[ScriptMode::DashC, ScriptMode::Tempfile, ScriptMode::Stdin],
+        );
+        remove_dir_all(&tmpdir);
+
+        assert!(result.is_ok(), "{result:?}");
     }
 
     #[test]

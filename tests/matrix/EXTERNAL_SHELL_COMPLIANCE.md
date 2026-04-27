@@ -35,8 +35,9 @@ bash tests/matrix/run.sh \
 
 ## Step 2: Triage every failure
 
-For each failing test, determine the root cause. There are exactly three
-possibilities:
+For each failing test, determine the root cause. Do not add a compliance
+report entry until the failure has a local POSIX quote and a standalone
+reproduction outside the test harness.
 
 ### A) Real shell non-compliance
 
@@ -66,11 +67,34 @@ is the authority. If a test expects behavior X, and the shell does Y, but the
 spec says X — that is a shell non-compliance, not a test bug. Conversely, if
 the spec says Y, fix the test regardless of what any particular shell does.
 
-### C) Legitimate implementation variation
+### C) Harness or script-mode artifact
+
+The failure is caused by the matrix runner rather than shell behavior. Common
+examples include leaked filesystem state between `dash-c`, `tempfile`, and
+`stdin` runs, pty timing, or setup that cannot be reproduced with a standalone
+shell command.
+
+To confirm:
+
+1. Re-run the specific test with one script mode at a time.
+2. Reproduce the script outside `expect_pty`, using only the shell binary and
+   standard utilities.
+3. Fix the harness or test setup if the standalone shell behavior satisfies
+   POSIX.
+
+### D) Legitimate implementation variation
 
 POSIX explicitly allows the behavior to vary (e.g. "implementation-defined",
 "unspecified", or the feature is in an optional extension). Neither a shell
 bug nor a test bug — skip it.
+
+### E) Still untriaged
+
+If the POSIX quote is unclear or a standalone reproduction has not been built
+yet, leave the failure out of the compliance report and record it as
+untriaged. Work these in small batches; each batch should end with a confirmed
+non-compliance, a test fix, a harness fix, an explicitly allowed variation, or
+an explicit "not enough evidence yet" note.
 
 ## Step 3: Write (or update) the compliance document
 
