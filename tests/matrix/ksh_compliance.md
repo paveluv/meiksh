@@ -2,7 +2,8 @@
 
 **Shell tested:** ksh93u+m/1.0.10 2024-08-01 (AT&T Research, AJM)  
 **Standard:** POSIX.1-2024 (Issue 8)  
-**Date:** 2026-04-14
+**Date:** 2026-04-14  
+**Latest matrix run:** 2026-04-26, `/usr/bin/ksh`, `--script-modes dash-c,tempfile,stdin`: 1602 passed, 256 failed (1858 total)
 
 This document intentionally lists **only verified ksh non-compliances** that
 can be reproduced directly with standard shell usage. Behaviors that are

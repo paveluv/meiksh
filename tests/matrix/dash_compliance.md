@@ -2,7 +2,8 @@
 
 **Shell tested:** dash 0.5.12 (Debian 0.5.12-12)  
 **Standard:** POSIX.1-2024 (Issue 8)  
-**Date:** 2026-04-12
+**Date:** 2026-04-12  
+**Latest matrix run:** 2026-04-26, `/usr/bin/dash`, `--script-modes dash-c,tempfile,stdin`: 1501 passed, 357 failed (1858 total)
 
 This document intentionally lists **only verified dash non-compliances** that
 can be reproduced directly with standard shell usage. Issue 8 features that
@@ -612,6 +613,64 @@ All four currently fail when `tests/matrix/run.sh` is pointed at
   `prefix removal respects character boundaries`
 - `tests/matrix/tests/2_6_word_expansions.md` —
   `suffix removal respects character boundaries`
+
+---
+
+## 22) `command` returns 127 instead of 126 for a found non-executable utility
+
+**POSIX passage (exact quote)**
+From `docs/posix/md/utilities/command.md`:
+
+> "- 126: The utility specified by *command_name* was found but could not be invoked."
+
+> "- 127: An error occurred in the *command* utility or the utility specified by *command_name* could not be found."
+
+**Why this is non-compliant**
+When `command` finds a utility in `PATH` but the file cannot be invoked because
+it lacks execute permission, dash returns `127`. POSIX reserves `127` for
+not-found or `command` utility errors; a found-but-not-invocable utility shall
+return `126`.
+
+**Reproduction (portable shell commands)**
+
+```sh
+tmp=${TMPDIR:-/tmp}/dash-command-nonexec-$$
+mkdir "$tmp" &&
+  : > "$tmp/nonexec" &&
+  PATH="$tmp:$PATH" /usr/bin/dash -c 'command nonexec >/dev/null 2>&1; printf "%s\n" "$?"'
+rm -rf "$tmp"
+```
+
+Expected:
+- `126`
+
+Observed:
+- `127`
+
+---
+
+## 23) `-v` verbose mode does not echo `-c` command input
+
+**POSIX passage (exact quote)**
+From `docs/posix/md/utilities/V3_chap02.md`, 2.15 Special Built-In Utilities, set:
+
+> "- **-v**: The shell shall write its input to standard error as it is read."
+
+**Why this is non-compliant**
+When dash is invoked with `-v -c`, it executes the command string but does not
+write that input to standard error as it is read.
+
+**Reproduction (portable shell commands)**
+
+```sh
+/usr/bin/dash -v -c 'printf "%s\n" ok' >/dev/null
+```
+
+Expected:
+- stderr contains the input command text, for example `printf "%s\n" ok`
+
+Observed:
+- stderr is empty
 
 ---
 

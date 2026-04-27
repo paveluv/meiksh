@@ -2,7 +2,8 @@
 
 **Shell tested:** GNU bash 5.2.37(1)-release (x86_64-pc-linux-gnu)  
 **Standard:** POSIX.1-2024 (Issue 8)  
-**Date:** 2026-04-01
+**Date:** 2026-04-01  
+**Latest matrix run:** 2026-04-26, `/usr/bin/bash --posix`, `--script-modes dash-c,tempfile,stdin`: 1709 passed, 149 failed (1858 total)
 
 This document intentionally lists **only verified bash non-compliances** that can be reproduced directly with standard shell usage.
 
