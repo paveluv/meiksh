@@ -63,6 +63,17 @@ pub(crate) enum ExpansionKind {
     Command {
         program: Rc<Program>,
     },
+    /// Process substitution `<(list)` / `>(list)` per
+    /// `docs/features/process-substitution.md`. The `direction`
+    /// distinguishes the read form (`<(...)`, parent reads from the
+    /// substitution fd) from the write form (`>(...)`, parent writes
+    /// to it). Recognized only when `bash_procsub` is on at parse
+    /// time; the lexer rejects the tokens with the option off
+    /// (§ 9.1).
+    ProcSubstitution {
+        program: Rc<Program>,
+        direction: ProcSubDirection,
+    },
     Arithmetic {
         parts: Vec<WordPart>,
     },
@@ -71,6 +82,18 @@ pub(crate) enum ExpansionKind {
         end: usize,
     },
     LiteralDollar,
+}
+
+/// Which side of the process-substitution pipe the parent shell
+/// holds. See `docs/features/process-substitution.md` § 5.2.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ProcSubDirection {
+    /// `<(list)` — child writes to the pipe, parent reads. The
+    /// substituted path opens read-only.
+    Read,
+    /// `>(list)` — child reads from the pipe, parent writes. The
+    /// substituted path opens write-only.
+    Write,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

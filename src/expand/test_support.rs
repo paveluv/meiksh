@@ -5,6 +5,7 @@ use crate::bstr;
 use crate::expand::core::{Context, ExpandError};
 use crate::hash::ShellMap;
 use crate::syntax::ast::Program;
+use crate::syntax::word_part::ProcSubDirection;
 
 pub(super) struct FakeContext {
     pub(super) env: ShellMap<Vec<u8>, Vec<u8>>,
@@ -95,6 +96,24 @@ impl Context for FakeContext {
         crate::exec::render::render_program_into(program, &mut out);
         out.push(b'\n');
         Ok(out)
+    }
+
+    fn process_substitute(
+        &mut self,
+        _program: &Rc<Program>,
+        direction: ProcSubDirection,
+    ) -> Result<Vec<u8>, ExpandError> {
+        // Test stub: produce a deterministic, non-syscall path so
+        // expansion-pipeline tests can exercise the procsub arm
+        // without forking. Real shells use `/dev/fd/N`; the suffix
+        // here marks the direction so tests can still distinguish.
+        let suffix: &[u8] = match direction {
+            ProcSubDirection::Read => b"<",
+            ProcSubDirection::Write => b">",
+        };
+        let mut path = b"/fake/procsub".to_vec();
+        path.extend_from_slice(suffix);
+        Ok(path)
     }
 
     fn command_substitute_raw(&mut self, command: &[u8]) -> Result<Vec<u8>, ExpandError> {
@@ -195,6 +214,20 @@ impl Context for DefaultPathContext {
         crate::exec::render::render_program_into(program, &mut out);
         out.push(b'\n');
         Ok(out)
+    }
+
+    fn process_substitute(
+        &mut self,
+        _program: &Rc<Program>,
+        direction: ProcSubDirection,
+    ) -> Result<Vec<u8>, ExpandError> {
+        let suffix: &[u8] = match direction {
+            ProcSubDirection::Read => b"<",
+            ProcSubDirection::Write => b">",
+        };
+        let mut path = b"/fake/procsub".to_vec();
+        path.extend_from_slice(suffix);
+        Ok(path)
     }
 
     fn command_substitute_raw(&mut self, command: &[u8]) -> Result<Vec<u8>, ExpandError> {

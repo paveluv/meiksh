@@ -4,6 +4,7 @@ use std::rc::Rc;
 use crate::bstr;
 use crate::expand::core::{Context, ExpandError};
 use crate::syntax::ast::Program;
+use crate::syntax::word_part::ProcSubDirection;
 use crate::sys;
 
 use super::error::var_error_message;
@@ -104,6 +105,15 @@ impl Context for Shell {
             .map_err(|_| ExpandError {
                 message: Box::default(),
             })
+    }
+
+    fn process_substitute(
+        &mut self,
+        program: &Rc<Program>,
+        direction: ProcSubDirection,
+    ) -> Result<Vec<u8>, ExpandError> {
+        super::proc_substitute::process_substitute(self, program, direction)
+            .map_err(|e| ExpandError { message: e.into() })
     }
 
     fn home_dir_for_user(&self, name: &[u8]) -> Option<Cow<'_, [u8]>> {

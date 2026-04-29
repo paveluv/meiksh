@@ -672,15 +672,32 @@ fn is_completion_delim(b: u8) -> bool {
 /// preceded (after skipping runs of SPACE / TAB) by one of the
 /// command-starting bytes: `;`, `&`, `|`, `(`, `` ` ``, or NEWLINE.
 /// This catches `; cmd`, `&& cmd`, `| cmd`, `(subshell`, `` `cmd` ``,
-/// and command-substitution openers like `$(cmd`, where the `(` is
-/// the nearest non-whitespace predecessor.
-fn is_command_position(buf: &[u8], word_start: usize) -> bool {
+/// and command-substitution openers like `$(cmd`.
+///
+/// The bash-style process-substitution openers `<(cmd` and `>(cmd`
+/// (specified by
+/// [`docs/features/process-substitution.md`](../../../docs/features/process-substitution.md))
+/// are treated as command positions only when `bash_procsub` is on,
+/// per § 10.8 of that spec. With the option off, the syntax would not
+/// parse — surfacing command completion there would mislead the user
+/// into typing more of an unrunnable construct, so the editor falls
+/// back to the non-command-position cascade (filename / variable /
+/// tilde) the same way it would for any other unparseable input.
+fn is_command_position(buf: &[u8], word_start: usize, bash_procsub: bool) -> bool {
     let mut i = word_start;
     while i > 0 {
         let b = buf[i - 1];
         if b == b' ' || b == b'\t' {
             i -= 1;
             continue;
+        }
+        if b == b'(' && i >= 2 && matches!(buf[i - 2], b'<' | b'>') && !bash_procsub {
+            // Process-substitution opener with the option off: not a
+            // command position. Note this checks `buf[i - 2]`, the
+            // byte immediately before the `(` — the lexer recognizes
+            // `<(` / `>(` only when adjacent (no blank), per
+            // process-substitution.md § 3.1.
+            return false;
         }
         return matches!(b, b';' | b'&' | b'|' | b'(' | b'`' | b'\n');
     }
@@ -794,7 +811,7 @@ fn do_complete(shell: &mut Shell, state: &mut EmacsState, out: &mut Outcome) {
         QuoteMode::Dquote | QuoteMode::Squote => raw_prefix.clone(),
     };
 
-    let is_first_word = is_command_position(&state.buf, word_start);
+    let is_first_word = is_command_position(&state.buf, word_start, shell.options.bash_procsub);
 
     let (mut candidates, kind) = gather_candidates(shell, &matching_prefix, is_first_word);
     if candidates.is_empty() {
@@ -2043,6 +2060,108 @@ mod tests {
             // so the boundary is the bare space at index 3.
             let buf: &[u8] = b"cat x\\'y";
             assert_eq!(find_completion_word_start(buf, buf.len()), 4);
+        });
+    }
+
+    // --- is_command_position ----------------------------------------
+
+    #[test]
+    fn command_position_at_buffer_start() {
+        assert_no_syscalls(|| {
+            // The buffer-start case is independent of bash_procsub.
+            assert!(is_command_position(b"foo", 0, false));
+            assert!(is_command_position(b"foo", 0, true));
+        });
+    }
+
+    #[test]
+    fn command_position_after_open_paren() {
+        assert_no_syscalls(|| {
+            // Bare `(subshell` opener. POSIX construct, gate-independent.
+            let buf: &[u8] = b"(ech";
+            assert!(is_command_position(buf, 1, false));
+            assert!(is_command_position(buf, 1, true));
+        });
+    }
+
+    #[test]
+    fn command_position_after_dollar_paren() {
+        assert_no_syscalls(|| {
+            // `$(...)` command substitution. POSIX, gate-independent.
+            let buf: &[u8] = b"echo $(ech";
+            assert!(is_command_position(buf, 7, false));
+            assert!(is_command_position(buf, 7, true));
+        });
+    }
+
+    #[test]
+    fn command_position_after_lt_paren_only_when_procsub_on() {
+        // `<(...)` process substitution per
+        // docs/features/process-substitution.md § 10.8: the editor
+        // treats the position as argv[0] iff `bash_procsub` is on.
+        assert_no_syscalls(|| {
+            let buf: &[u8] = b"diff <(ech";
+            assert!(
+                !is_command_position(buf, 7, false),
+                "with bash_procsub off the syntax is unparseable, fall back to non-command cascade",
+            );
+            assert!(
+                is_command_position(buf, 7, true),
+                "with bash_procsub on `<(ech` is a fresh argv[0] frame",
+            );
+        });
+    }
+
+    #[test]
+    fn command_position_after_gt_paren_only_when_procsub_on() {
+        assert_no_syscalls(|| {
+            let buf: &[u8] = b"tee >(ech";
+            assert!(!is_command_position(buf, 6, false));
+            assert!(is_command_position(buf, 6, true));
+        });
+    }
+
+    #[test]
+    fn command_position_after_lt_blank_paren_remains_command() {
+        // A blank between `<` and `(` means the lexer would NOT
+        // recognize process substitution (proc-sub.md § 3.1 requires
+        // the bytes to be adjacent). The `(` is then a bare subshell
+        // opener and the position is argv[0] regardless of bash_procsub.
+        assert_no_syscalls(|| {
+            let buf: &[u8] = b"diff < (ech";
+            assert!(is_command_position(buf, 8, false));
+            assert!(is_command_position(buf, 8, true));
+        });
+    }
+
+    #[test]
+    fn command_position_after_lt_paren_with_blanks_inside() {
+        // Whitespace AFTER the `(` is fine — it is skipped by the
+        // outer loop. With bash_procsub on `<(  ech` is still argv[0].
+        assert_no_syscalls(|| {
+            let buf: &[u8] = b"diff <(  ech";
+            assert!(!is_command_position(buf, 9, false));
+            assert!(is_command_position(buf, 9, true));
+        });
+    }
+
+    #[test]
+    fn command_position_mid_argument_is_not_command() {
+        assert_no_syscalls(|| {
+            // The cursor is mid-argument list; the byte before is a
+            // letter, not a command-starting byte. Gate-independent.
+            let buf: &[u8] = b"echo foo bar";
+            assert!(!is_command_position(buf, 9, false));
+            assert!(!is_command_position(buf, 9, true));
+        });
+    }
+
+    #[test]
+    fn command_position_after_pipe_is_command() {
+        assert_no_syscalls(|| {
+            let buf: &[u8] = b"a | ech";
+            assert!(is_command_position(buf, 4, false));
+            assert!(is_command_position(buf, 4, true));
         });
     }
 

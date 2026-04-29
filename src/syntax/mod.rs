@@ -4,6 +4,8 @@ mod declaration_context;
 mod token;
 pub(crate) mod word_part;
 
+use std::cell::Cell;
+
 use ast::Program;
 use token::{Parser, SavedAliasState};
 
@@ -13,6 +15,40 @@ use crate::hash::ShellMap;
 pub(crate) struct ParseError {
     pub(crate) message: Box<[u8]>,
     pub(crate) line: Option<usize>,
+}
+
+/// Parse-time options sampled by the lexer. Currently a single
+/// boolean (`bash_procsub`) but kept as a struct so future extensions
+/// (`bash_arrays`, `bash_compat`, etc.) slot in without changing
+/// callsites.
+///
+/// The slot is captured at the start of each top-level parse and
+/// flows through to recursive lexer entries (`$(...)`, here-docs,
+/// backtick substitutions) via the [`PARSE_OPTIONS`] thread-local.
+/// See `docs/features/process-substitution.md` § 2.3.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct ParseOptions {
+    pub(crate) bash_procsub: bool,
+}
+
+thread_local! {
+    /// Thread-local snapshot of [`ParseOptions`] active for the
+    /// current parse. Set at the top of [`parse_with_options`] and
+    /// restored on the way out so recursive lexer reentries
+    /// (`$(...)` body parsed via [`parse`], here-docs, etc.)
+    /// observe the same flags as the outer parse without having to
+    /// thread them through every free helper.
+    ///
+    /// `Cell` is sound because parsing is synchronous and
+    /// single-threaded; the shell does not parse concurrently from
+    /// multiple OS threads.
+    static PARSE_OPTIONS: Cell<ParseOptions> = const { Cell::new(ParseOptions { bash_procsub: false }) };
+}
+
+/// Borrow the active parse options. Read by the lexer when deciding
+/// whether to recognize `<(` / `>(`.
+pub(crate) fn current_parse_options() -> ParseOptions {
+    PARSE_OPTIONS.with(|c| c.get())
 }
 
 pub(crate) fn parse(source: &[u8]) -> Result<Program, ParseError> {
@@ -25,6 +61,40 @@ pub(crate) fn parse_with_aliases(
 ) -> Result<Program, ParseError> {
     let mut parser = Parser::new(source, aliases);
     parser.parse_program_until(|_| false, false, false)
+}
+
+/// Parse `source` with a freshly-installed [`ParseOptions`] snapshot
+/// so the lexer can sample option-gated tokens like `<(` / `>(`.
+/// Restores the previous snapshot on return; this is a fully nested
+/// stack discipline matching the call graph of the parser.
+pub(crate) fn parse_with_options(
+    source: &[u8],
+    aliases: &ShellMap<Box<[u8]>, Box<[u8]>>,
+    options: ParseOptions,
+) -> Result<Program, ParseError> {
+    let _guard = ParseOptionsGuard::install(options);
+    parse_with_aliases(source, aliases)
+}
+
+/// RAII guard that installs a [`ParseOptions`] snapshot on
+/// construction and restores the previous snapshot on drop. Holding
+/// the guard across the lexer's recursive entries is what makes
+/// nested `$(...)` parses observe the outer mode.
+pub(crate) struct ParseOptionsGuard {
+    previous: ParseOptions,
+}
+
+impl ParseOptionsGuard {
+    pub(crate) fn install(options: ParseOptions) -> Self {
+        let previous = PARSE_OPTIONS.with(|c| c.replace(options));
+        Self { previous }
+    }
+}
+
+impl Drop for ParseOptionsGuard {
+    fn drop(&mut self) {
+        PARSE_OPTIONS.with(|c| c.set(self.previous));
+    }
 }
 
 pub(crate) struct ParseSession<'src> {
@@ -44,10 +114,31 @@ impl<'src> ParseSession<'src> {
         })
     }
 
+    /// Convenience wrapper that captures the currently-installed
+    /// [`ParseOptions`] from the thread-local. Production callsites
+    /// always have access to a [`Shell`] and pass options
+    /// explicitly via [`Self::next_command_with_options`]; this
+    /// shorter form is kept for tests that don't care about
+    /// option-gated tokens.
+    #[cfg(test)]
     pub(crate) fn next_command(
         &mut self,
         aliases: &ShellMap<Box<[u8]>, Box<[u8]>>,
     ) -> Result<Option<Program>, ParseError> {
+        self.next_command_with_options(aliases, current_parse_options())
+    }
+
+    /// Parse the next command with an explicit [`ParseOptions`]
+    /// snapshot installed for the duration of this entry. Used by
+    /// the REPL to capture the live `bash_procsub` value (and any
+    /// future option-gated tokens) at the moment of parsing rather
+    /// than at the moment the command is executed — see spec § 2.3.
+    pub(crate) fn next_command_with_options(
+        &mut self,
+        aliases: &ShellMap<Box<[u8]>, Box<[u8]>>,
+        options: ParseOptions,
+    ) -> Result<Option<Program>, ParseError> {
+        let _guard = ParseOptionsGuard::install(options);
         let mut parser = Parser::new_at(self.source, self.pos, self.line, aliases);
 
         if let Some(saved) = self.saved_alias.take() {

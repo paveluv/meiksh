@@ -448,6 +448,16 @@ fn expand_kind<C: Context>(
             let trimmed = trim_trailing_newlines(&out);
             output.push_value(trimmed, quoted, &scratch.ifs_chars);
         }
+        ExpansionKind::ProcSubstitution { program, direction } => {
+            // Per docs/features/process-substitution.md § 4.1, the
+            // expansion result is a single, opaque path word —
+            // unaffected by IFS field-splitting and not glob-expanded.
+            // Field splitting therefore does not apply: emit through
+            // `push_quoted` (which preserves the bytes verbatim) even
+            // when the surrounding context is unquoted.
+            let path = ctx.process_substitute(program, *direction)?;
+            output.push_quoted(&path);
+        }
         ExpansionKind::Arithmetic { parts } => {
             expand_arithmetic(ctx, raw, parts, quoted, output, scratch)?;
         }

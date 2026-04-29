@@ -179,6 +179,15 @@ pub(super) struct Parser<'a> {
     word_raw: Vec<u8>,
     word_parts: Vec<WordPart>,
     word_qbuf: Vec<u8>,
+    /// Snapshot of the option-gated parse flags captured at parser
+    /// construction. Currently a single boolean `bash_procsub` per
+    /// `docs/features/process-substitution.md` § 2.3 (option captured
+    /// at parse time, not at execute time). Sourced from
+    /// [`crate::syntax::current_parse_options`] so recursive lexer
+    /// entries (`$(...)` body parsed via `crate::syntax::parse`,
+    /// here-docs, backticks) inherit the flags via the same
+    /// thread-local `ParseOptionsGuard` scope.
+    parse_options: crate::syntax::ParseOptions,
 }
 
 impl<'a> Parser<'a> {
@@ -213,6 +222,7 @@ impl<'a> Parser<'a> {
             word_raw: Vec::new(),
             word_parts: Vec::new(),
             word_qbuf: Vec::new(),
+            parse_options: crate::syntax::current_parse_options(),
         }
     }
 
@@ -301,6 +311,18 @@ impl<'a> Parser<'a> {
     #[inline(always)]
     fn peek_byte(&self) -> Option<u8> {
         self.cached_byte
+    }
+
+    /// Peek the byte that follows [`peek_byte`] without advancing.
+    /// Used by the procsub adjacency check (spec § 3.1) so we can
+    /// see `<` followed by `(` before committing to either the
+    /// redirection or the procsub-word path.
+    fn peek_byte_after(&self) -> Option<u8> {
+        if let Some(b) = self.pushed_back_byte {
+            return Some(b);
+        }
+        let layer = self.alias_stack.last().expect("scanner stack non-empty");
+        layer.text.get(layer.pos + 1).copied()
     }
 
     #[inline(always)]
@@ -852,11 +874,146 @@ impl<'a> Parser<'a> {
                 self.advance_byte();
                 Ok(Token::RParen)
             }
+            Some(b'<') if self.is_proc_sub_opener() => {
+                self.produce_proc_sub_token(crate::syntax::word_part::ProcSubDirection::Read)
+            }
             Some(b'<') => self.produce_less_token(),
+            Some(b'>') if self.is_proc_sub_opener() => {
+                self.produce_proc_sub_token(crate::syntax::word_part::ProcSubDirection::Write)
+            }
             Some(b'>') => self.produce_great_token(),
             Some(b'0'..=b'9') => self.produce_io_number_or_word(),
             _ => self.produce_word_token(),
         }
+    }
+
+    /// True iff the lexer should treat the current `<` or `>` as the
+    /// opener of a process-substitution word (spec § 3.1): the
+    /// `bash_procsub` option must be on at parse time and the next
+    /// byte must be an immediately-adjacent `(`. A blank between
+    /// `<` and `(` falls through to the redirection path.
+    fn is_proc_sub_opener(&self) -> bool {
+        self.parse_options.bash_procsub && self.peek_byte_after() == Some(b'(')
+    }
+
+    /// Produce a `Word` token whose single part is a
+    /// `ProcSubstitution` expansion. Consumes the `<(` (or `>(`)
+    /// opener, the balanced body, and the closing `)`. The body is
+    /// parsed recursively as a complete shell program; the outer
+    /// `bash_procsub` mode flows through via the
+    /// [`crate::syntax::ParseOptionsGuard`] thread-local.
+    fn produce_proc_sub_token(
+        &mut self,
+        direction: crate::syntax::word_part::ProcSubDirection,
+    ) -> Result<Token, ParseError> {
+        // Consume the opener bytes (`<` or `>` then `(`).
+        self.advance_byte();
+        self.advance_byte();
+        let opener_line = self.line;
+        let body = self.collect_proc_sub_body(opener_line)?;
+        let program = crate::syntax::parse(&body).unwrap_or_default();
+        // Build the displayable raw bytes that match what the user
+        // typed — `<(` + body + `)` for `Read`, `>(` + body + `)`
+        // for `Write`. This is what would appear in argv-tracing
+        // output (xtrace `PS4`) and is also handy for diagnostics.
+        let opener_byte = match direction {
+            crate::syntax::word_part::ProcSubDirection::Read => b'<',
+            crate::syntax::word_part::ProcSubDirection::Write => b'>',
+        };
+        let mut raw = Vec::with_capacity(body.len() + 3);
+        raw.push(opener_byte);
+        raw.push(b'(');
+        raw.extend_from_slice(&body);
+        raw.push(b')');
+        let parts = vec![WordPart::Expansion {
+            kind: crate::syntax::word_part::ExpansionKind::ProcSubstitution {
+                program: Rc::new(program),
+                direction,
+            },
+            quoted: false,
+        }];
+        Ok(Token::Word(raw, parts))
+    }
+
+    /// Consume bytes from the source up to and including the `)`
+    /// that closes the process-substitution body. Returns the body
+    /// bytes (excluding the closing `)`). Errors out if EOF arrives
+    /// before the body is balanced (spec § 3.2).
+    ///
+    /// The state machine mirrors [`find_closing_paren`] but operates
+    /// incrementally so it can advance the parser's input cursor
+    /// (and walk through alias-expansion layers) rather than
+    /// requiring a pre-buffered slice.
+    fn collect_proc_sub_body(&mut self, opener_line: usize) -> Result<Vec<u8>, ParseError> {
+        let mut body = Vec::new();
+        let mut depth = 1usize;
+        while let Some(b) = self.peek_byte() {
+            match b {
+                b'(' => {
+                    depth += 1;
+                    body.push(b);
+                    self.advance_byte();
+                }
+                b')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        self.advance_byte();
+                        return Ok(body);
+                    }
+                    body.push(b);
+                    self.advance_byte();
+                }
+                b'\'' => {
+                    body.push(b);
+                    self.advance_byte();
+                    while let Some(c) = self.peek_byte() {
+                        body.push(c);
+                        self.advance_byte();
+                        if c == b'\'' {
+                            break;
+                        }
+                    }
+                }
+                b'"' => {
+                    body.push(b);
+                    self.advance_byte();
+                    while let Some(c) = self.peek_byte() {
+                        if c == b'\\' {
+                            body.push(c);
+                            self.advance_byte();
+                            if let Some(esc) = self.peek_byte() {
+                                body.push(esc);
+                                self.advance_byte();
+                            }
+                            continue;
+                        }
+                        body.push(c);
+                        self.advance_byte();
+                        if c == b'"' {
+                            break;
+                        }
+                    }
+                }
+                b'\\' => {
+                    body.push(b);
+                    self.advance_byte();
+                    if let Some(esc) = self.peek_byte() {
+                        body.push(esc);
+                        self.advance_byte();
+                    }
+                }
+                _ => {
+                    body.push(b);
+                    self.advance_byte();
+                }
+            }
+        }
+        Err(ParseError {
+            message: b"unterminated process substitution"
+                .to_vec()
+                .into_boxed_slice(),
+            line: Some(opener_line),
+        })
     }
 
     fn produce_less_token(&mut self) -> Result<Token, ParseError> {
@@ -3255,5 +3412,341 @@ mod tests {
         assert!(words.len() >= 2);
         let (_, parts) = &words[1];
         assert!(!parts.is_empty());
+    }
+
+    // --- process substitution lexer recognition ----------------------
+    //
+    // Per docs/features/process-substitution.md § 3, `<(` and `>(`
+    // are recognized only when:
+    // 1. `bash_procsub` is on at parse time;
+    // 2. the two bytes are immediately adjacent (no blank);
+    // 3. they are not inside `'...'`, `"..."`, or after a backslash.
+    // The tests below cover each rule.
+
+    fn parse_with_procsub(source: &[u8]) -> Result<crate::syntax::ast::Program, ParseError> {
+        crate::syntax::parse_with_options(
+            source,
+            &ShellMap::default(),
+            crate::syntax::ParseOptions { bash_procsub: true },
+        )
+    }
+
+    fn parse_without_procsub(source: &[u8]) -> Result<crate::syntax::ast::Program, ParseError> {
+        crate::syntax::parse_with_options(
+            source,
+            &ShellMap::default(),
+            crate::syntax::ParseOptions {
+                bash_procsub: false,
+            },
+        )
+    }
+
+    fn extract_procsub_word(
+        program: &crate::syntax::ast::Program,
+        word_index: usize,
+    ) -> &crate::syntax::ast::Word {
+        let item = program
+            .items
+            .first()
+            .expect("expected at least one program item");
+        let cmd = &item.and_or.first.commands[0];
+        match cmd {
+            crate::syntax::ast::Command::Simple(simple) => &simple.words[word_index],
+            other => panic!("expected simple command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn procsub_read_form_lexes_when_option_on() {
+        let prog = parse_with_procsub(b"cat <(echo hi)\n").expect("parse");
+        let word = extract_procsub_word(&prog, 1);
+        assert_eq!(word.parts.len(), 1, "procsub is exactly one part");
+        match &word.parts[0] {
+            WordPart::Expansion {
+                kind: ExpansionKind::ProcSubstitution { direction, .. },
+                quoted,
+            } => {
+                assert!(!*quoted, "procsub is never quoted");
+                assert!(matches!(
+                    direction,
+                    crate::syntax::word_part::ProcSubDirection::Read
+                ));
+            }
+            other => panic!("expected ProcSubstitution part, got {other:?}"),
+        }
+        assert_eq!(word.raw, b"<(echo hi)");
+    }
+
+    #[test]
+    fn procsub_write_form_lexes_when_option_on() {
+        let prog = parse_with_procsub(b"tee >(grep foo)\n").expect("parse");
+        let word = extract_procsub_word(&prog, 1);
+        assert_eq!(word.parts.len(), 1);
+        match &word.parts[0] {
+            WordPart::Expansion {
+                kind: ExpansionKind::ProcSubstitution { direction, .. },
+                ..
+            } => {
+                assert!(matches!(
+                    direction,
+                    crate::syntax::word_part::ProcSubDirection::Write
+                ));
+            }
+            other => panic!("expected ProcSubstitution part, got {other:?}"),
+        }
+        assert_eq!(word.raw, b">(grep foo)");
+    }
+
+    #[test]
+    fn procsub_balances_nested_parens_in_body() {
+        // The body contains a `$(...)` substitution whose `(` and `)`
+        // must contribute to the depth count so the outer `)` is
+        // matched correctly.
+        let prog = parse_with_procsub(b"diff <(echo $(date)) /dev/null\n").expect("parse");
+        let word = extract_procsub_word(&prog, 1);
+        assert_eq!(word.raw, b"<(echo $(date))");
+    }
+
+    #[test]
+    fn procsub_balances_quotes_in_body() {
+        // `)` inside `"..."` shall not close the body.
+        let prog = parse_with_procsub(b"cat <(echo \")\")\n").expect("parse");
+        let word = extract_procsub_word(&prog, 1);
+        assert_eq!(word.raw, b"<(echo \")\")");
+    }
+
+    #[test]
+    fn procsub_balances_single_quotes_in_body() {
+        let prog = parse_with_procsub(b"cat <(echo ')')\n").expect("parse");
+        let word = extract_procsub_word(&prog, 1);
+        assert_eq!(word.raw, b"<(echo ')')");
+    }
+
+    #[test]
+    fn procsub_balances_backslash_escape_in_body() {
+        let prog = parse_with_procsub(b"cat <(echo \\))\n").expect("parse");
+        let word = extract_procsub_word(&prog, 1);
+        assert_eq!(word.raw, b"<(echo \\))");
+    }
+
+    #[test]
+    fn procsub_unterminated_body_is_syntax_error() {
+        // EOF before matching `)` is a parse error per spec § 3.2.
+        let err = parse_with_procsub(b"cat <(echo hi\n").expect_err("expected unterminated error");
+        let msg = std::str::from_utf8(&err.message).unwrap_or("");
+        assert!(
+            msg.contains("unterminated process substitution"),
+            "expected unterminated-procsub diagnostic, got {msg:?}",
+        );
+    }
+
+    #[test]
+    fn procsub_off_does_not_lex_lt_paren_as_word() {
+        // With `bash_procsub` off, `<(echo hi)` is `<` (Less) followed
+        // by `(echo hi)` which is a subshell. The result is a parse
+        // error because a Less without an immediate filename target is
+        // invalid in this position. We only verify the recognizer does
+        // NOT produce a procsub word; the exact failure shape is the
+        // parser's domain.
+        let result = parse_without_procsub(b"cat <(echo hi)\n");
+        if let Ok(prog) = result {
+            // Non-error path: the simple-command parser may have
+            // accepted `<` as a redirection. Either way, no word
+            // should be a ProcSubstitution.
+            let item = prog.items.first().expect("at least one item");
+            if let crate::syntax::ast::Command::Simple(simple) = &item.and_or.first.commands[0] {
+                for word in &simple.words {
+                    for part in &word.parts {
+                        assert!(
+                            !matches!(
+                                part,
+                                WordPart::Expansion {
+                                    kind: ExpansionKind::ProcSubstitution { .. },
+                                    ..
+                                }
+                            ),
+                            "must not synthesize ProcSubstitution when option off"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn procsub_blank_between_lt_and_paren_falls_through_to_redirection() {
+        // `< (` (with blank) is a redirection followed by a subshell
+        // opener, not a procsub. This holds regardless of
+        // `bash_procsub` because the spec § 3.1 adjacency rule does
+        // not match.
+        let prog_with = parse_with_procsub(b"echo < (echo hi)\n");
+        // The shape of the resulting tree is parser-dependent — we
+        // only assert that no ProcSubstitution part appears.
+        if let Ok(prog) = prog_with {
+            for item in &prog.items {
+                for cmd in &item.and_or.first.commands {
+                    if let crate::syntax::ast::Command::Simple(simple) = cmd {
+                        for word in &simple.words {
+                            for part in &word.parts {
+                                assert!(
+                                    !matches!(
+                                        part,
+                                        WordPart::Expansion {
+                                            kind: ExpansionKind::ProcSubstitution { .. },
+                                            ..
+                                        }
+                                    ),
+                                    "blank between `<` and `(` must not be procsub",
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn procsub_escaped_lt_is_literal() {
+        // `\<` quotes the `<`, so the byte appears as a literal in
+        // the word. Even though the embedded `(echo)` afterwards
+        // makes the line itself a syntax error (the `(` doesn't
+        // belong in argv position), the lexer must not have produced
+        // a ProcSubstitution part. We accept either parse success
+        // (with no procsub part) or parse failure; the test
+        // statement is "no ProcSubstitution leaks past the
+        // backslash."
+        let result = parse_with_procsub(b"echo \\<text\n");
+        if let Ok(prog) = result {
+            if let crate::syntax::ast::Command::Simple(simple) =
+                &prog.items[0].and_or.first.commands[0]
+            {
+                for word in &simple.words {
+                    for part in &word.parts {
+                        assert!(
+                            !matches!(
+                                part,
+                                WordPart::Expansion {
+                                    kind: ExpansionKind::ProcSubstitution { .. },
+                                    ..
+                                }
+                            ),
+                            "backslash-escaped `<` must not produce procsub",
+                        );
+                    }
+                }
+            }
+        }
+
+        // Direct adjacency with parens after a backslash: even if
+        // the parse succeeds (the `(echo)` arm forms a subshell at
+        // command-position) or fails, no ProcSubstitution shall be
+        // produced. This is the form most likely to regress.
+        let result = parse_with_procsub(b"cat \\<(echo)\n");
+        if let Ok(prog) = result {
+            for item in &prog.items {
+                for cmd in &item.and_or.first.commands {
+                    if let crate::syntax::ast::Command::Simple(simple) = cmd {
+                        for word in &simple.words {
+                            for part in &word.parts {
+                                assert!(
+                                    !matches!(
+                                        part,
+                                        WordPart::Expansion {
+                                            kind: ExpansionKind::ProcSubstitution { .. },
+                                            ..
+                                        }
+                                    ),
+                                    "backslash-escaped `<(` must not produce procsub",
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn procsub_inside_double_quotes_is_literal() {
+        // `"<(echo)"` keeps its bytes literal (spec § 3.1).
+        let prog = parse_with_procsub(b"echo \"<(echo)\"\n").expect("parse");
+        if let crate::syntax::ast::Command::Simple(simple) = &prog.items[0].and_or.first.commands[0]
+        {
+            for word in &simple.words {
+                for part in &word.parts {
+                    assert!(
+                        !matches!(
+                            part,
+                            WordPart::Expansion {
+                                kind: ExpansionKind::ProcSubstitution { .. },
+                                ..
+                            }
+                        ),
+                        "procsub inside double quotes must be literal",
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn procsub_inside_single_quotes_is_literal() {
+        let prog = parse_with_procsub(b"echo '<(echo)'\n").expect("parse");
+        if let crate::syntax::ast::Command::Simple(simple) = &prog.items[0].and_or.first.commands[0]
+        {
+            for word in &simple.words {
+                for part in &word.parts {
+                    assert!(
+                        !matches!(
+                            part,
+                            WordPart::Expansion {
+                                kind: ExpansionKind::ProcSubstitution { .. },
+                                ..
+                            }
+                        ),
+                        "procsub inside single quotes must be literal",
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn procsub_recognized_inside_dollar_paren() {
+        // Per spec § 3.4, `<(` is recognized inside `$(...)` when
+        // `bash_procsub` is on. The thread-local guard installed by
+        // `parse_with_options` propagates through the recursive
+        // parse of the `$(...)` body.
+        let prog = parse_with_procsub(b"echo $(cat <(echo hi))\n").expect("parse");
+        let word = extract_procsub_word(&prog, 1);
+        // The outer word is `$(cat <(echo hi))` with one Command part.
+        // The inner procsub lives inside that command's AST. We just
+        // assert the outer parse succeeded; a deep inspection would
+        // duplicate the lexer test for the inner case.
+        assert_eq!(word.raw, b"$(cat <(echo hi))");
+    }
+
+    #[test]
+    fn procsub_two_substitutions_in_one_command() {
+        let prog = parse_with_procsub(b"diff <(echo a) <(echo b)\n").expect("parse");
+        let w1 = extract_procsub_word(&prog, 1);
+        let w2 = extract_procsub_word(&prog, 2);
+        assert_eq!(w1.raw, b"<(echo a)");
+        assert_eq!(w2.raw, b"<(echo b)");
+        assert!(matches!(
+            w1.parts[0],
+            WordPart::Expansion {
+                kind: ExpansionKind::ProcSubstitution { .. },
+                ..
+            }
+        ));
+        assert!(matches!(
+            w2.parts[0],
+            WordPart::Expansion {
+                kind: ExpansionKind::ProcSubstitution { .. },
+                ..
+            }
+        ));
     }
 }

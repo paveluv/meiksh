@@ -134,6 +134,20 @@ pub(crate) struct Shell {
     /// recycling of argv / assignment / redirection buffers after
     /// `execute_simple`.
     pub(crate) bytes_pool: BytesPool,
+    /// Active process-substitution leases per
+    /// `docs/features/process-substitution.md` § 11.4. Each lease
+    /// owns a parent-side substitution fd and the pid of the subshell
+    /// running the embedded list. The consuming command's exit hook
+    /// (`drain_proc_sub_leases_to`) closes the fd, reaps the
+    /// subshell, and unlinks any FIFO created for the substitution.
+    ///
+    /// The vector is treated as a stack: arg expansion saves the
+    /// length on entry, pushes new leases as substitutions are
+    /// expanded, and the exit hook drains down to the saved length so
+    /// nesting (a substitution inside a `$(...)`, a function call
+    /// that itself uses substitution, etc.) cleans up at the right
+    /// scope. See § 10.4.
+    pub(crate) proc_sub_leases: Vec<super::proc_substitute::ProcSubLease>,
 }
 
 impl Shell {

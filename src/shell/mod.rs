@@ -5,6 +5,7 @@ pub(crate) mod error;
 mod expand_context;
 pub(crate) mod jobs;
 pub(crate) mod options;
+pub(crate) mod proc_substitute;
 pub mod run;
 pub(crate) mod state;
 pub(crate) mod traps;

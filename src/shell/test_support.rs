@@ -75,6 +75,7 @@ pub fn test_shell() -> Shell {
         expand_scratch: Some(crate::expand::scratch::ExpandScratch::new()),
         exec_scratch_pool: crate::exec::scratch::ExecScratchPool::new(),
         bytes_pool: crate::exec::scratch::BytesPool::new(),
+        proc_sub_leases: Vec::new(),
     }
 }
 

@@ -156,6 +156,7 @@ impl Shell {
             expand_scratch: Some(crate::expand::scratch::ExpandScratch::new()),
             exec_scratch_pool: crate::exec::scratch::ExecScratchPool::new(),
             bytes_pool: crate::exec::scratch::BytesPool::new(),
+            proc_sub_leases: Vec::new(),
         })
     }
 
@@ -240,6 +241,7 @@ impl Shell {
             expand_scratch: Some(crate::expand::scratch::ExpandScratch::new()),
             exec_scratch_pool: crate::exec::scratch::ExecScratchPool::new(),
             bytes_pool: crate::exec::scratch::BytesPool::new(),
+            proc_sub_leases: Vec::new(),
         })
     }
 
@@ -307,7 +309,8 @@ impl Shell {
 
     fn run_source_buffer(&mut self, source: &[u8]) -> Result<i32, ShellError> {
         if self.options.syntax_check_only {
-            let _ = syntax::parse_with_aliases(source, self.aliases())
+            let parse_options = self.current_parse_options();
+            let _ = syntax::parse_with_options(source, self.aliases(), parse_options)
                 .map_err(|e| self.parse_to_err(e))?;
             return Ok(0);
         }
@@ -383,8 +386,14 @@ impl Shell {
         self.run_pending_traps()?;
         loop {
             let prev_pos = session.current_pos();
+            // Sample the bash_* option flags fresh on every command
+            // boundary, per process-substitution.md § 2.3 (capture
+            // at parse time). A `set -o bash_procsub` issued in the
+            // current source becomes visible to the next parsed
+            // command, not the one it appears in.
+            let parse_options = self.current_parse_options();
             let program = match session
-                .next_command(self.aliases())
+                .next_command_with_options(self.aliases(), parse_options)
                 .map_err(|e| self.parse_to_err(e))?
             {
                 Some(p) => p,
@@ -421,13 +430,24 @@ impl Shell {
         if source.is_empty() {
             return Ok(None);
         }
-        match syntax::parse_with_aliases(source, self.aliases()) {
+        let parse_options = self.current_parse_options();
+        match syntax::parse_with_options(source, self.aliases(), parse_options) {
             Ok(_) => {
                 let buffered = std::mem::take(source);
                 self.run_source_buffer(&buffered).map(Some)
             }
             Err(error) if !eof && stdin_parse_error_requires_more_input(&error) => Ok(None),
             Err(error) => Err(self.parse_to_err(error)),
+        }
+    }
+
+    /// Capture the option-gated parse flags currently set on the
+    /// shell, packaged for [`syntax::parse_with_options`]. Sampled at
+    /// every parse boundary so a `set -o bash_procsub` issued
+    /// mid-source takes effect for the next command.
+    pub(super) fn current_parse_options(&self) -> syntax::ParseOptions {
+        syntax::ParseOptions {
+            bash_procsub: self.options.bash_procsub,
         }
     }
 
@@ -457,6 +477,12 @@ impl Shell {
             self.subshell_nesting_level = self.subshell_nesting_level.saturating_add(1);
             self.restore_signals_for_child();
             let _ = self.reset_traps_for_subshell();
+            // Process-substitution leases are owned by the parent.
+            // The forked subshell must not double-close their fds or
+            // double-reap their pids during its own
+            // `execute_simple` cleanup; clear the inherited list.
+            // See process-substitution.md § 5.4 / § 7.
+            self.proc_sub_leases.clear();
             let status = self.execute_program(program).unwrap_or(1);
             let status = self.run_exit_trap(status).unwrap_or(status);
             sys::process::exit_process(status as sys::types::RawFd);

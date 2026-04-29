@@ -364,7 +364,18 @@ pub(super) fn execute_simple(
     allow_exec_in_place: bool,
 ) -> Result<i32, ShellError> {
     let mut scratch = shell.take_exec_scratch();
+    // Process-substitution leases pushed during arg expansion are
+    // owned by *this* simple command. Snapshot the stack depth on
+    // entry, then drain back to it on exit so the substitution
+    // subshells are reaped exactly when their consumer finishes
+    // (spec § 7). This handles nested cases too: a `(...)` group or
+    // function body running inside a procsub-using outer command
+    // creates its own marker on its own re-entry into
+    // `execute_simple`, so the inner consumer does not clean up the
+    // outer's leases.
+    let proc_sub_mark = shell.proc_sub_leases.len();
     let result = execute_simple_with_scratch(shell, simple, allow_exec_in_place, &mut scratch);
+    crate::shell::proc_substitute::drain_proc_sub_leases_to(shell, proc_sub_mark);
     shell.recycle_exec_scratch(scratch);
     result
 }

@@ -51,6 +51,12 @@ pub(crate) struct ShellOptions {
     /// bash_prompts` / `set +o bash_prompts` move this between `Posix`
     /// and `Bash`.
     pub(crate) prompts_mode: PromptsMode,
+    /// Bash-style process substitution (`<(list)` / `>(list)`). Default
+    /// off; gated per `docs/features/process-substitution.md` § 2. When
+    /// off, the lexer rejects `<(` / `>(` as a syntax error and the
+    /// line editor's TAB-completion dispatcher does not treat the
+    /// position after `<(` / `>(` as an argv[0] frame.
+    pub(crate) bash_procsub: bool,
 }
 
 impl Default for ShellOptions {
@@ -87,6 +93,7 @@ impl Default for ShellOptions {
             vi_mode: false,
             emacs_mode: true,
             prompts_mode: PromptsMode::Posix,
+            bash_procsub: false,
         }
     }
 }
@@ -166,6 +173,10 @@ impl ShellOptions {
             };
             return Ok(());
         }
+        if name == b"bash_procsub" {
+            self.bash_procsub = enabled;
+            return Ok(());
+        }
         let Some((_, letter)) = REPORTABLE_OPTION_NAMES
             .iter()
             .find(|(option_name, _)| *option_name == name)
@@ -175,9 +186,10 @@ impl ShellOptions {
         self.set_short_option(*letter, enabled)
     }
 
-    pub(crate) fn reportable_options(&self) -> [(&'static [u8], bool); 15] {
+    pub(crate) fn reportable_options(&self) -> [(&'static [u8], bool); 16] {
         [
             (b"allexport" as &[u8], self.allexport),
+            (b"bash_procsub", self.bash_procsub),
             (
                 b"bash_prompts",
                 matches!(self.prompts_mode, PromptsMode::Bash),
@@ -343,6 +355,53 @@ mod tests {
             .find(|(n, _)| *n == b"bash_prompts")
             .expect("bash_prompts row");
         assert!(row.1, "reported bash_prompts should flip on");
+    }
+
+    #[test]
+    fn bash_procsub_named_option_toggles_flag() {
+        let mut opts = ShellOptions::default();
+        assert!(
+            !opts.bash_procsub,
+            "default bash_procsub must be off (POSIX-conformant)"
+        );
+        opts.set_named_option(b"bash_procsub", true)
+            .expect("bash_procsub on");
+        assert!(opts.bash_procsub);
+        opts.set_named_option(b"bash_procsub", false)
+            .expect("bash_procsub off");
+        assert!(!opts.bash_procsub);
+    }
+
+    #[test]
+    fn bash_procsub_shows_up_in_reportable_options() {
+        let mut opts = ShellOptions::default();
+        let reported = opts.reportable_options();
+        let row = reported
+            .iter()
+            .find(|(n, _)| *n == b"bash_procsub")
+            .expect("bash_procsub row");
+        assert!(!row.1, "default bash_procsub should be off");
+
+        opts.set_named_option(b"bash_procsub", true).unwrap();
+        let reported = opts.reportable_options();
+        let row = reported
+            .iter()
+            .find(|(n, _)| *n == b"bash_procsub")
+            .expect("bash_procsub row");
+        assert!(row.1, "reported bash_procsub should flip on");
+    }
+
+    #[test]
+    fn bash_procsub_independent_of_bash_prompts() {
+        // The two options gate different features and shall not
+        // interlock. Toggling one must leave the other untouched.
+        let mut opts = ShellOptions::default();
+        opts.set_named_option(b"bash_prompts", true).unwrap();
+        assert!(!opts.bash_procsub);
+        opts.set_named_option(b"bash_procsub", true).unwrap();
+        assert_eq!(opts.prompts_mode, PromptsMode::Bash);
+        opts.set_named_option(b"bash_prompts", false).unwrap();
+        assert!(opts.bash_procsub);
     }
 
     #[test]

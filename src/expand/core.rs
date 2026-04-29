@@ -3,6 +3,7 @@ use std::rc::Rc;
 
 use crate::shell::vars::CachedVarBinding;
 use crate::syntax::ast::Program;
+use crate::syntax::word_part::ProcSubDirection;
 
 use super::scratch::ExpandScratch;
 
@@ -55,6 +56,22 @@ pub(crate) trait Context {
         let program = crate::syntax::parse(command).unwrap_or_default();
         self.command_substitute(&Rc::new(program))
     }
+
+    /// Spawn a subshell to run `program` with its stdin or stdout
+    /// (depending on `direction`) connected through a pipe to a
+    /// substitution file descriptor in this shell, and return the
+    /// path-shaped word that opens that fd.
+    ///
+    /// See `docs/features/process-substitution.md` § 5 (process
+    /// model) and § 6 (path representation). Implementations append a
+    /// `ProcSubLease` to the shell so the consuming command's exit
+    /// hook can close the fd, reap the subshell, and unlink any FIFO
+    /// per § 7.
+    fn process_substitute(
+        &mut self,
+        program: &Rc<Program>,
+        direction: ProcSubDirection,
+    ) -> Result<Vec<u8>, ExpandError>;
     fn home_dir_for_user(&self, name: &[u8]) -> Option<Cow<'_, [u8]>>;
     fn set_lineno(&mut self, line: usize);
     fn inc_lineno(&mut self);
