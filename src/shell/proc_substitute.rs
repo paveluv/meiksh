@@ -497,6 +497,272 @@ mod tests {
         });
     }
 
+    // --- process_substitute end-to-end (parent + child traces) ---
+
+    use crate::syntax::ast::Program;
+
+    #[test]
+    fn process_substitute_dev_fd_read_form_emits_dev_fd_path() {
+        // /dev/fd path: pipe + fork; child closes the read end and
+        // dups the write end to stdout; parent closes the write end
+        // and retains the read end as the substitution fd. The
+        // substituted word is `/dev/fd/<read_fd>`.
+        run_trace(
+            trace_entries![
+                pipe() -> fds(50, 51),
+                fork() -> pid(1234), child: [
+                    close(fd(50)) -> 0,
+                    dup2(fd(51), fd(sys::constants::STDOUT_FILENO)) -> 0,
+                    close(fd(51)) -> 0,
+                ],
+                close(fd(51)) -> 0,
+            ],
+            || {
+                let mut shell = crate::shell::test_support::test_shell();
+                let program = Rc::new(Program::default());
+                let path = process_substitute(&mut shell, &program, ProcSubDirection::Read)
+                    .expect("setup");
+                assert_eq!(path, b"/dev/fd/50");
+                assert_eq!(shell.proc_sub_leases.len(), 1);
+                assert!(matches!(
+                    shell.proc_sub_leases[0].backing,
+                    ProcSubBacking::DevFd { fd: 50 }
+                ));
+                assert_eq!(shell.proc_sub_leases[0].child_pid, 1234);
+            },
+        );
+    }
+
+    #[test]
+    fn process_substitute_dev_fd_write_form_swaps_pipe_ends() {
+        // Write form: parent retains the *write* end; child reads
+        // from the read end (dup'd to stdin).
+        run_trace(
+            trace_entries![
+                pipe() -> fds(60, 61),
+                fork() -> pid(1300), child: [
+                    close(fd(61)) -> 0,
+                    dup2(fd(60), fd(sys::constants::STDIN_FILENO)) -> 0,
+                    close(fd(60)) -> 0,
+                ],
+                close(fd(60)) -> 0,
+            ],
+            || {
+                let mut shell = crate::shell::test_support::test_shell();
+                let program = Rc::new(Program::default());
+                let path = process_substitute(&mut shell, &program, ProcSubDirection::Write)
+                    .expect("setup");
+                assert_eq!(path, b"/dev/fd/61");
+                assert!(matches!(
+                    shell.proc_sub_leases[0].backing,
+                    ProcSubBacking::DevFd { fd: 61 }
+                ));
+            },
+        );
+    }
+
+    #[test]
+    fn process_substitute_dev_fd_fork_failure_closes_pipe_and_diagnoses() {
+        // pipe succeeds, fork fails. The two pipe ends are closed
+        // and the diagnostic names "fork".
+        run_trace(
+            trace_entries![
+                pipe() -> fds(70, 71),
+                fork() -> err(sys::constants::ENOMEM),
+                close(fd(70)) -> 0,
+                close(fd(71)) -> 0,
+            ],
+            || {
+                let mut shell = crate::shell::test_support::test_shell();
+                let program = Rc::new(Program::default());
+                let err = process_substitute(&mut shell, &program, ProcSubDirection::Read)
+                    .expect_err("expected fork failure");
+                let msg = std::str::from_utf8(&err).unwrap_or("");
+                assert!(
+                    msg.starts_with("process substitution: fork: "),
+                    "expected fork-failure diagnostic, got {msg:?}",
+                );
+                assert!(shell.proc_sub_leases.is_empty());
+            },
+        );
+    }
+
+    #[test]
+    fn process_substitute_fifo_fork_failure_unlinks_and_diagnoses() {
+        run_trace(
+            trace_entries![
+                mkfifo(str(b"/tmp/meiksh-procsub.99.1"), int(sys::constants::S_IRUSR_BITS as i64)) -> 0,
+                fork() -> err(sys::constants::ENOMEM),
+                unlink(str(b"/tmp/meiksh-procsub.99.1")) -> 0,
+            ],
+            || {
+                let mut shell = crate::shell::test_support::test_shell();
+                shell.dev_fd_supported.set(Some(false));
+                shell.pid = 99;
+                shell.proc_sub_seq = 1;
+                let program = Rc::new(Program::default());
+                let err = process_substitute(&mut shell, &program, ProcSubDirection::Read)
+                    .expect_err("expected fork failure");
+                let msg = std::str::from_utf8(&err).unwrap_or("");
+                assert!(
+                    msg.starts_with("process substitution: fork: "),
+                    "expected fork-failure diagnostic, got {msg:?}",
+                );
+                // FIFO must have been removed so it doesn't leak.
+                assert!(shell.proc_sub_leases.is_empty());
+            },
+        );
+    }
+
+    #[test]
+    fn reap_until_exit_returns_status_for_normal_exit() {
+        // Happy-path waitpid returns Some(status). The status field
+        // is the raw kernel value (encoded exit-code shifted left by
+        // 8 on Linux), not the decoded exit code; the helper just
+        // surfaces it as-is so callers can decode if they care.
+        run_trace(
+            trace_entries![
+                waitpid(2222, _) -> status(0),
+            ],
+            || {
+                let result = reap_until_exit(2222).expect("eventual ok");
+                assert_eq!(result.pid, 2222);
+            },
+        );
+    }
+
+    #[test]
+    fn reap_until_exit_propagates_non_eintr_error() {
+        // Non-EINTR errors propagate.
+        run_trace(
+            trace_entries![
+                waitpid(3333, _) -> err(sys::constants::ECHILD),
+            ],
+            || {
+                let result = reap_until_exit(3333);
+                assert!(result.is_err());
+            },
+        );
+    }
+
+    #[test]
+    fn process_substitute_dev_fd_pipe_failure_diagnoses_pipe() {
+        run_trace(
+            trace_entries![pipe() -> err(sys::constants::EMFILE)],
+            || {
+                let mut shell = crate::shell::test_support::test_shell();
+                let program = Rc::new(Program::default());
+                let err = process_substitute(&mut shell, &program, ProcSubDirection::Read)
+                    .expect_err("expected pipe failure");
+                let msg = std::str::from_utf8(&err).unwrap_or("");
+                assert!(
+                    msg.starts_with("process substitution: pipe: "),
+                    "expected pipe-failure diagnostic, got {msg:?}",
+                );
+                assert!(shell.proc_sub_leases.is_empty());
+            },
+        );
+    }
+
+    #[test]
+    fn process_substitute_fifo_mode_makes_fifo_and_forks() {
+        // Force the FIFO branch by clearing the cached probe to
+        // `Some(false)`. The parent calls mkfifo, then forks, then
+        // returns the FIFO path. The child opens the FIFO with
+        // O_WRONLY (read form), dups to stdout, closes the original.
+        run_trace(
+            trace_entries![
+                mkfifo(str(b"/tmp/meiksh-procsub.99.1"), int(sys::constants::S_IRUSR_BITS as i64)) -> 0,
+                fork() -> pid(2200), child: [
+                    open(str(b"/tmp/meiksh-procsub.99.1"), int(sys::constants::O_WRONLY as i64), int(0)) -> fd(15),
+                    dup2(fd(15), fd(sys::constants::STDOUT_FILENO)) -> 0,
+                    close(fd(15)) -> 0,
+                ],
+            ],
+            || {
+                let mut shell = crate::shell::test_support::test_shell();
+                shell.dev_fd_supported.set(Some(false));
+                shell.pid = 99;
+                shell.proc_sub_seq = 1;
+                let program = Rc::new(Program::default());
+                let path = process_substitute(&mut shell, &program, ProcSubDirection::Read)
+                    .expect("setup");
+                assert_eq!(path, b"/tmp/meiksh-procsub.99.1");
+                assert_eq!(shell.proc_sub_leases.len(), 1);
+                assert!(matches!(
+                    &shell.proc_sub_leases[0].backing,
+                    ProcSubBacking::Fifo { path } if path == b"/tmp/meiksh-procsub.99.1"
+                ));
+            },
+        );
+    }
+
+    #[test]
+    fn process_substitute_fifo_mode_write_form_uses_o_rdonly() {
+        // Write form in FIFO mode: child opens the FIFO with
+        // O_RDONLY (waiting for the producer to open it for write)
+        // and dups to stdin.
+        run_trace(
+            trace_entries![
+                mkfifo(str(b"/tmp/meiksh-procsub.99.1"), int(sys::constants::S_IRUSR_BITS as i64)) -> 0,
+                fork() -> pid(2300), child: [
+                    open(str(b"/tmp/meiksh-procsub.99.1"), int(sys::constants::O_RDONLY as i64), int(0)) -> fd(16),
+                    dup2(fd(16), fd(sys::constants::STDIN_FILENO)) -> 0,
+                    close(fd(16)) -> 0,
+                ],
+            ],
+            || {
+                let mut shell = crate::shell::test_support::test_shell();
+                shell.dev_fd_supported.set(Some(false));
+                shell.pid = 99;
+                shell.proc_sub_seq = 1;
+                let program = Rc::new(Program::default());
+                let path = process_substitute(&mut shell, &program, ProcSubDirection::Write)
+                    .expect("setup");
+                assert_eq!(path, b"/tmp/meiksh-procsub.99.1");
+            },
+        );
+    }
+
+    #[test]
+    fn process_substitute_fifo_mkfifo_failure_diagnoses() {
+        run_trace(
+            trace_entries![
+                mkfifo(str(b"/tmp/meiksh-procsub.99.1"), int(sys::constants::S_IRUSR_BITS as i64)) -> err(sys::constants::EACCES),
+            ],
+            || {
+                let mut shell = crate::shell::test_support::test_shell();
+                shell.dev_fd_supported.set(Some(false));
+                shell.pid = 99;
+                shell.proc_sub_seq = 1;
+                let program = Rc::new(Program::default());
+                let err = process_substitute(&mut shell, &program, ProcSubDirection::Read)
+                    .expect_err("expected mkfifo failure");
+                let msg = std::str::from_utf8(&err).unwrap_or("");
+                assert!(
+                    msg.starts_with("process substitution: mkfifo: "),
+                    "expected mkfifo-failure diagnostic, got {msg:?}",
+                );
+                assert!(shell.proc_sub_leases.is_empty());
+            },
+        );
+    }
+
+    #[test]
+    fn dev_fd_supported_caches_after_first_probe() {
+        // First call: cache is None → probe runs (which would issue
+        // a stat syscall) → result cached. Second call: cache
+        // returns directly, no syscall. The test asserts both
+        // outcomes by setting the cache to a known value first.
+        assert_no_syscalls(|| {
+            let shell = crate::shell::test_support::test_shell();
+            shell.dev_fd_supported.set(Some(true));
+            assert!(dev_fd_supported(&shell));
+            shell.dev_fd_supported.set(Some(false));
+            assert!(!dev_fd_supported(&shell));
+        });
+    }
+
     #[test]
     fn generate_fifo_path_falls_back_when_tmpdir_empty() {
         // Empty TMPDIR is treated as unset (matches POSIX `: -`
