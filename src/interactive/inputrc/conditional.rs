@@ -81,9 +81,11 @@ pub(crate) fn dispatch_directive(
             // is_active() already folds the `Inactive` frames; just
             // emit a diagnostic if the test was unrecognized.
             if !is_recognized_test(test) {
+                let mut msg = b"unknown $if test: ".to_vec();
+                msg.extend_from_slice(test);
                 report.diagnostics.push(Diagnostic {
                     line: lineno,
-                    message: format!("unknown $if test: {}", String::from_utf8_lossy(test)),
+                    message: msg,
                 });
             }
         }
@@ -98,7 +100,7 @@ pub(crate) fn dispatch_directive(
                     Frame::ElseActive | Frame::ElseInactive => {
                         report.diagnostics.push(Diagnostic {
                             line: lineno,
-                            message: "duplicate $else".to_string(),
+                            message: b"duplicate $else".to_vec(),
                         });
                         *frame
                     }
@@ -107,7 +109,7 @@ pub(crate) fn dispatch_directive(
             None => {
                 report.diagnostics.push(Diagnostic {
                     line: lineno,
-                    message: "$else without $if".to_string(),
+                    message: b"$else without $if".to_vec(),
                 });
             }
         }
@@ -117,7 +119,7 @@ pub(crate) fn dispatch_directive(
         if state.stack.pop().is_none() {
             report.diagnostics.push(Diagnostic {
                 line: lineno,
-                message: "$endif without $if".to_string(),
+                message: b"$endif without $if".to_vec(),
             });
         }
         return DirectiveOutcome::Handled;
@@ -193,6 +195,7 @@ fn trim_ws(bytes: &[u8]) -> &[u8] {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::disallowed_types, clippy::disallowed_macros)]
     use super::*;
     use crate::sys::test_support::assert_no_syscalls;
 
@@ -332,9 +335,12 @@ mod tests {
             dispatch_directive(b"else", 1, &mut state, &mut report);
             assert_eq!(report.diagnostics.len(), 1);
             assert!(
-                report.diagnostics[0].message.contains("without $if"),
+                report.diagnostics[0]
+                    .message
+                    .windows(11)
+                    .any(|w| w == b"without $if"),
                 "got: {:?}",
-                report.diagnostics[0].message
+                String::from_utf8_lossy(&report.diagnostics[0].message)
             );
             assert!(state.is_balanced());
         });
@@ -352,9 +358,12 @@ mod tests {
             dispatch_directive(b"else", 3, &mut state, &mut report);
             assert_eq!(report.diagnostics.len(), 1);
             assert!(
-                report.diagnostics[0].message.contains("duplicate"),
+                report.diagnostics[0]
+                    .message
+                    .windows(9)
+                    .any(|w| w == b"duplicate"),
                 "got: {:?}",
-                report.diagnostics[0].message
+                String::from_utf8_lossy(&report.diagnostics[0].message)
             );
             // The second $else must not re-flip the frame.
             assert!(state.is_active());

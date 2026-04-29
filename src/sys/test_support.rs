@@ -541,7 +541,7 @@ pub(super) fn trace_lseek(fd: c_int, offset: libc::off_t, whence: c_int) -> libc
         "lseek",
         &[
             ArgMatcher::Fd(fd),
-            ArgMatcher::Int(offset as i64),
+            ArgMatcher::Int(offset),
             ArgMatcher::Int(whence as i64),
         ],
     );
@@ -949,13 +949,14 @@ pub(crate) fn assert_no_syscalls<T>(f: impl FnOnce() -> T) -> T {
 fn validate_fork_child_traces(trace: &[TraceEntry]) {
     for entry in trace {
         if entry.syscall == "fork" {
-            if let TraceResult::Pid(pid) = &entry.result {
-                if *pid > 0 && entry.child_trace.is_none() {
-                    panic!(
-                        "fork trace entry returns Pid({pid}) (parent path) but has no child_trace — \
+            if let TraceResult::Pid(pid) = &entry.result
+                && *pid > 0
+                && entry.child_trace.is_none()
+            {
+                panic!(
+                    "fork trace entry returns Pid({pid}) (parent path) but has no child_trace — \
                          use t_fork(TraceResult::Pid({pid}), vec![...]) to provide the child trace"
-                    );
-                }
+                );
             }
             if let Some(child) = &entry.child_trace {
                 validate_fork_child_traces(child);

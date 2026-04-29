@@ -62,7 +62,7 @@ pub(super) fn ulimit(shell: &Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutcome, 
     }
 
     if report_all {
-        for &opt in &[b'c', b'd', b'f', b'n', b's', b't', b'v'] {
+        for &opt in b"cdfnstv" {
             let (resource, desc, unit) = ulimit_resource_for_option(opt).unwrap();
             let (soft, hard) = sys::process::getrlimit(resource)
                 .map_err(|e| shell.diagnostic_prefixed_syserr(1, b"ulimit: ", &e))?;

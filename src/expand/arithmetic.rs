@@ -66,8 +66,8 @@ impl<'a, 'src, C: Context> ArithmeticParser<'a, 'src, C> {
                 let value = if op == b"=" {
                     rhs
                 } else {
-                    let lhs = self.resolve_var(&name)?;
-                    apply_compound_assign(&op, lhs, rhs)?
+                    let lhs = self.resolve_var(name)?;
+                    apply_compound_assign(op, lhs, rhs)?
                 };
                 let buf = bstr::I64Buf::new(value);
                 self.ctx
@@ -359,7 +359,7 @@ impl<'a, 'src, C: Context> ArithmeticParser<'a, 'src, C> {
         }
 
         if let Some(name) = self.try_scan_name() {
-            return self.resolve_var(&name);
+            return self.resolve_var(name);
         }
 
         self.parse_number()
@@ -383,7 +383,7 @@ impl<'a, 'src, C: Context> ArithmeticParser<'a, 'src, C> {
                 return bstr::parse_hex_i64(&self.source[hex_start..self.index])
                     .ok_or_else(|| self.error_at_current(b"invalid hex constant"));
             }
-            if self.peek().map_or(false, |c| is_digit(c)) {
+            if self.peek().is_some_and(is_digit) {
                 while self.index < self.source.len() && is_digit(self.source[self.index]) {
                     self.index += 1;
                 }

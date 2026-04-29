@@ -179,13 +179,13 @@ pub(super) fn match_bracket(
 
         first_elem = false;
 
-        if pc == b'[' && index + 1 < pattern.len() {
-            if let Some(adv) =
+        if pc == b'['
+            && index + 1 < pattern.len()
+            && let Some(adv) =
                 match_bracket_special(pattern, index, current, text, ti, char_len, &mut matched)
-            {
-                index = adv;
-                continue;
-            }
+        {
+            index = adv;
+            continue;
         }
 
         let (first_wc, first_end) = if pc == b'\\' && index + 1 < pattern.len() {
@@ -304,12 +304,12 @@ fn try_consume_range_collsym(
     false
 }
 
-fn scan_bracket_delimited<'a>(
-    pattern: &'a [u8],
+fn scan_bracket_delimited(
+    pattern: &[u8],
     start: usize,
     close_char: u8,
     close_bracket: u8,
-) -> Option<(usize, &'a [u8])> {
+) -> Option<(usize, &[u8])> {
     let mut i = start;
     while i + 1 < pattern.len() {
         if pattern[i] == close_char && pattern[i + 1] == close_bracket {

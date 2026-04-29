@@ -69,7 +69,7 @@ impl Default for EmacsContext {
 #[derive(Clone, Debug)]
 pub(crate) struct Diagnostic {
     pub line: usize,
-    pub message: String,
+    pub message: Vec<u8>,
 }
 
 /// The outcome of parsing one or many lines.
@@ -174,10 +174,10 @@ pub(crate) fn ensure_startup_loaded(shell: &crate::shell::state::Shell) {
         report_diagnostics(&path, &report);
         true
     };
-    if let Some(p) = shell.get_var(b"INPUTRC").map(|b| b.to_vec()) {
-        if load(p) {
-            return;
-        }
+    if let Some(p) = shell.get_var(b"INPUTRC").map(|b| b.to_vec())
+        && load(p)
+    {
+        return;
     }
     if let Some(home) = shell.get_var(b"HOME").map(|b| b.to_vec()) {
         let mut path = home;
@@ -201,21 +201,22 @@ pub(crate) fn load_with_guard(
 ) {
     let canonical = sys::fs::canonicalize(path).unwrap_or_else(|_| path.to_vec());
     if !guard.enter(&canonical) {
+        let mut msg = b"recursive $include detected: ".to_vec();
+        msg.extend_from_slice(path);
         report.diagnostics.push(Diagnostic {
             line: 0,
-            message: format!(
-                "recursive $include detected: {}",
-                String::from_utf8_lossy(path)
-            ),
+            message: msg,
         });
         return;
     }
     let content = match sys::fs::read_file(path) {
         Ok(c) => c,
         Err(_) => {
+            let mut msg = b"cannot open: ".to_vec();
+            msg.extend_from_slice(path);
             report.diagnostics.push(Diagnostic {
                 line: 0,
-                message: format!("cannot open: {}", String::from_utf8_lossy(path)),
+                message: msg,
             });
             guard.leave(&canonical);
             return;
@@ -235,7 +236,7 @@ pub(crate) fn load_with_guard(
     if !state.is_balanced() {
         report.diagnostics.push(Diagnostic {
             line: 0,
-            message: "unterminated $if block".to_string(),
+            message: b"unterminated $if block".to_vec(),
         });
     }
     guard.leave(&canonical);
@@ -265,7 +266,7 @@ fn parse_line(
                     None => {
                         report.diagnostics.push(Diagnostic {
                             line: lineno,
-                            message: "$include not allowed here".to_string(),
+                            message: b"$include not allowed here".to_vec(),
                         });
                         return;
                     }
@@ -276,9 +277,11 @@ fn parse_line(
                 return;
             }
             conditional::DirectiveOutcome::NotRecognized => {
+                let mut msg = b"unknown directive: $".to_vec();
+                msg.extend_from_slice(rest);
                 report.diagnostics.push(Diagnostic {
                     line: lineno,
-                    message: format!("unknown directive: ${}", String::from_utf8_lossy(rest)),
+                    message: msg,
                 });
                 return;
             }
@@ -318,7 +321,7 @@ pub(crate) fn emit_diagnostic(file: &[u8], diag: &Diagnostic) {
         msg.extend_from_slice(diag.line.to_string().as_bytes());
     }
     msg.extend_from_slice(b": ");
-    msg.extend_from_slice(diag.message.as_bytes());
+    msg.extend_from_slice(&diag.message);
     msg.push(b'\n');
     let _ = sys::fd_io::write_all_fd(sys::constants::STDERR_FILENO, &msg);
 }
@@ -344,6 +347,7 @@ pub(crate) fn macro_entry(bytes: Vec<u8>) -> KeymapEntry {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::disallowed_types, clippy::disallowed_macros)]
     use super::*;
     use crate::sys::test_support::assert_no_syscalls;
 
@@ -382,7 +386,12 @@ mod tests {
             // can't see that, but the report should contain the
             // diagnostic.
             assert_eq!(report.diagnostics.len(), 1);
-            assert!(report.diagnostics[0].message.contains("unknown variable"));
+            assert!(
+                report.diagnostics[0]
+                    .message
+                    .windows(16)
+                    .any(|w| w == b"unknown variable")
+            );
         });
     }
 
@@ -419,7 +428,7 @@ mod tests {
         if !state.is_balanced() {
             report.diagnostics.push(Diagnostic {
                 line: 0,
-                message: "unterminated $if block".to_string(),
+                message: b"unterminated $if block".to_vec(),
             });
         }
         report
@@ -436,7 +445,7 @@ mod tests {
                 report
                     .diagnostics
                     .iter()
-                    .any(|d| d.message.contains("unknown variable")),
+                    .any(|d| d.message.windows(16).any(|w| w == b"unknown variable")),
                 "expected unknown-variable diagnostic: {report:?}"
             );
             assert_eq!(report.applied_lines, 1);
@@ -516,7 +525,7 @@ mod tests {
                 report
                     .diagnostics
                     .iter()
-                    .any(|d| d.message.contains("unterminated $if")),
+                    .any(|d| d.message.windows(16).any(|w| w == b"unterminated $if")),
                 "expected unterminated-$if diagnostic: {report:?}"
             );
         });
@@ -536,9 +545,12 @@ mod tests {
             );
             assert_eq!(report.diagnostics.len(), 1);
             assert!(
-                report.diagnostics[0].message.contains("not allowed"),
+                report.diagnostics[0]
+                    .message
+                    .windows(11)
+                    .any(|w| w == b"not allowed"),
                 "got: {:?}",
-                report.diagnostics[0].message
+                String::from_utf8_lossy(&report.diagnostics[0].message)
             );
         });
     }
@@ -566,9 +578,12 @@ mod tests {
             let report = parse_source(src, &mut ctx, Mode::Emacs);
             assert_eq!(report.diagnostics.len(), 1);
             assert!(
-                report.diagnostics[0].message.contains("unknown directive"),
+                report.diagnostics[0]
+                    .message
+                    .windows(17)
+                    .any(|w| w == b"unknown directive"),
                 "got: {:?}",
-                report.diagnostics[0].message
+                String::from_utf8_lossy(&report.diagnostics[0].message)
             );
         });
     }
@@ -678,7 +693,7 @@ mod io_tests {
                     report
                         .diagnostics
                         .iter()
-                        .any(|d| d.message.contains("cannot open")),
+                        .any(|d| d.message.windows(11).any(|w| w == b"cannot open")),
                     "expected cannot-open diagnostic: {report:?}"
                 );
             },
@@ -808,7 +823,7 @@ mod io_tests {
                     report
                         .diagnostics
                         .iter()
-                        .any(|d| d.message.contains("unterminated $if")),
+                        .any(|d| d.message.windows(16).any(|w| w == b"unterminated $if")),
                     "expected unterminated-$if diagnostic: {report:?}"
                 );
             },

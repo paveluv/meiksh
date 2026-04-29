@@ -314,7 +314,7 @@ pub(crate) fn getrlimit(resource: i32) -> SysResult<(u64, u64)> {
         return Err(last_error());
     }
     let rlim = unsafe { rlim.assume_init() };
-    Ok((rlim.rlim_cur as u64, rlim.rlim_max as u64))
+    Ok((rlim.rlim_cur, rlim.rlim_max))
 }
 
 pub(crate) fn setrlimit(resource: i32, soft: u64, hard: u64) -> SysResult<()> {
@@ -482,7 +482,7 @@ pub(crate) fn wexitstatus(status: c_int) -> i32 {
 
 #[cfg(test)]
 pub(crate) fn wexitstatus(status: c_int) -> i32 {
-    (status & 0xff) as i32
+    status & 0xff
 }
 
 #[cfg(not(test))]
@@ -503,7 +503,7 @@ pub(crate) fn wtermsig(status: c_int) -> i32 {
 
 #[cfg(test)]
 pub(crate) fn wtermsig(status: c_int) -> i32 {
-    (status & 0xff) as i32
+    status & 0xff
 }
 
 #[cfg(not(test))]
@@ -535,7 +535,7 @@ pub(crate) fn wstopsig(status: c_int) -> i32 {
 
 #[cfg(test)]
 pub(crate) fn wstopsig(status: c_int) -> i32 {
-    (status & 0xff) as i32
+    status & 0xff
 }
 
 #[cfg(test)]

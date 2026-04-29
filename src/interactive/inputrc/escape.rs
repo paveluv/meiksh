@@ -5,7 +5,7 @@
 /// Parse a quoted-string slice starting immediately after the opening
 /// `"`. On success returns `(bytes, consumed)` where `consumed` is
 /// the number of input bytes consumed including the closing quote.
-pub(crate) fn decode_quoted(input: &[u8]) -> Result<(Vec<u8>, usize), String> {
+pub(crate) fn decode_quoted(input: &[u8]) -> Result<(Vec<u8>, usize), Vec<u8>> {
     let mut out = Vec::with_capacity(input.len());
     let mut i = 0;
     while i < input.len() {
@@ -22,14 +22,14 @@ pub(crate) fn decode_quoted(input: &[u8]) -> Result<(Vec<u8>, usize), String> {
             }
         }
     }
-    Err("unterminated string".to_string())
+    Err(b"unterminated string".to_vec())
 }
 
 /// Decode a `\`-escape starting *after* the `\`. Returns the emitted
 /// bytes and the number of bytes consumed from `input`.
-pub(crate) fn decode_escape(input: &[u8]) -> Result<(Vec<u8>, usize), String> {
+pub(crate) fn decode_escape(input: &[u8]) -> Result<(Vec<u8>, usize), Vec<u8>> {
     if input.is_empty() {
-        return Err("dangling backslash".to_string());
+        return Err(b"dangling backslash".to_vec());
     }
     let c = input[0];
     match c {
@@ -49,11 +49,15 @@ pub(crate) fn decode_escape(input: &[u8]) -> Result<(Vec<u8>, usize), String> {
         b'x' | b'X' => decode_hex(input),
         b'C' => decode_control(&input[1..]).map(|(b, n)| (b, n + 1)),
         b'M' => decode_meta(&input[1..]).map(|(b, n)| (b, n + 1)),
-        _ => Err(format!("unknown escape: \\{}", c as char)),
+        _ => {
+            let mut msg = b"unknown escape: \\".to_vec();
+            msg.push(c);
+            Err(msg)
+        }
     }
 }
 
-fn decode_octal(input: &[u8]) -> Result<(Vec<u8>, usize), String> {
+fn decode_octal(input: &[u8]) -> Result<(Vec<u8>, usize), Vec<u8>> {
     // Callers (`decode_escape`) only route here when `input[0]` is a
     // digit in `0..=7`, so the loop always consumes at least one byte
     // and `n >= 1` on exit.
@@ -64,12 +68,14 @@ fn decode_octal(input: &[u8]) -> Result<(Vec<u8>, usize), String> {
         n += 1;
     }
     if value > 0xff {
-        return Err(format!("octal escape out of range: \\{}", value));
+        let mut msg = b"octal escape out of range: \\".to_vec();
+        msg.extend_from_slice(value.to_string().as_bytes());
+        return Err(msg);
     }
     Ok((vec![value as u8], n))
 }
 
-fn decode_hex(input: &[u8]) -> Result<(Vec<u8>, usize), String> {
+fn decode_hex(input: &[u8]) -> Result<(Vec<u8>, usize), Vec<u8>> {
     // input begins at 'x'
     let mut value: u32 = 0;
     let mut n = 1;
@@ -84,18 +90,18 @@ fn decode_hex(input: &[u8]) -> Result<(Vec<u8>, usize), String> {
         n += 1;
     }
     if n == 1 {
-        return Err("empty hex escape".to_string());
+        return Err(b"empty hex escape".to_vec());
     }
     Ok((vec![value as u8], n))
 }
 
-fn decode_control(input: &[u8]) -> Result<(Vec<u8>, usize), String> {
+fn decode_control(input: &[u8]) -> Result<(Vec<u8>, usize), Vec<u8>> {
     if input.is_empty() || input[0] != b'-' {
-        return Err("\\C- must be followed by `-`".to_string());
+        return Err(b"\\C- must be followed by `-`".to_vec());
     }
     let rest = &input[1..];
     if rest.is_empty() {
-        return Err("\\C- requires a character".to_string());
+        return Err(b"\\C- requires a character".to_vec());
     }
     let (sub_bytes, consumed) = if rest[0] == b'\\' {
         let (b, n) = decode_escape(&rest[1..])?;
@@ -114,13 +120,13 @@ fn decode_control(input: &[u8]) -> Result<(Vec<u8>, usize), String> {
     Ok((out, 1 + consumed))
 }
 
-fn decode_meta(input: &[u8]) -> Result<(Vec<u8>, usize), String> {
+fn decode_meta(input: &[u8]) -> Result<(Vec<u8>, usize), Vec<u8>> {
     if input.is_empty() || input[0] != b'-' {
-        return Err("\\M- must be followed by `-`".to_string());
+        return Err(b"\\M- must be followed by `-`".to_vec());
     }
     let rest = &input[1..];
     if rest.is_empty() {
-        return Err("\\M- requires a character".to_string());
+        return Err(b"\\M- requires a character".to_vec());
     }
     let (sub_bytes, consumed) = if rest[0] == b'\\' {
         let (b, n) = decode_escape(&rest[1..])?;
@@ -136,7 +142,7 @@ fn decode_meta(input: &[u8]) -> Result<(Vec<u8>, usize), String> {
 
 /// Resolve a keyname-form token (case-insensitive, supports `C-`,
 /// `Control-`, `M-`, `Meta-` prefixes).
-pub(crate) fn decode_keyname(token: &[u8]) -> Result<Vec<u8>, String> {
+pub(crate) fn decode_keyname(token: &[u8]) -> Result<Vec<u8>, Vec<u8>> {
     let mut out: Vec<u8> = Vec::new();
     let mut rest = token;
     let mut control = false;
@@ -170,7 +176,7 @@ pub(crate) fn decode_keyname(token: &[u8]) -> Result<Vec<u8>, String> {
     Ok(out)
 }
 
-fn keyname_to_byte(token: &[u8]) -> Result<u8, String> {
+fn keyname_to_byte(token: &[u8]) -> Result<u8, Vec<u8>> {
     match token {
         t if eq_ci(t, b"Return") || eq_ci(t, b"RET") || eq_ci(t, b"Newline") => Ok(b'\n'),
         t if eq_ci(t, b"Escape") || eq_ci(t, b"ESC") => Ok(0x1b),
@@ -179,10 +185,11 @@ fn keyname_to_byte(token: &[u8]) -> Result<u8, String> {
         t if eq_ci(t, b"Space") || eq_ci(t, b"SPC") => Ok(b' '),
         t if eq_ci(t, b"LFD") => Ok(b'\n'),
         [b] if b.is_ascii_graphic() || *b == b' ' => Ok(*b),
-        other => Err(format!(
-            "unknown keyname: {}",
-            String::from_utf8_lossy(other)
-        )),
+        other => {
+            let mut msg = b"unknown keyname: ".to_vec();
+            msg.extend_from_slice(other);
+            Err(msg)
+        }
     }
 }
 
@@ -209,6 +216,7 @@ fn eq_ci(a: &[u8], b: &[u8]) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::disallowed_types, clippy::disallowed_macros)]
     use super::*;
     use crate::sys::test_support::assert_no_syscalls;
 
@@ -262,7 +270,11 @@ mod tests {
             // Multi-byte non-canonical tokens fall to the
             // `unknown keyname` arm.
             let err = decode_keyname(b"ZZZ").unwrap_err();
-            assert!(err.contains("unknown keyname"), "got: {err}");
+            assert!(
+                err.windows(15).any(|w| w == b"unknown keyname"),
+                "got: {:?}",
+                String::from_utf8_lossy(&err)
+            );
         });
     }
 
@@ -287,7 +299,11 @@ mod tests {
         assert_no_syscalls(|| {
             // Scan to end without hitting closing quote.
             let err = decode_quoted(b"abc").unwrap_err();
-            assert!(err.contains("unterminated"), "got: {err}");
+            assert!(
+                err.windows(12).any(|w| w == b"unterminated"),
+                "got: {:?}",
+                String::from_utf8_lossy(&err)
+            );
         });
     }
 
@@ -296,7 +312,11 @@ mod tests {
         assert_no_syscalls(|| {
             // `\` followed by nothing is caught inside decode_escape.
             let err = decode_escape(b"").unwrap_err();
-            assert!(err.contains("dangling"), "got: {err}");
+            assert!(
+                err.windows(8).any(|w| w == b"dangling"),
+                "got: {:?}",
+                String::from_utf8_lossy(&err)
+            );
         });
     }
 
@@ -305,7 +325,11 @@ mod tests {
         assert_no_syscalls(|| {
             // `\777` = 511 decimal, > 0xff.
             let err = decode_quoted(br#"\777""#).unwrap_err();
-            assert!(err.contains("out of range"), "got: {err}");
+            assert!(
+                err.windows(12).any(|w| w == b"out of range"),
+                "got: {:?}",
+                String::from_utf8_lossy(&err)
+            );
         });
     }
 
@@ -323,7 +347,11 @@ mod tests {
         assert_no_syscalls(|| {
             // `\x` followed by a non-hex character (the closing quote).
             let err = decode_quoted(br#"\x""#).unwrap_err();
-            assert!(err.contains("empty hex"), "got: {err}");
+            assert!(
+                err.windows(9).any(|w| w == b"empty hex"),
+                "got: {:?}",
+                String::from_utf8_lossy(&err)
+            );
         });
     }
 
@@ -333,10 +361,18 @@ mod tests {
             // `\C` without `-` after — decode_control receives a slice
             // whose first byte is not `-`.
             let err = decode_escape(b"Cx").unwrap_err();
-            assert!(err.contains("C-"), "got: {err}");
+            assert!(
+                err.windows(2).any(|w| w == b"C-"),
+                "got: {:?}",
+                String::from_utf8_lossy(&err)
+            );
             // And the empty case (`\C` at end of input).
             let err = decode_escape(b"C").unwrap_err();
-            assert!(err.contains("C-"), "got: {err}");
+            assert!(
+                err.windows(2).any(|w| w == b"C-"),
+                "got: {:?}",
+                String::from_utf8_lossy(&err)
+            );
         });
     }
 
@@ -345,7 +381,11 @@ mod tests {
         assert_no_syscalls(|| {
             // `\C-` followed by nothing.
             let err = decode_escape(b"C-").unwrap_err();
-            assert!(err.contains("requires"), "got: {err}");
+            assert!(
+                err.windows(8).any(|w| w == b"requires"),
+                "got: {:?}",
+                String::from_utf8_lossy(&err)
+            );
         });
     }
 
@@ -353,9 +393,17 @@ mod tests {
     fn meta_missing_dash_is_error() {
         assert_no_syscalls(|| {
             let err = decode_escape(b"Mx").unwrap_err();
-            assert!(err.contains("M-"), "got: {err}");
+            assert!(
+                err.windows(2).any(|w| w == b"M-"),
+                "got: {:?}",
+                String::from_utf8_lossy(&err)
+            );
             let err = decode_escape(b"M").unwrap_err();
-            assert!(err.contains("M-"), "got: {err}");
+            assert!(
+                err.windows(2).any(|w| w == b"M-"),
+                "got: {:?}",
+                String::from_utf8_lossy(&err)
+            );
         });
     }
 
@@ -363,7 +411,11 @@ mod tests {
     fn meta_without_target_is_error() {
         assert_no_syscalls(|| {
             let err = decode_escape(b"M-").unwrap_err();
-            assert!(err.contains("requires"), "got: {err}");
+            assert!(
+                err.windows(8).any(|w| w == b"requires"),
+                "got: {:?}",
+                String::from_utf8_lossy(&err)
+            );
         });
     }
 

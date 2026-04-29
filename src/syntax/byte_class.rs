@@ -112,7 +112,7 @@ pub(crate) fn is_tilde_user_break(b: u8) -> bool {
 }
 
 pub(crate) fn alias_has_trailing_blank(s: &[u8]) -> bool {
-    s.last().map_or(false, |&b| b == b' ' || b == b'\t')
+    s.last().is_some_and(|&b| b == b' ' || b == b'\t')
 }
 
 pub(crate) fn is_name(name: &[u8]) -> bool {

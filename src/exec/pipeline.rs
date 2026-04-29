@@ -34,20 +34,18 @@ pub(super) fn execute_pipeline_inner(
     pipeline: &Pipeline,
     asynchronous: bool,
 ) -> Result<i32, ShellError> {
-    if pipeline.commands.len() == 1 {
-        if !asynchronous {
-            let saved_suppressed = shell.errexit_suppressed;
-            if pipeline.negated {
-                shell.errexit_suppressed = true;
-            }
-            let status = execute_command(shell, &pipeline.commands[0])?;
-            shell.errexit_suppressed = saved_suppressed;
-            return Ok(if pipeline.negated {
-                if status == 0 { 1 } else { 0 }
-            } else {
-                status
-            });
+    if pipeline.commands.len() == 1 && !asynchronous {
+        let saved_suppressed = shell.errexit_suppressed;
+        if pipeline.negated {
+            shell.errexit_suppressed = true;
         }
+        let status = execute_command(shell, &pipeline.commands[0])?;
+        shell.errexit_suppressed = saved_suppressed;
+        return Ok(if pipeline.negated {
+            if status == 0 { 1 } else { 0 }
+        } else {
+            status
+        });
     }
 
     let pipefail = shell.options.pipefail;
@@ -670,7 +668,7 @@ mod tests {
             timed: TimedMode::Off,
             commands: vec![
                 Command::FunctionDef(FunctionDef {
-                    name: b"f".to_vec().into(),
+                    name: b"f".to_vec(),
                     body: Rc::new(Command::Group(program.clone())),
                 }),
                 Command::If(IfCommand {
@@ -688,7 +686,7 @@ mod tests {
                     body: program,
                 }),
                 Command::For(ForCommand {
-                    name: b"item".to_vec().into(),
+                    name: b"item".to_vec(),
                     items: Some(vec![literal_word(b"a")]),
                     body: Program::default(),
                 }),

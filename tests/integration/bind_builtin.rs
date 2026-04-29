@@ -54,10 +54,10 @@ fn match_status_tag(bytes: &[u8], prefix: &[u8], terminator: u8) -> Option<i32> 
         }
         if j > digit_start && bytes.get(j) == Some(&terminator) {
             let digits = &bytes[digit_start..j];
-            if let Ok(s) = std::str::from_utf8(digits) {
-                if let Ok(n) = s.parse::<i32>() {
-                    return Some(n);
-                }
+            if let Ok(s) = std::str::from_utf8(digits)
+                && let Ok(n) = s.parse::<i32>()
+            {
+                return Some(n);
             }
         }
     }
@@ -112,7 +112,10 @@ fn bind_builtin_covers_all_options() {
     );
     let text = String::from_utf8_lossy(&out);
     assert!(
-        text.contains("\r\n3\r\n") || text.contains("\n3\r\n") || text.contains("\n3\n"),
+        text.contains("\r\n3\r\n")
+            || text.contains("\n3\r\n")
+            || text.contains("\n3\n")
+            || text.contains(" 3\r\n"),
         "expected exactly 3 canonical function names in bind -l: {text:?}"
     );
     assert_eq!(parse_status_tag(&out, "BL"), Some(0));

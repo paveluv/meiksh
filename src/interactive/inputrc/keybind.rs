@@ -9,20 +9,20 @@ use super::escape::{decode_keyname, decode_quoted};
 ///
 /// Returns `(keyseq, entry)` on success. On parse failure, returns a
 /// human-readable diagnostic.
-pub(crate) fn parse(line: &[u8]) -> Result<(Vec<u8>, KeymapEntry), String> {
+pub(crate) fn parse(line: &[u8]) -> Result<(Vec<u8>, KeymapEntry), Vec<u8>> {
     // Split at the first `:` outside a quoted string.
-    let split_at = find_unquoted_colon(line).ok_or_else(|| "missing `:` in binding".to_string())?;
+    let split_at = find_unquoted_colon(line).ok_or_else(|| b"missing `:` in binding".to_vec())?;
     let (lhs_raw, rest) = line.split_at(split_at);
     let rhs_raw = trim_ws(&rest[1..]);
     let lhs = trim_ws(lhs_raw);
     if lhs.is_empty() {
-        return Err("empty key sequence".to_string());
+        return Err(b"empty key sequence".to_vec());
     }
 
     let seq = if lhs.first() == Some(&b'"') {
         let (bytes, consumed) = decode_quoted(&lhs[1..])?;
         if consumed != lhs.len() - 1 {
-            return Err("trailing junk after quoted key sequence".to_string());
+            return Err(b"trailing junk after quoted key sequence".to_vec());
         }
         bytes
     } else {
@@ -32,13 +32,16 @@ pub(crate) fn parse(line: &[u8]) -> Result<(Vec<u8>, KeymapEntry), String> {
     if rhs_raw.first() == Some(&b'"') {
         let (macro_bytes, consumed) = decode_quoted(&rhs_raw[1..])?;
         if consumed != rhs_raw.len() - 1 {
-            return Err("trailing junk after macro value".to_string());
+            return Err(b"trailing junk after macro value".to_vec());
         }
         return Ok((seq, KeymapEntry::Macro(macro_bytes)));
     }
     let name = rhs_raw;
-    let func = EmacsFn::from_name(name)
-        .ok_or_else(|| format!("unknown function: {}", String::from_utf8_lossy(name)))?;
+    let func = EmacsFn::from_name(name).ok_or_else(|| {
+        let mut msg = b"unknown function: ".to_vec();
+        msg.extend_from_slice(name);
+        msg
+    })?;
     Ok((seq, KeymapEntry::Func(func)))
 }
 
@@ -82,6 +85,7 @@ fn trim_ws(bytes: &[u8]) -> &[u8] {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::disallowed_types, clippy::disallowed_macros)]
     use super::*;
     use crate::sys::test_support::assert_no_syscalls;
 
@@ -119,7 +123,7 @@ mod tests {
     fn unknown_function_rejected() {
         assert_no_syscalls(|| {
             let err = parse(b"C-a: no-such").unwrap_err();
-            assert!(err.contains("unknown function"));
+            assert!(err.windows(16).any(|w| w == b"unknown function"));
         });
     }
 
@@ -127,7 +131,7 @@ mod tests {
     fn missing_colon_rejected() {
         assert_no_syscalls(|| {
             let err = parse(b"C-a beginning-of-line").unwrap_err();
-            assert!(err.contains("missing"));
+            assert!(err.windows(7).any(|w| w == b"missing"));
         });
     }
 
@@ -138,7 +142,7 @@ mod tests {
         // so the user knows which half of the binding is missing.
         assert_no_syscalls(|| {
             let err = parse(b":accept-line").unwrap_err();
-            assert_eq!(err, "empty key sequence");
+            assert_eq!(err, b"empty key sequence");
         });
     }
 
@@ -150,8 +154,10 @@ mod tests {
         assert_no_syscalls(|| {
             let err = parse(b"\"\\C-a\"xx: accept-line").unwrap_err();
             assert!(
-                err.contains("trailing junk after quoted key sequence"),
-                "got: {err}",
+                err.windows(39)
+                    .any(|w| w == b"trailing junk after quoted key sequence"),
+                "got: {:?}",
+                String::from_utf8_lossy(&err),
             );
         });
     }
@@ -164,8 +170,10 @@ mod tests {
         assert_no_syscalls(|| {
             let err = parse(b"\"\\C-a\": \"macro\"xx").unwrap_err();
             assert!(
-                err.contains("trailing junk after macro value"),
-                "got: {err}",
+                err.windows(31)
+                    .any(|w| w == b"trailing junk after macro value"),
+                "got: {:?}",
+                String::from_utf8_lossy(&err),
             );
         });
     }

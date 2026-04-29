@@ -727,7 +727,7 @@ fn bang_from_parameter_expansion_is_scanned_by_history_pass_interactive() {
     // And we must see the substituted form with a decimal digit.
     let saw_substituted = text
         .split("DONE")
-        .any(|chunk| chunk.ends_with(|c: char| c == '>') && chunk.contains('<'))
+        .any(|chunk| chunk.ends_with('>') && chunk.contains('<'))
         && text.contains(">DONE");
     assert!(
         saw_substituted,

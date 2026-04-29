@@ -31,7 +31,7 @@ struct MdCitation {
 }
 
 fn is_citation_heading(name: &str) -> bool {
-    name.chars().next().map_or(false, |c| c.is_ascii_digit())
+    name.chars().next().is_some_and(|c| c.is_ascii_digit())
         || name.starts_with("utility: ")
         || name.starts_with("xbd: ")
 }
@@ -62,10 +62,10 @@ fn extract_md_citations(content: &str) -> Vec<MdCitation> {
             body.push(l.to_string());
             i += 1;
         }
-        while body.last().map_or(false, |l| l.is_empty()) {
+        while body.last().is_some_and(|l| l.is_empty()) {
             body.pop();
         }
-        while body.first().map_or(false, |l| l.is_empty()) {
+        while body.first().is_some_and(|l| l.is_empty()) {
             body.remove(0);
         }
         if !body.is_empty() {
@@ -97,7 +97,7 @@ fn extract_source_sections(content: &str) -> Vec<SourceSection> {
         }
         let hashes = line.bytes().take_while(|&b| b == b'#').count();
         let name = line[hashes..].trim().to_string();
-        if name.chars().next().map_or(false, |c| c.is_ascii_digit()) {
+        if name.chars().next().is_some_and(|c| c.is_ascii_digit()) {
             headings.push((i, name));
         }
     }
@@ -113,10 +113,10 @@ fn extract_source_sections(content: &str) -> Vec<SourceSection> {
             .iter()
             .map(|l| l.to_string())
             .collect();
-        while body.last().map_or(false, |l| l.is_empty()) {
+        while body.last().is_some_and(|l| l.is_empty()) {
             body.pop();
         }
-        while body.first().map_or(false, |l| l.is_empty()) {
+        while body.first().is_some_and(|l| l.is_empty()) {
             body.remove(0);
         }
         sections.push(SourceSection {
@@ -128,17 +128,14 @@ fn extract_source_sections(content: &str) -> Vec<SourceSection> {
     let utility_parent_sections = extract_utility_pages(&lines, &mut sections);
 
     for parent_name in &utility_parent_sections {
-        if let Some(sec) = sections.iter_mut().find(|s| s.name == *parent_name) {
-            if let Some(cut) = sec.body_lines.iter().position(|l| l == "#### NAME") {
-                let mut preamble = sec.body_lines[..cut].to_vec();
-                while preamble
-                    .last()
-                    .map_or(false, |l| l.is_empty() || l == "---")
-                {
-                    preamble.pop();
-                }
-                sec.body_lines = preamble;
+        if let Some(sec) = sections.iter_mut().find(|s| s.name == *parent_name)
+            && let Some(cut) = sec.body_lines.iter().position(|l| l == "#### NAME")
+        {
+            let mut preamble = sec.body_lines[..cut].to_vec();
+            while preamble.last().is_some_and(|l| l.is_empty() || l == "---") {
+                preamble.pop();
             }
+            sec.body_lines = preamble;
         }
     }
 
@@ -187,7 +184,7 @@ fn extract_utility_pages(lines: &[&str], sections: &mut Vec<SourceSection>) -> V
             .iter()
             .map(|l| l.to_string())
             .collect();
-        while body.last().map_or(false, |l| l.is_empty()) {
+        while body.last().is_some_and(|l| l.is_empty()) {
             body.pop();
         }
 
@@ -240,7 +237,7 @@ fn extract_standalone_utility_page(
         .iter()
         .map(|l| l.to_string())
         .collect();
-    while body.last().map_or(false, |l| l.is_empty()) {
+    while body.last().is_some_and(|l| l.is_empty()) {
         body.pop();
     }
 
@@ -249,13 +246,13 @@ fn extract_standalone_utility_page(
         body_lines: body.clone(),
     });
 
-    if let Some(stem) = filename_stem {
-        if stem != util_name {
-            sections.push(SourceSection {
-                name: format!("utility: {stem}"),
-                body_lines: body,
-            });
-        }
+    if let Some(stem) = filename_stem
+        && stem != util_name
+    {
+        sections.push(SourceSection {
+            name: format!("utility: {stem}"),
+            body_lines: body,
+        });
     }
 }
 
@@ -286,7 +283,7 @@ fn find_parent_numbered_section(lines: &[&str], pos: usize) -> Option<String> {
         };
         if let Some(skip) = prefix {
             let name = line[skip..].trim();
-            if name.chars().next().map_or(false, |c| c.is_ascii_digit()) {
+            if name.chars().next().is_some_and(|c| c.is_ascii_digit()) {
                 return Some(name.to_string());
             }
         }

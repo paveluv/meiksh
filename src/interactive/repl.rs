@@ -122,7 +122,7 @@ pub(super) fn run_loop(shell: &mut Shell) -> Result<i32, ShellError> {
         }
         accumulated.extend_from_slice(&line);
 
-        match crate::syntax::parse_with_aliases(&accumulated, &shell.aliases()) {
+        match crate::syntax::parse_with_aliases(&accumulated, shell.aliases()) {
             Ok(_) => {}
             Err(ref e) if shell.input_is_incomplete(e) => {
                 continue;

@@ -307,7 +307,7 @@ impl Shell {
 
     fn run_source_buffer(&mut self, source: &[u8]) -> Result<i32, ShellError> {
         if self.options.syntax_check_only {
-            let _ = syntax::parse_with_aliases(source, &self.aliases())
+            let _ = syntax::parse_with_aliases(source, self.aliases())
                 .map_err(|e| self.parse_to_err(e))?;
             return Ok(0);
         }
@@ -384,7 +384,7 @@ impl Shell {
         loop {
             let prev_pos = session.current_pos();
             let program = match session
-                .next_command(&self.aliases())
+                .next_command(self.aliases())
                 .map_err(|e| self.parse_to_err(e))?
             {
                 Some(p) => p,
@@ -421,7 +421,7 @@ impl Shell {
         if source.is_empty() {
             return Ok(None);
         }
-        match syntax::parse_with_aliases(source, &self.aliases()) {
+        match syntax::parse_with_aliases(source, self.aliases()) {
             Ok(_) => {
                 let buffered = std::mem::take(source);
                 self.run_source_buffer(&buffered).map(Some)

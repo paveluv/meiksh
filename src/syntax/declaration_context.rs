@@ -36,7 +36,7 @@ pub(super) fn is_declaration_utility(name_word: &Word) -> bool {
     let Some(bytes) = literal_only_bytes(name_word) else {
         return false;
     };
-    DECLARATION_UTILITIES.iter().any(|&n| n == bytes)
+    DECLARATION_UTILITIES.contains(&bytes)
 }
 
 pub(super) fn is_command_utility(name_word: &Word) -> bool {
@@ -61,7 +61,7 @@ pub(super) fn find_command_decl_util_boundary(words: &[Word]) -> Option<usize> {
             i += 1;
             continue;
         }
-        if DECLARATION_UTILITIES.iter().any(|&n| n == bytes) {
+        if DECLARATION_UTILITIES.contains(&bytes) {
             return Some(i + 1);
         }
         return None;
@@ -164,6 +164,7 @@ fn literal_only_bytes(word: &Word) -> Option<&[u8]> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::disallowed_types, clippy::disallowed_macros)]
     use super::*;
 
     use crate::syntax::word_part::ExpansionKind;

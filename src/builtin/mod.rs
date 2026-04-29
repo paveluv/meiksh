@@ -5,9 +5,7 @@ use crate::shell::state::Shell;
 use crate::sys;
 
 fn remove_file_bytes(path: &[u8]) {
-    use std::ffi::OsStr;
-    use std::os::unix::ffi::OsStrExt;
-    let _ = std::fs::remove_file(OsStr::from_bytes(path));
+    let _ = sys::fs::unlink(path);
 }
 
 fn write_stderr(msg: &[u8]) {
@@ -149,12 +147,10 @@ pub(crate) fn lookup(name: &[u8]) -> Option<&'static BuiltinEntry> {
         b'w' => BUILTINS_W,
         _ => return None,
     };
-    for entry in bucket {
-        if entry.name == name {
-            return Some(entry);
-        }
-    }
-    None
+    bucket
+        .iter()
+        .find(|&entry| entry.name == name)
+        .map(|v| v as _)
 }
 
 mod alias;

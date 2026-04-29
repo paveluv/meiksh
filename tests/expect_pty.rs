@@ -758,10 +758,10 @@ impl PtySession {
             128 + (status & 0x7f)
         };
 
-        if let Some(expected) = expected_code {
-            if code != expected {
-                return Err(format!("wait: expected exit code {expected}, got {code}"));
-            }
+        if let Some(expected) = expected_code
+            && code != expected
+        {
+            return Err(format!("wait: expected exit code {expected}, got {code}"));
         }
         Ok(code)
     }
@@ -1324,54 +1324,60 @@ fn match_bracket_expr(pat: &[char], start: usize, ch: char) -> Option<(bool, usi
 
     while i < len && pat[i] != ']' {
         // Named character class: [[:name:]]
-        if i + 1 < len && pat[i] == '[' && pat[i + 1] == ':' {
-            if let Some(end_colon) = find_seq(pat, i + 2, ':') {
-                if end_colon + 1 < len && pat[end_colon + 1] == ']' {
-                    let name: String = pat[i + 2..end_colon].iter().collect();
-                    if is_char_class(&name, ch) {
-                        matched = true;
-                    }
-                    i = end_colon + 2;
-                    prev_char = None;
-                    continue;
-                }
+        if i + 1 < len
+            && pat[i] == '['
+            && pat[i + 1] == ':'
+            && let Some(end_colon) = find_seq(pat, i + 2, ':')
+            && end_colon + 1 < len
+            && pat[end_colon + 1] == ']'
+        {
+            let name: String = pat[i + 2..end_colon].iter().collect();
+            if is_char_class(&name, ch) {
+                matched = true;
             }
+            i = end_colon + 2;
+            prev_char = None;
+            continue;
         }
 
         // Collating symbol: [.x.] — treat as the character x
-        if i + 1 < len && pat[i] == '[' && pat[i + 1] == '.' {
-            if let Some(end_dot) = find_seq(pat, i + 2, '.') {
-                if end_dot + 1 < len && pat[end_dot + 1] == ']' {
-                    let sym: String = pat[i + 2..end_dot].iter().collect();
-                    if sym.len() == 1 {
-                        let sc = sym.chars().next().unwrap();
-                        if ch == sc {
-                            matched = true;
-                        }
-                        prev_char = Some(sc);
-                    }
-                    i = end_dot + 2;
-                    continue;
+        if i + 1 < len
+            && pat[i] == '['
+            && pat[i + 1] == '.'
+            && let Some(end_dot) = find_seq(pat, i + 2, '.')
+            && end_dot + 1 < len
+            && pat[end_dot + 1] == ']'
+        {
+            let sym: String = pat[i + 2..end_dot].iter().collect();
+            if sym.len() == 1 {
+                let sc = sym.chars().next().unwrap();
+                if ch == sc {
+                    matched = true;
                 }
+                prev_char = Some(sc);
             }
+            i = end_dot + 2;
+            continue;
         }
 
         // Equivalence class: [=x=] — treat as matching character x
-        if i + 1 < len && pat[i] == '[' && pat[i + 1] == '=' {
-            if let Some(end_eq) = find_seq(pat, i + 2, '=') {
-                if end_eq + 1 < len && pat[end_eq + 1] == ']' {
-                    let sym: String = pat[i + 2..end_eq].iter().collect();
-                    if sym.len() == 1 {
-                        let sc = sym.chars().next().unwrap();
-                        if ch == sc {
-                            matched = true;
-                        }
-                        prev_char = Some(sc);
-                    }
-                    i = end_eq + 2;
-                    continue;
+        if i + 1 < len
+            && pat[i] == '['
+            && pat[i + 1] == '='
+            && let Some(end_eq) = find_seq(pat, i + 2, '=')
+            && end_eq + 1 < len
+            && pat[end_eq + 1] == ']'
+        {
+            let sym: String = pat[i + 2..end_eq].iter().collect();
+            if sym.len() == 1 {
+                let sc = sym.chars().next().unwrap();
+                if ch == sc {
+                    matched = true;
                 }
+                prev_char = Some(sc);
             }
+            i = end_eq + 2;
+            continue;
         }
 
         let c = pat[i];
@@ -1541,10 +1547,10 @@ fn parse_re_atom(chars: &[char], pos: usize) -> Result<(RegexNode, usize), Strin
             if new_pos >= chars.len() || chars[new_pos] != ')' {
                 return Err(format!("unclosed parenthesis at position {pos}"));
             }
-            if inner_nodes.len() == 1 {
-                if let RegexNode::Group(_) = &inner_nodes[0] {
-                    return Ok((inner_nodes.into_iter().next().unwrap(), new_pos + 1));
-                }
+            if inner_nodes.len() == 1
+                && let RegexNode::Group(_) = &inner_nodes[0]
+            {
+                return Ok((inner_nodes.into_iter().next().unwrap(), new_pos + 1));
             }
             Ok((RegexNode::Group(vec![inner_nodes]), new_pos + 1))
         }
@@ -1596,10 +1602,10 @@ fn match_re_seq(nodes: &[RegexNode], text: &[char], pos: usize) -> Option<usize>
                     None
                 }
                 RepeatKind::Question => {
-                    if let Some(next) = match_re_one(inner, text, pos) {
-                        if let Some(end) = match_re_seq(rest, text, next) {
-                            return Some(end);
-                        }
+                    if let Some(next) = match_re_one(inner, text, pos)
+                        && let Some(end) = match_re_seq(rest, text, next)
+                    {
+                        return Some(end);
                     }
                     match_re_seq(rest, text, pos)
                 }

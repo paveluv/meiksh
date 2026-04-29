@@ -78,7 +78,7 @@ pub(crate) fn isatty_fd(fd: c_int) -> bool {
 pub(crate) fn terminal_columns_from_stdio() -> Option<usize> {
     #[cfg(test)]
     {
-        return super::test_support::test_terminal_columns_override();
+        super::test_support::test_terminal_columns_override()
     }
     #[cfg(not(test))]
     {

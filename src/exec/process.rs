@@ -423,7 +423,7 @@ mod tests {
                 write(fd(2), bytes(b"noperm: Permission denied\n")) -> auto,
             ],
             || {
-                let mut shell = test_shell();
+                let shell = test_shell();
                 let prepared = PreparedProcess {
                     argv: vec![b"noperm".to_vec().into()].into(),
                     exec_path: b"/bin/noperm".to_vec().into(),
@@ -432,12 +432,9 @@ mod tests {
                     redirections: vec![],
                     noclobber: false,
                 };
-                let err = crate::exec::process::spawn_prepared(
-                    &mut shell,
-                    &prepared,
-                    ProcessGroupPlan::None,
-                )
-                .unwrap_err();
+                let err =
+                    crate::exec::process::spawn_prepared(&shell, &prepared, ProcessGroupPlan::None)
+                        .unwrap_err();
                 assert_eq!(err.exit_status(), 126);
             },
         );
@@ -487,7 +484,7 @@ mod tests {
                 write(fd(2), bytes(b"missing: not found\n")) -> auto,
             ],
             || {
-                let mut shell = test_shell();
+                let shell = test_shell();
                 let prepared = PreparedProcess {
                     argv: vec![b"missing".to_vec().into()].into(),
                     exec_path: b"/bin/missing".to_vec().into(),
@@ -496,12 +493,9 @@ mod tests {
                     redirections: vec![],
                     noclobber: false,
                 };
-                let err = crate::exec::process::spawn_prepared(
-                    &mut shell,
-                    &prepared,
-                    ProcessGroupPlan::None,
-                )
-                .unwrap_err();
+                let err =
+                    crate::exec::process::spawn_prepared(&shell, &prepared, ProcessGroupPlan::None)
+                        .unwrap_err();
                 assert_eq!(err.exit_status(), 127);
             },
         );
@@ -643,7 +637,7 @@ mod tests {
                 waitpid(123, _) -> status(1),
             ],
             || {
-                let mut shell = test_shell();
+                let shell = test_shell();
                 let prepared = PreparedProcess {
                     argv: vec![b"/bin/true".to_vec().into()].into(),
                     exec_path: b"/bin/true".to_vec().into(),
@@ -658,7 +652,7 @@ mod tests {
                     noclobber: false,
                 };
                 let handle = crate::exec::process::spawn_prepared(
-                    &mut shell,
+                    &shell,
                     &prepared,
                     ProcessGroupPlan::Join(500),
                 )

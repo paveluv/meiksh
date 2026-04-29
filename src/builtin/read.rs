@@ -250,12 +250,12 @@ pub(super) fn push_read_piece(
     if current.is_empty() {
         return;
     }
-    if let Some((last, last_quoted)) = pieces.last_mut() {
-        if *last_quoted == quoted {
-            last.extend_from_slice(current);
-            current.clear();
-            return;
-        }
+    if let Some((last, last_quoted)) = pieces.last_mut()
+        && *last_quoted == quoted
+    {
+        last.extend_from_slice(current);
+        current.clear();
+        return;
     }
     pieces.push((std::mem::take(current), quoted));
 }
@@ -322,21 +322,20 @@ pub(super) fn split_read_assignments(
                 break;
             }
             let (_, quoted) = bytes[index];
-            if !quoted {
-                if let Some((seq, is_ws)) =
+            if !quoted
+                && let Some((seq, is_ws)) =
                     find_read_ifs_at(&ifs_chars, &unquoted_tail(&bytes, index))
-                {
-                    if is_ws {
-                        debug_assert!(
-                            !current.is_empty(),
-                            "leading IFS whitespace should already be skipped"
-                        );
-                    }
-                    values.push(current);
-                    index += seq.len();
-                    skip_read_ifs_ws(&bytes, &ifs_chars, &mut index);
-                    break;
+            {
+                if is_ws {
+                    debug_assert!(
+                        !current.is_empty(),
+                        "leading IFS whitespace should already be skipped"
+                    );
                 }
+                values.push(current);
+                index += seq.len();
+                skip_read_ifs_ws(&bytes, &ifs_chars, &mut index);
+                break;
             }
             current.push(bytes[index].0);
             index += 1;

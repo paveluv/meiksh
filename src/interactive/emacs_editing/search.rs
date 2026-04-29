@@ -147,7 +147,7 @@ impl<'h> IncrementalSearch<'h> {
                 self.backspace();
                 SearchOutcome::Continue
             }
-            b if b >= b' ' && b < 0x7f => {
+            b if (b' '..0x7f).contains(&b) => {
                 self.push_byte(b);
                 SearchOutcome::Continue
             }

@@ -46,7 +46,7 @@ pub(super) fn printf_parse_numeric_arg(shell: &Shell, arg: &[u8], had_error: &mu
     val
 }
 
-pub(super) fn printf_get_arg<'a>(args: &'a [Vec<u8>], base: usize, idx: usize) -> &'a [u8] {
+pub(super) fn printf_get_arg(args: &[Vec<u8>], base: usize, idx: usize) -> &[u8] {
     args.get(base + idx).map(|s| s.as_slice()).unwrap_or(b"")
 }
 

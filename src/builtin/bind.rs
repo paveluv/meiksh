@@ -138,7 +138,7 @@ fn do_apply_editline(
         Ok(bytes) => bytes,
         Err(msg) => {
             let mut full = b"bind: ".to_vec();
-            full.extend_from_slice(msg.as_bytes());
+            full.extend_from_slice(&msg);
             let _ = shell.diagnostic(1, &full);
             return Ok(BuiltinOutcome::Status(1));
         }
@@ -280,7 +280,7 @@ fn parse_bind_x_spec(spec: &[u8]) -> Option<BindXSpec> {
     })
 }
 
-fn parse_key_argument(key: &[u8]) -> Result<Vec<u8>, String> {
+fn parse_key_argument(key: &[u8]) -> Result<Vec<u8>, Vec<u8>> {
     use crate::interactive::inputrc::escape::{decode_escape, decode_keyname, decode_quoted};
     if key.first() == Some(&b'"') {
         let (bytes, _) = decode_quoted(&key[1..])?;

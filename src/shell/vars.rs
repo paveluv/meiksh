@@ -240,6 +240,7 @@ impl Eq for CachedVarBinding {}
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::disallowed_macros)]
     use super::*;
 
     #[test]

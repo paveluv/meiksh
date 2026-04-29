@@ -30,10 +30,10 @@ pub(crate) fn has_active_glob_meta(segment: &[u8]) -> bool {
                 // expression (2.13.1: "[<range>]"). A well-formed form is
                 // `[...]` with at least one byte between the brackets.
                 // `[]` alone is not a bracket expression.
-                if let Some(rel) = segment[i + 1..].iter().position(|&b| b == b']') {
-                    if rel >= 1 {
-                        return true;
-                    }
+                if let Some(rel) = segment[i + 1..].iter().position(|&b| b == b']')
+                    && rel >= 1
+                {
+                    return true;
                 }
                 // No matching `]` in this segment, or empty content —
                 // treat this `[` as literal and keep scanning.
@@ -156,7 +156,7 @@ pub(super) fn expand_path_segments(
 
 pub(super) fn path_join(base: &[u8], name: &[u8]) -> Vec<u8> {
     let mut result = base.to_vec();
-    if !result.is_empty() && *result.last().unwrap() != b'/' {
+    if !result.is_empty() && !result.ends_with(b"/") {
         result.push(b'/');
     }
     result.extend_from_slice(name);

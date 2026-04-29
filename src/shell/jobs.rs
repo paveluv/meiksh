@@ -1082,10 +1082,10 @@ mod tests {
     fn known_job_status_fast_path_avoids_syscalls() {
         let mut shell = test_shell();
         let id = shell.register_background_job(b"sleep"[..].into(), None, vec![fake_handle(2006)]);
-        if let Some(job) = shell.jobs.iter().find(|job| job.id == id) {
-            if let Some(pid) = job.last_pid {
-                shell.known_pid_statuses.insert(pid, 1);
-            }
+        if let Some(job) = shell.jobs.iter().find(|job| job.id == id)
+            && let Some(pid) = job.last_pid
+        {
+            shell.known_pid_statuses.insert(pid, 1);
         }
         shell.known_job_statuses.insert(id, 5);
         assert_no_syscalls(|| {

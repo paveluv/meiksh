@@ -165,10 +165,10 @@ pub(super) fn apply_child_fd_actions(actions: &[ChildFdAction]) -> sys::error::S
                 sys::fd_io::duplicate_fd(*source_fd, *target_fd)?;
             }
             ChildFdAction::CloseFd { target_fd } => {
-                if let Err(error) = sys::fd_io::close_fd(*target_fd) {
-                    if !error.is_ebadf() {
-                        return Err(error);
-                    }
+                if let Err(error) = sys::fd_io::close_fd(*target_fd)
+                    && !error.is_ebadf()
+                {
+                    return Err(error);
                 }
             }
         }
@@ -335,10 +335,10 @@ pub(super) fn replace_shell_fd(fd: i32, target_fd: i32) -> sys::error::SysResult
 }
 
 pub(super) fn close_shell_fd(target_fd: i32) -> sys::error::SysResult<()> {
-    if let Err(error) = sys::fd_io::close_fd(target_fd) {
-        if !error.is_ebadf() {
-            return Err(error);
-        }
+    if let Err(error) = sys::fd_io::close_fd(target_fd)
+        && !error.is_ebadf()
+    {
+        return Err(error);
     }
     Ok(())
 }
@@ -481,8 +481,8 @@ mod tests {
                         kind: RedirectionKind::HereDoc,
                         target: literal_word(b"EOF"),
                         here_doc: Some(HereDoc {
-                            delimiter: b"EOF".to_vec().into(),
-                            body: b"hello $USER".to_vec().into(),
+                            delimiter: b"EOF".to_vec(),
+                            body: b"hello $USER".to_vec(),
                             body_parts: crate::syntax::build_heredoc_parts(b"hello $USER"),
                             expand: true,
                             strip_tabs: false,
@@ -505,8 +505,8 @@ mod tests {
                         kind: RedirectionKind::HereDoc,
                         target: literal_word(b"EOF"),
                         here_doc: Some(HereDoc {
-                            delimiter: b"EOF".to_vec().into(),
-                            body: b"hello $USER".to_vec().into(),
+                            delimiter: b"EOF".to_vec(),
+                            body: b"hello $USER".to_vec(),
                             body_parts: Vec::new(),
                             expand: false,
                             strip_tabs: false,
@@ -541,8 +541,8 @@ mod tests {
                         kind: RedirectionKind::HereDoc,
                         target: literal_word(b"EOF"),
                         here_doc: Some(HereDoc {
-                            delimiter: b"EOF".to_vec().into(),
-                            body: b"hello\nworld\n".to_vec().into(),
+                            delimiter: b"EOF".to_vec(),
+                            body: b"hello\nworld\n".to_vec(),
                             body_parts: Vec::new(),
                             expand: false,
                             strip_tabs: true,

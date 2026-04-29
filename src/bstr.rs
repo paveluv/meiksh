@@ -169,7 +169,7 @@ pub(crate) fn parse_octal_i64(bytes: &[u8]) -> Option<i64> {
     }
     let mut result: i64 = 0;
     for &b in bytes {
-        if b < b'0' || b > b'7' {
+        if !(b'0'..=b'7').contains(&b) {
             return None;
         }
         result = result.checked_mul(8)?.checked_add((b - b'0') as i64)?;

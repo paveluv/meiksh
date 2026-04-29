@@ -347,7 +347,7 @@ mod tests {
         assert_no_syscalls(|| {
             let simple = SimpleCommand {
                 words: vec![Word {
-                    raw: b"echo".to_vec().into(),
+                    raw: b"echo".to_vec(),
                     parts: Vec::new(),
                     line: 0,
                 }],
@@ -356,7 +356,7 @@ mod tests {
                         fd: Some(5),
                         kind: RedirectionKind::ReadWrite,
                         target: Word {
-                            raw: b"rw".to_vec().into(),
+                            raw: b"rw".to_vec(),
                             parts: Vec::new(),
                             line: 0,
                         },
@@ -366,7 +366,7 @@ mod tests {
                         fd: Some(0),
                         kind: RedirectionKind::DupInput,
                         target: Word {
-                            raw: b"5".to_vec().into(),
+                            raw: b"5".to_vec(),
                             parts: Vec::new(),
                             line: 0,
                         },
@@ -376,7 +376,7 @@ mod tests {
                         fd: Some(1),
                         kind: RedirectionKind::DupOutput,
                         target: Word {
-                            raw: b"-".to_vec().into(),
+                            raw: b"-".to_vec(),
                             parts: Vec::new(),
                             line: 0,
                         },
@@ -403,7 +403,7 @@ mod tests {
                             timed: TimedMode::Off,
                             commands: vec![Command::Simple(SimpleCommand {
                                 words: vec![Word {
-                                    raw: b"true".to_vec().into(),
+                                    raw: b"true".to_vec(),
                                     parts: Vec::new(),
                                     line: 0,
                                 }],
@@ -418,7 +418,7 @@ mod tests {
             };
 
             let function = FunctionDef {
-                name: b"greet".to_vec().into(),
+                name: b"greet".to_vec(),
                 body: Rc::new(Command::Group(program.clone())),
             };
             let if_command = IfCommand {
@@ -452,7 +452,7 @@ mod tests {
                     },
                 )],
                 words: vec![Word {
-                    raw: b"echo".to_vec().into(),
+                    raw: b"echo".to_vec(),
                     parts: Vec::new(),
                     line: 0,
                 }],
@@ -460,7 +460,7 @@ mod tests {
                     fd: None,
                     kind: RedirectionKind::Write,
                     target: Word {
-                        raw: b"out".to_vec().into(),
+                        raw: b"out".to_vec(),
                         parts: Vec::new(),
                         line: 0,
                     },
@@ -520,7 +520,7 @@ mod tests {
                                 timed: TimedMode::Off,
                                 commands: vec![Command::Simple(SimpleCommand {
                                     words: vec![Word {
-                                        raw: b"true".to_vec().into(),
+                                        raw: b"true".to_vec(),
                                         parts: Vec::new(),
                                         line: 0,
                                     }],
@@ -539,7 +539,7 @@ mod tests {
                                 timed: TimedMode::Off,
                                 commands: vec![Command::Simple(SimpleCommand {
                                     words: vec![Word {
-                                        raw: b"false".to_vec().into(),
+                                        raw: b"false".to_vec(),
                                         parts: Vec::new(),
                                         line: 0,
                                     }],
@@ -570,7 +570,7 @@ mod tests {
                     timed: TimedMode::Off,
                     commands: vec![Command::Simple(SimpleCommand {
                         words: vec![Word {
-                            raw: b"true".to_vec().into(),
+                            raw: b"true".to_vec(),
                             parts: Vec::new(),
                             line: 0,
                         }],
@@ -584,7 +584,7 @@ mod tests {
                         timed: TimedMode::Off,
                         commands: vec![Command::Simple(SimpleCommand {
                             words: vec![Word {
-                                raw: b"false".to_vec().into(),
+                                raw: b"false".to_vec(),
                                 parts: Vec::new(),
                                 line: 0,
                             }],
@@ -652,7 +652,7 @@ mod tests {
                     timed: TimedMode::Off,
                     commands: vec![Command::Simple(SimpleCommand {
                         words: vec![Word {
-                            raw: b"false".to_vec().into(),
+                            raw: b"false".to_vec(),
                             parts: Vec::new(),
                             line: 0,
                         }],
@@ -666,7 +666,7 @@ mod tests {
                         timed: TimedMode::Off,
                         commands: vec![Command::Simple(SimpleCommand {
                             words: vec![Word {
-                                raw: b"true".to_vec().into(),
+                                raw: b"true".to_vec(),
                                 parts: Vec::new(),
                                 line: 0,
                             }],
@@ -683,9 +683,9 @@ mod tests {
     fn render_command_for_and_case() {
         assert_no_syscalls(|| {
             let for_cmd = Command::For(ForCommand {
-                name: b"x".to_vec().into(),
+                name: b"x".to_vec(),
                 items: Some(vec![Word {
-                    raw: b"a".to_vec().into(),
+                    raw: b"a".to_vec(),
                     parts: Vec::new(),
                     line: 0,
                 }]),
@@ -697,7 +697,7 @@ mod tests {
                                 timed: TimedMode::Off,
                                 commands: vec![Command::Simple(SimpleCommand {
                                     words: vec![Word {
-                                        raw: b"echo".to_vec().into(),
+                                        raw: b"echo".to_vec(),
                                         parts: Vec::new(),
                                         line: 0,
                                     }],
@@ -716,13 +716,13 @@ mod tests {
 
             let case_cmd = Command::Case(CaseCommand {
                 word: Word {
-                    raw: b"val".to_vec().into(),
+                    raw: b"val".to_vec(),
                     parts: Vec::new(),
                     line: 0,
                 },
                 arms: vec![crate::syntax::ast::CaseArm {
                     patterns: vec![Word {
-                        raw: b"a".to_vec().into(),
+                        raw: b"a".to_vec(),
                         parts: Vec::new(),
                         line: 0,
                     }],
@@ -734,7 +734,7 @@ mod tests {
                                     timed: TimedMode::Off,
                                     commands: vec![Command::Simple(SimpleCommand {
                                         words: vec![Word {
-                                            raw: b"echo".to_vec().into(),
+                                            raw: b"echo".to_vec(),
                                             parts: Vec::new(),
                                             line: 0,
                                         }],
@@ -766,7 +766,7 @@ mod tests {
                             timed: TimedMode::Off,
                             commands: vec![Command::Simple(SimpleCommand {
                                 words: vec![Word {
-                                    raw: b"true".to_vec().into(),
+                                    raw: b"true".to_vec(),
                                     parts: Vec::new(),
                                     line: 0,
                                 }],
@@ -808,7 +808,7 @@ mod tests {
                             timed: TimedMode::Off,
                             commands: vec![Command::Simple(SimpleCommand {
                                 words: vec![Word {
-                                    raw: b"false".to_vec().into(),
+                                    raw: b"false".to_vec(),
                                     parts: Vec::new(),
                                     line: 0,
                                 }],
@@ -843,7 +843,7 @@ mod tests {
                             timed: TimedMode::Off,
                             commands: vec![Command::Simple(SimpleCommand {
                                 words: vec![Word {
-                                    raw: b"echo".to_vec().into(),
+                                    raw: b"echo".to_vec(),
                                     parts: Vec::new(),
                                     line: 0,
                                 }],
@@ -858,20 +858,20 @@ mod tests {
             };
 
             let with_items = ForCommand {
-                name: b"item".to_vec().into(),
+                name: b"item".to_vec(),
                 items: Some(vec![
                     Word {
-                        raw: b"a".to_vec().into(),
+                        raw: b"a".to_vec(),
                         parts: Vec::new(),
                         line: 0,
                     },
                     Word {
-                        raw: b"b".to_vec().into(),
+                        raw: b"b".to_vec(),
                         parts: Vec::new(),
                         line: 0,
                     },
                     Word {
-                        raw: b"c".to_vec().into(),
+                        raw: b"c".to_vec(),
                         parts: Vec::new(),
                         line: 0,
                     },
@@ -882,7 +882,7 @@ mod tests {
             assert_eq!(rendered, b"for item in a b c\ndo\necho\ndone");
 
             let without_items = ForCommand {
-                name: b"arg".to_vec().into(),
+                name: b"arg".to_vec(),
                 items: None,
                 body,
             };
@@ -902,7 +902,7 @@ mod tests {
                             timed: TimedMode::Off,
                             commands: vec![Command::Simple(SimpleCommand {
                                 words: vec![Word {
-                                    raw: b"echo".to_vec().into(),
+                                    raw: b"echo".to_vec(),
                                     parts: Vec::new(),
                                     line: 0,
                                 }],
@@ -917,7 +917,7 @@ mod tests {
             };
             let case_cmd = CaseCommand {
                 word: Word {
-                    raw: b"val".to_vec().into(),
+                    raw: b"val".to_vec(),
                     parts: Vec::new(),
                     line: 0,
                 },
@@ -925,12 +925,12 @@ mod tests {
                     crate::syntax::ast::CaseArm {
                         patterns: vec![
                             Word {
-                                raw: b"a".to_vec().into(),
+                                raw: b"a".to_vec(),
                                 parts: Vec::new(),
                                 line: 0,
                             },
                             Word {
-                                raw: b"b".to_vec().into(),
+                                raw: b"b".to_vec(),
                                 parts: Vec::new(),
                                 line: 0,
                             },
@@ -940,7 +940,7 @@ mod tests {
                     },
                     crate::syntax::ast::CaseArm {
                         patterns: vec![Word {
-                            raw: b"c".to_vec().into(),
+                            raw: b"c".to_vec(),
                             parts: Vec::new(),
                             line: 0,
                         }],
@@ -967,7 +967,7 @@ mod tests {
                 fd: None,
                 kind: RedirectionKind::Read,
                 target: Word {
-                    raw: b"input.txt".to_vec().into(),
+                    raw: b"input.txt".to_vec(),
                     parts: Vec::new(),
                     line: 0,
                 },
@@ -981,7 +981,7 @@ mod tests {
                 fd: Some(1),
                 kind: RedirectionKind::ClobberWrite,
                 target: Word {
-                    raw: b"out.txt".to_vec().into(),
+                    raw: b"out.txt".to_vec(),
                     parts: Vec::new(),
                     line: 0,
                 },
@@ -995,7 +995,7 @@ mod tests {
                 fd: Some(2),
                 kind: RedirectionKind::Append,
                 target: Word {
-                    raw: b"log".to_vec().into(),
+                    raw: b"log".to_vec(),
                     parts: Vec::new(),
                     line: 0,
                 },
@@ -1009,13 +1009,13 @@ mod tests {
                 fd: None,
                 kind: RedirectionKind::HereDoc,
                 target: Word {
-                    raw: b"EOF".to_vec().into(),
+                    raw: b"EOF".to_vec(),
                     parts: Vec::new(),
                     line: 0,
                 },
                 here_doc: Some(HereDoc {
-                    delimiter: b"EOF".to_vec().into(),
-                    body: b"content\n".to_vec().into(),
+                    delimiter: b"EOF".to_vec(),
+                    body: b"content\n".to_vec(),
                     body_parts: Vec::new(),
                     expand: false,
                     strip_tabs: true,
@@ -1030,13 +1030,13 @@ mod tests {
                 fd: None,
                 kind: RedirectionKind::HereDoc,
                 target: Word {
-                    raw: b"END".to_vec().into(),
+                    raw: b"END".to_vec(),
                     parts: Vec::new(),
                     line: 0,
                 },
                 here_doc: Some(HereDoc {
-                    delimiter: b"END".to_vec().into(),
-                    body: b"stuff\n".to_vec().into(),
+                    delimiter: b"END".to_vec(),
+                    body: b"stuff\n".to_vec(),
                     body_parts: Vec::new(),
                     expand: false,
                     strip_tabs: false,
@@ -1053,8 +1053,8 @@ mod tests {
     fn render_here_doc_body_appends_newline_when_missing() {
         assert_no_syscalls(|| {
             let with_newline = HereDoc {
-                delimiter: b"EOF".to_vec().into(),
-                body: b"hello\n".to_vec().into(),
+                delimiter: b"EOF".to_vec(),
+                body: b"hello\n".to_vec(),
                 body_parts: Vec::new(),
                 expand: false,
                 strip_tabs: false,
@@ -1063,8 +1063,8 @@ mod tests {
             assert_eq!(render_here_doc_body(&with_newline), b"hello\nEOF");
 
             let without_newline = HereDoc {
-                delimiter: b"EOF".to_vec().into(),
-                body: b"hello".to_vec().into(),
+                delimiter: b"EOF".to_vec(),
+                body: b"hello".to_vec(),
                 body_parts: Vec::new(),
                 expand: false,
                 strip_tabs: false,
@@ -1079,7 +1079,7 @@ mod tests {
         assert_no_syscalls(|| {
             let simple = SimpleCommand {
                 words: vec![Word {
-                    raw: b"cat".to_vec().into(),
+                    raw: b"cat".to_vec(),
                     parts: Vec::new(),
                     line: 0,
                 }],
@@ -1088,13 +1088,13 @@ mod tests {
                         fd: None,
                         kind: RedirectionKind::HereDoc,
                         target: Word {
-                            raw: b"EOF1".to_vec().into(),
+                            raw: b"EOF1".to_vec(),
                             parts: Vec::new(),
                             line: 0,
                         },
                         here_doc: Some(HereDoc {
-                            delimiter: b"EOF1".to_vec().into(),
-                            body: b"first\n".to_vec().into(),
+                            delimiter: b"EOF1".to_vec(),
+                            body: b"first\n".to_vec(),
                             body_parts: Vec::new(),
                             expand: false,
                             strip_tabs: false,
@@ -1105,13 +1105,13 @@ mod tests {
                         fd: Some(3),
                         kind: RedirectionKind::HereDoc,
                         target: Word {
-                            raw: b"EOF2".to_vec().into(),
+                            raw: b"EOF2".to_vec(),
                             parts: Vec::new(),
                             line: 0,
                         },
                         here_doc: Some(HereDoc {
-                            delimiter: b"EOF2".to_vec().into(),
-                            body: b"second".to_vec().into(),
+                            delimiter: b"EOF2".to_vec(),
+                            body: b"second".to_vec(),
                             body_parts: Vec::new(),
                             expand: false,
                             strip_tabs: false,
@@ -1138,7 +1138,7 @@ mod tests {
                 commands: vec![
                     Command::Simple(SimpleCommand {
                         words: vec![Word {
-                            raw: b"cat".to_vec().into(),
+                            raw: b"cat".to_vec(),
                             parts: Vec::new(),
                             line: 0,
                         }],
@@ -1146,7 +1146,7 @@ mod tests {
                     }),
                     Command::Simple(SimpleCommand {
                         words: vec![Word {
-                            raw: b"grep".to_vec().into(),
+                            raw: b"grep".to_vec(),
                             parts: Vec::new(),
                             line: 0,
                         }],
@@ -1165,7 +1165,7 @@ mod tests {
             let cmd = Command::Redirected(
                 Box::new(Command::Simple(SimpleCommand {
                     words: vec![Word {
-                        raw: b"echo".to_vec().into(),
+                        raw: b"echo".to_vec(),
                         parts: Vec::new(),
                         line: 0,
                     }],
@@ -1175,7 +1175,7 @@ mod tests {
                     fd: None,
                     kind: RedirectionKind::Write,
                     target: Word {
-                        raw: b"out.txt".to_vec().into(),
+                        raw: b"out.txt".to_vec(),
                         parts: Vec::new(),
                         line: 0,
                     },
@@ -1195,7 +1195,7 @@ mod tests {
                     fd: Some(2),
                     kind: RedirectionKind::Append,
                     target: Word {
-                        raw: b"err.log".to_vec().into(),
+                        raw: b"err.log".to_vec(),
                         parts: Vec::new(),
                         line: 0,
                     },

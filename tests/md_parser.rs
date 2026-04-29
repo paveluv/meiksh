@@ -113,7 +113,7 @@ fn is_heading(line: &str) -> bool {
     let trimmed = line.trim_start();
     trimmed.starts_with('#') && {
         let hashes = trimmed.chars().take_while(|&c| c == '#').count();
-        hashes >= 1 && hashes <= 6 && trimmed.as_bytes().get(hashes) == Some(&b' ')
+        (1..=6).contains(&hashes) && trimmed.as_bytes().get(hashes) == Some(&b' ')
     }
 }
 

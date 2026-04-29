@@ -53,14 +53,11 @@ pub(super) fn getopts(shell: &mut Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutc
         shell.positional.clone()
     };
 
-    let optind: usize = shell
-        .get_var(b"OPTIND")
-        .and_then(|s| parse_usize(s))
-        .unwrap_or(1);
+    let optind: usize = shell.get_var(b"OPTIND").and_then(parse_usize).unwrap_or(1);
 
     let charind: usize = shell
         .get_var(b"_GETOPTS_CIND")
-        .and_then(|s| parse_usize(s))
+        .and_then(parse_usize)
         .unwrap_or(0);
 
     match getopts_inner(shell, name, opts, silent, &params, optind, charind) {

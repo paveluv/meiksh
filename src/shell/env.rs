@@ -17,7 +17,7 @@ const LOCALE_VARS: &[&[u8]] = &[
 ];
 
 fn is_locale_var(name: &[u8]) -> bool {
-    LOCALE_VARS.iter().any(|v| *v == name)
+    LOCALE_VARS.contains(&name)
 }
 
 impl Shell {
@@ -82,7 +82,7 @@ impl Shell {
 
     pub(crate) fn set_var(&mut self, name: &[u8], value: &[u8]) -> Result<(), VarError> {
         let vars = self.vars_mut();
-        let slot = vars.ensure_slot(name) as u32;
+        let slot = vars.ensure_slot(name);
         self.set_var_by_slot(slot, name, value)
     }
 

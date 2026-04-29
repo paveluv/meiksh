@@ -134,7 +134,7 @@ fn set_plus_o_emacs_from_default_reports_off() {
     let last = text
         .lines()
         .filter(|l| l.contains("emacs"))
-        .last()
+        .next_back()
         .unwrap_or("");
     assert!(
         last.contains("off"),
@@ -182,7 +182,7 @@ fn set_plus_o_emacs_disables_and_reports_off() {
     let last = text
         .lines()
         .filter(|l| l.contains("emacs"))
-        .last()
+        .next_back()
         .unwrap_or("");
     assert!(
         last.contains("off"),

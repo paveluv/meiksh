@@ -46,7 +46,7 @@ pub(super) fn fc(shell: &mut Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutcome, 
         }
         if arg.first() == Some(&b'-')
             && arg.len() > 1
-            && !arg[1..].first().map_or(false, |c| c.is_ascii_digit())
+            && !arg[1..].first().is_some_and(|c| c.is_ascii_digit())
         {
             let mut j = 1;
             while j < arg.len() {
@@ -112,13 +112,13 @@ pub(super) fn fc(shell: &mut Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutcome, 
             None => history.len() - 1,
         };
         let mut cmd = history[idx].to_vec();
-        if let Some((old, new)) = substitution {
-            if let Some(pos) = find_on_char_boundary(&cmd, old) {
-                let mut replaced = cmd[..pos].to_vec();
-                replaced.extend_from_slice(new);
-                replaced.extend_from_slice(&cmd[pos + old.len()..]);
-                cmd = replaced;
-            }
+        if let Some((old, new)) = substitution
+            && let Some(pos) = find_on_char_boundary(&cmd, old)
+        {
+            let mut replaced = cmd[..pos].to_vec();
+            replaced.extend_from_slice(new);
+            replaced.extend_from_slice(&cmd[pos + old.len()..]);
+            cmd = replaced;
         }
         shell.add_history(&cmd);
         let status = shell

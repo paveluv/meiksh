@@ -87,7 +87,7 @@ documented in [`tests/matrix/MD_TEST_SUITES.md`](../tests/matrix/MD_TEST_SUITES.
 The most recent run in this workspace reported:
 
 ```text
-Production-only line coverage: 99.54% (18593/18678)
+Production-only line coverage: 99.56% (18581/18664)
 ```
 
 Treat this as an informational baseline only; the value can change with any

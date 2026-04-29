@@ -282,7 +282,7 @@ mod tests {
     fn simple_object() {
         let val = parse_json(r#"{"key": "val", "flag": true}"#).unwrap();
         assert_eq!(val.get("key").unwrap().as_str().unwrap(), "val");
-        assert_eq!(val.get("flag").unwrap().as_bool().unwrap(), true);
+        assert!(val.get("flag").unwrap().as_bool().unwrap());
     }
 
     #[test]

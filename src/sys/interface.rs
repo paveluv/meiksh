@@ -86,7 +86,6 @@ pub(super) fn set_errno(errno: c_int) {
     #[cfg(test)]
     {
         super::test_support::set_test_errno(errno);
-        return;
     }
 
     #[cfg(not(test))]
@@ -114,7 +113,7 @@ unsafe fn errno_ptr() -> *mut c_int {
 pub(super) fn last_error() -> SysError {
     #[cfg(test)]
     {
-        return super::test_support::take_test_error();
+        super::test_support::take_test_error()
     }
 
     #[cfg(not(test))]

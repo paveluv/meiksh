@@ -621,8 +621,7 @@ fn expand_braced<C: Context>(
             }
             if use_word {
                 expand_braced_word(ctx, raw, word_parts, quoted, single_field, output, scratch)?;
-            } else {
-                let val = value.unwrap();
+            } else if let Some(val) = value {
                 output.push_value(val.as_bytes(), quoted, &scratch.ifs_chars);
             }
         }
@@ -644,8 +643,7 @@ fn expand_braced<C: Context>(
                 let expanded = expand_braced_word_text(ctx, raw, word_parts, scratch)?;
                 ctx.set_var(name, &expanded)?;
                 output.push_value(&expanded, quoted, &scratch.ifs_chars);
-            } else {
-                let val = value.unwrap();
+            } else if let Some(val) = value {
                 output.push_value(val.as_bytes(), quoted, &scratch.ifs_chars);
             }
         }
@@ -672,8 +670,9 @@ fn expand_braced<C: Context>(
                     message: msg.into(),
                 });
             }
-            let val = value.unwrap();
-            output.push_value(val.as_bytes(), quoted, &scratch.ifs_chars);
+            if let Some(val) = value {
+                output.push_value(val.as_bytes(), quoted, &scratch.ifs_chars);
+            }
         }
         BracedOp::Alt | BracedOp::AltColon => {
             let value = lookup_braced_param(ctx, raw, braced_name);

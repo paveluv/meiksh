@@ -210,10 +210,10 @@ fn probe_function_memoized(
     simple: &SimpleCommand,
     name: &[u8],
 ) -> Option<Rc<Command>> {
-    if let Some(slot) = simple.argv0_slot.borrow().as_ref() {
-        if let Some(body) = slot.body.borrow().as_ref().map(Rc::clone) {
-            return Some(body);
-        }
+    if let Some(slot) = simple.argv0_slot.borrow().as_ref()
+        && let Some(body) = slot.body.borrow().as_ref().map(Rc::clone)
+    {
+        return Some(body);
     }
     match shell.lookup_function_slot(name) {
         Some(slot) => {
@@ -355,7 +355,7 @@ pub(super) fn has_command_substitution(simple: &SimpleCommand) -> bool {
         .assignments
         .iter()
         .any(|a| word_has_cmd_sub(&a.value))
-        || simple.words.iter().any(|w| word_has_cmd_sub(w))
+        || simple.words.iter().any(word_has_cmd_sub)
 }
 
 pub(super) fn execute_simple(
@@ -995,7 +995,7 @@ mod tests {
         assert_no_syscalls(|| {
             let cmd = SimpleCommand {
                 words: vec![Word {
-                    raw: b"echo `date`".to_vec().into(),
+                    raw: b"echo `date`".to_vec(),
                     parts: Vec::new(),
                     line: 0,
                 }],
@@ -1005,7 +1005,7 @@ mod tests {
 
             let cmd_no_sub = SimpleCommand {
                 words: vec![Word {
-                    raw: b"plain".to_vec().into(),
+                    raw: b"plain".to_vec(),
                     parts: Vec::new(),
                     line: 0,
                 }],
@@ -1081,7 +1081,7 @@ mod tests {
 
             let cmd_dollar_paren_word = SimpleCommand {
                 words: vec![Word {
-                    raw: b"echo $(date)".to_vec().into(),
+                    raw: b"echo $(date)".to_vec(),
                     parts: Vec::new(),
                     line: 0,
                 }],
@@ -1099,7 +1099,7 @@ mod tests {
                     },
                 )],
                 words: vec![Word {
-                    raw: b"echo".to_vec().into(),
+                    raw: b"echo".to_vec(),
                     parts: Vec::new(),
                     line: 0,
                 }],

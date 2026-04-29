@@ -1,4 +1,4 @@
-#![allow(unused_imports)]
+#![allow(unused_imports, clippy::disallowed_macros)]
 
 use crate::shell::state::Shell;
 use crate::syntax::ast::{Assignment, HereDoc, Redirection, Word};

@@ -477,7 +477,7 @@ fn parse_braced_name_special_chars() {
         .expect("run");
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
-    let parts: Vec<&str> = stdout.trim().split_whitespace().collect();
+    let parts: Vec<&str> = stdout.split_whitespace().collect();
     assert!(parts.len() >= 3);
 }
 

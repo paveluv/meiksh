@@ -101,7 +101,7 @@ pub(crate) fn local_time_now() -> LocalTime {
         // Fixed default for tests that don't care about the specific
         // instant but do render one of the date/time escapes.
         // 2024-01-15 13:45:30 local, Monday.
-        return LocalTime::from_fields(30, 45, 13, 15, 1, 2024, 1, 14);
+        LocalTime::from_fields(30, 45, 13, 15, 1, 2024, 1, 14)
     }
 
     #[cfg(not(test))]

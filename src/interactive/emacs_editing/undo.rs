@@ -68,11 +68,10 @@ impl UndoStack {
             at: prev_at,
             bytes: prev_bytes,
         }) = self.stack.last_mut()
+            && *prev_at + prev_bytes.len() == at
         {
-            if *prev_at + prev_bytes.len() == at {
-                prev_bytes.extend_from_slice(&bytes);
-                return;
-            }
+            prev_bytes.extend_from_slice(&bytes);
+            return;
         }
         self.stack.push(UndoEntry::Inserted { at, bytes });
     }
@@ -115,7 +114,7 @@ impl UndoStack {
                 tmp.clear();
                 tmp.extend_from_slice(&swapped_a);
                 tmp.extend_from_slice(&swapped_b);
-                buf.splice(at..at + total, tmp.into_iter());
+                buf.splice(at..at + total, tmp);
                 *cursor = at + total;
             }
             UndoEntry::TransposeWords {
@@ -135,7 +134,7 @@ impl UndoStack {
                 rebuilt.extend_from_slice(&new_left);
                 rebuilt.extend_from_slice(&new_gap);
                 rebuilt.extend_from_slice(&new_right);
-                buf.splice(at..at + total, rebuilt.into_iter());
+                buf.splice(at..at + total, rebuilt);
                 *cursor = at + total;
             }
         }

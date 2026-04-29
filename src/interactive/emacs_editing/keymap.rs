@@ -401,6 +401,7 @@ pub(crate) const DEFAULT_BINDINGS: &[(&[u8], EmacsFn)] = &[
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::disallowed_types, clippy::disallowed_macros)]
     use super::*;
     use crate::sys::test_support::assert_no_syscalls;
 

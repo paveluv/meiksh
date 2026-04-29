@@ -172,23 +172,22 @@ pub(crate) fn apply(
 pub(crate) fn run_bind_x(shell: &mut Shell, state: &mut EmacsState, command: &[u8]) {
     // Snapshot current line / point into env so the command can read
     // them.
-    let cursor_str = format!("{}", state.cursor);
+    let cursor_str = crate::bstr::u64_to_bytes(state.cursor as u64);
     let prev_line = shell.get_var(b"READLINE_LINE").map(|b| b.to_vec());
     let prev_point = shell.get_var(b"READLINE_POINT").map(|b| b.to_vec());
     let _ = shell.set_var(b"READLINE_LINE", &state.buf);
-    let _ = shell.set_var(b"READLINE_POINT", cursor_str.as_bytes());
+    let _ = shell.set_var(b"READLINE_POINT", &cursor_str);
 
     let _ = shell.execute_string(command);
 
     if let Some(new_line) = shell.get_var(b"READLINE_LINE").map(|b| b.to_vec()) {
         state.buf = new_line;
     }
-    if let Some(new_point) = shell.get_var(b"READLINE_POINT").map(|b| b.to_vec()) {
-        if let Ok(s) = std::str::from_utf8(&new_point) {
-            if let Ok(n) = s.trim().parse::<usize>() {
-                state.cursor = n.min(state.buf.len());
-            }
-        }
+    if let Some(new_point) = shell.get_var(b"READLINE_POINT").map(|b| b.to_vec())
+        && let Ok(s) = std::str::from_utf8(&new_point)
+        && let Ok(n) = s.trim().parse::<usize>()
+    {
+        state.cursor = n.min(state.buf.len());
     }
 
     // Restore previous values (or remove if unset before).
@@ -373,9 +372,7 @@ fn do_transpose_chars(state: &mut EmacsState, out: &mut Outcome) {
     let mut merged = Vec::with_capacity(total);
     merged.extend_from_slice(&b);
     merged.extend_from_slice(&a);
-    state
-        .buf
-        .splice(a_start..a_start + total, merged.into_iter());
+    state.buf.splice(a_start..a_start + total, merged);
     state.cursor = a_start + total;
     state.undo.push(UndoEntry::TransposeChars {
         at: a_start,
@@ -455,9 +452,7 @@ fn do_transpose_words(state: &mut EmacsState, out: &mut Outcome) {
     merged.extend_from_slice(&right);
     merged.extend_from_slice(&gap);
     merged.extend_from_slice(&left);
-    state
-        .buf
-        .splice(left_start..left_start + total, merged.into_iter());
+    state.buf.splice(left_start..left_start + total, merged);
     state.cursor = left_start + total;
     state.undo.push(UndoEntry::TransposeWords {
         at: left_start,
@@ -604,10 +599,7 @@ fn do_yank_last_arg(shell: &Shell, state: &mut EmacsState, out: &mut Outcome) {
         out.bell = true;
         return;
     }
-    let walk = state
-        .yank_last_arg
-        .take()
-        .unwrap_or_else(YankArgState::default);
+    let walk = state.yank_last_arg.take().unwrap_or_default();
     let new_offset = if state.last_fn == Some(EmacsFn::YankLastArg) {
         walk.hist_offset + 1
     } else {

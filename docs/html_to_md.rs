@@ -1,3 +1,8 @@
+#![allow(
+    clippy::disallowed_types,
+    clippy::disallowed_macros,
+    clippy::disallowed_methods
+)]
 use std::collections::HashMap;
 use std::env;
 use std::error::Error;
@@ -184,10 +189,10 @@ fn render_document(document: &Node) -> String {
     let children = trim_to_first_heading(&body.children);
 
     let mut out = String::new();
-    if let Some(title) = title {
-        if !title.is_empty() {
-            append_block(&mut out, &format!("# {title}"));
-        }
+    if let Some(title) = title
+        && !title.is_empty()
+    {
+        append_block(&mut out, &format!("# {title}"));
     }
     render_blocks(children, &mut out);
     tidy_markdown(out)
@@ -311,10 +316,8 @@ fn try_render_multiline_code(p_element: &Element) -> Option<String> {
 fn find_nested_code_element(element: &Element) -> Option<&Element> {
     for child in &element.children {
         if let Node::Element(el) = child {
-            if matches!(el.name.as_str(), "code" | "tt" | "kbd" | "samp") {
-                if contains_br(el) {
-                    return Some(el);
-                }
+            if matches!(el.name.as_str(), "code" | "tt" | "kbd" | "samp") && contains_br(el) {
+                return Some(el);
             }
             if let Some(found) = find_nested_code_element(el) {
                 return Some(found);
@@ -936,10 +939,10 @@ fn find_first_element<'a>(element: &'a Element, name: &str) -> Option<&'a Elemen
         return Some(element);
     }
     for child in &element.children {
-        if let Node::Element(child_element) = child {
-            if let Some(found) = find_first_element(child_element, name) {
-                return Some(found);
-            }
+        if let Node::Element(child_element) = child
+            && let Some(found) = find_first_element(child_element, name)
+        {
+            return Some(found);
         }
     }
     None
@@ -982,21 +985,21 @@ fn collect_heading_anchor_slugs_into(
         return;
     };
 
-    if is_heading_tag(&element.name) {
-        if let Some(anchor) = extract_heading_anchor(element) {
-            let text = normalize_inline(&render_inline_children(&element.children));
-            if !text.is_empty() {
-                let base_slug = slugify_heading(&text);
-                if !base_slug.is_empty() {
-                    let count = slug_counts.entry(base_slug.clone()).or_insert(0);
-                    let slug = if *count == 0 {
-                        base_slug
-                    } else {
-                        format!("{}-{}", base_slug, *count)
-                    };
-                    *count += 1;
-                    mappings.insert(anchor, slug);
-                }
+    if is_heading_tag(&element.name)
+        && let Some(anchor) = extract_heading_anchor(element)
+    {
+        let text = normalize_inline(&render_inline_children(&element.children));
+        if !text.is_empty() {
+            let base_slug = slugify_heading(&text);
+            if !base_slug.is_empty() {
+                let count = slug_counts.entry(base_slug.clone()).or_insert(0);
+                let slug = if *count == 0 {
+                    base_slug
+                } else {
+                    format!("{}-{}", base_slug, *count)
+                };
+                *count += 1;
+                mappings.insert(anchor, slug);
             }
         }
     }
@@ -1052,11 +1055,9 @@ fn slugify_heading(text: &str) -> String {
         if ch.is_ascii_alphanumeric() {
             slug.push(ch.to_ascii_lowercase());
             last_was_dash = false;
-        } else if ch.is_whitespace() || ch == '-' {
-            if !slug.is_empty() && !last_was_dash {
-                slug.push('-');
-                last_was_dash = true;
-            }
+        } else if (ch.is_whitespace() || ch == '-') && !slug.is_empty() && !last_was_dash {
+            slug.push('-');
+            last_was_dash = true;
         }
     }
 
@@ -1130,10 +1131,10 @@ fn should_skip_element(element: &Element) -> bool {
                 return true;
             }
         }
-        if let Some(summary) = attr_value(element, "summary") {
-            if summary.to_ascii_lowercase().contains("navigation") {
-                return true;
-            }
+        if let Some(summary) = attr_value(element, "summary")
+            && summary.to_ascii_lowercase().contains("navigation")
+        {
+            return true;
         }
     }
 
@@ -1471,8 +1472,8 @@ fn decode_html_entities(input: &str) -> String {
         }
 
         let mut end = None;
-        let mut probe = chars.clone();
-        while let Some((probe_index, probe_ch)) = probe.next() {
+        let probe = chars.clone();
+        for (probe_index, probe_ch) in probe {
             if probe_ch == ';' {
                 end = Some(probe_index);
                 break;
@@ -1599,8 +1600,8 @@ fn format_plain_text(text: &str) -> String {
         }
 
         let mut end = None;
-        let mut probe = chars.clone();
-        while let Some((probe_index, probe_ch)) = probe.next() {
+        let probe = chars.clone();
+        for (probe_index, probe_ch) in probe {
             if probe_ch == '>' {
                 end = Some(probe_index);
                 break;

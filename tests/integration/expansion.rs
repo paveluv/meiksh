@@ -607,7 +607,7 @@ fn special_vars_via_parts() {
         .expect("run");
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
-    let parts: Vec<&str> = stdout.trim().split_whitespace().collect();
+    let parts: Vec<&str> = stdout.split_whitespace().collect();
     assert_eq!(parts[0], "3"); // $#
     assert_eq!(parts[1], "0"); // $?
     assert!(!parts[2].is_empty()); // $$
@@ -1939,7 +1939,7 @@ fn tilde_user_slash_path_then_word_break() {
         .expect("run");
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
-    let parts: Vec<&str> = stdout.trim().split_whitespace().collect();
+    let parts: Vec<&str> = stdout.split_whitespace().collect();
     assert_eq!(parts.len(), 2);
     assert!(parts[0].ends_with("/path"));
     assert_eq!(parts[1], "rest");

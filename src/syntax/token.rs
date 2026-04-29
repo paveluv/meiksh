@@ -774,30 +774,26 @@ impl<'a> Parser<'a> {
         }
 
         if let Token::Word(w, p) = tok {
-            if check_keyword {
-                if let Some(kw_tok) = word_to_keyword_token(&w) {
-                    return Ok(kw_tok);
-                }
+            if check_keyword && let Some(kw_tok) = word_to_keyword_token(&w) {
+                return Ok(kw_tok);
             }
-            if check_alias {
-                if let Some((key, value)) = self.aliases.get_key_value(&*w) {
-                    if is_alias_eligible(&w)
-                        && !self.expanding_aliases.contains(&*w)
-                        && self.alias_depth < 1024
-                    {
-                        let value: &[u8] = value;
-                        let trailing_blank = alias_has_trailing_blank(value);
-                        self.expanding_aliases.insert(Cow::Borrowed(&**key));
-                        self.alias_stack.push(AliasLayer {
-                            text: Cow::Borrowed(value),
-                            pos: 0,
-                            trailing_blank,
-                        });
-                        self.alias_depth += 1;
-                        self.sync_cached_byte();
-                        return self.produce_token_from_bytes();
-                    }
-                }
+            if check_alias
+                && let Some((key, value)) = self.aliases.get_key_value(&*w)
+                && is_alias_eligible(&w)
+                && !self.expanding_aliases.contains(&*w)
+                && self.alias_depth < 1024
+            {
+                let value: &[u8] = value;
+                let trailing_blank = alias_has_trailing_blank(value);
+                self.expanding_aliases.insert(Cow::Borrowed(&**key));
+                self.alias_stack.push(AliasLayer {
+                    text: Cow::Borrowed(value),
+                    pos: 0,
+                    trailing_blank,
+                });
+                self.alias_depth += 1;
+                self.sync_cached_byte();
+                return self.produce_token_from_bytes();
             }
             Ok(Token::Word(w, p))
         } else {
@@ -1043,11 +1039,11 @@ impl<'a> Parser<'a> {
                         }
                     }
                     self.skip_continuations();
-                    if matches!(self.peek_byte(), Some(b'<' | b'>')) {
-                        if let Some(fd) = parse_i32_bytes(&digits) {
-                            queued_items.push(HereDocLineItem::Token(Token::IoNumber(fd)));
-                            continue;
-                        }
+                    if matches!(self.peek_byte(), Some(b'<' | b'>'))
+                        && let Some(fd) = parse_i32_bytes(&digits)
+                    {
+                        queued_items.push(HereDocLineItem::Token(Token::IoNumber(fd)));
+                        continue;
                     }
                     self.word_raw.clear();
                     self.word_raw.extend_from_slice(&digits);
@@ -1140,10 +1136,10 @@ impl<'a> Parser<'a> {
             }
         }
         self.skip_continuations();
-        if matches!(self.peek_byte(), Some(b'<' | b'>')) {
-            if let Some(fd) = parse_i32_bytes(&digits) {
-                return Ok(Token::IoNumber(fd));
-            }
+        if matches!(self.peek_byte(), Some(b'<' | b'>'))
+            && let Some(fd) = parse_i32_bytes(&digits)
+        {
+            return Ok(Token::IoNumber(fd));
         }
         self.produce_word_with_prefix(digits)
     }
@@ -1173,11 +1169,11 @@ impl<'a> Parser<'a> {
         self.word_parts.clear();
         self.word_qbuf.clear();
         loop {
-            if self.word_raw.is_empty() {
-                if self.cached_byte.is_none() || matches!(self.peek_byte(), Some(b) if is_delim(b))
-                {
-                    return Ok(Token::Eof);
-                }
+            if self.word_raw.is_empty()
+                && (self.cached_byte.is_none()
+                    || matches!(self.peek_byte(), Some(b) if is_delim(b)))
+            {
+                return Ok(Token::Eof);
             }
 
             #[rustfmt::skip]
@@ -1194,35 +1190,30 @@ impl<'a> Parser<'a> {
             }
 
             if !had_quote {
-                if check_alias {
-                    if let Some((key, value)) = self.aliases.get_key_value(self.word_raw.as_slice())
-                    {
-                        if is_alias_eligible(&self.word_raw)
-                            && !self.expanding_aliases.contains(self.word_raw.as_slice())
-                            && self.alias_depth < 1024
-                        {
-                            let value: &[u8] = value;
-                            let trailing_blank = alias_has_trailing_blank(value);
-                            self.expanding_aliases.insert(Cow::Borrowed(&**key));
-                            self.word_raw.clear();
-                            self.word_parts.clear();
-                            self.word_qbuf.clear();
-                            self.alias_stack.push(AliasLayer {
-                                text: Cow::Borrowed(value),
-                                pos: 0,
-                                trailing_blank,
-                            });
-                            self.alias_depth += 1;
-                            self.sync_cached_byte();
-                            self.skip_blanks_and_comments();
-                            continue;
-                        }
-                    }
+                if check_alias
+                    && let Some((key, value)) = self.aliases.get_key_value(self.word_raw.as_slice())
+                    && is_alias_eligible(&self.word_raw)
+                    && !self.expanding_aliases.contains(self.word_raw.as_slice())
+                    && self.alias_depth < 1024
+                {
+                    let value: &[u8] = value;
+                    let trailing_blank = alias_has_trailing_blank(value);
+                    self.expanding_aliases.insert(Cow::Borrowed(&**key));
+                    self.word_raw.clear();
+                    self.word_parts.clear();
+                    self.word_qbuf.clear();
+                    self.alias_stack.push(AliasLayer {
+                        text: Cow::Borrowed(value),
+                        pos: 0,
+                        trailing_blank,
+                    });
+                    self.alias_depth += 1;
+                    self.sync_cached_byte();
+                    self.skip_blanks_and_comments();
+                    continue;
                 }
-                if check_keyword {
-                    if let Some(kw_tok) = word_to_keyword_token(&self.word_raw) {
-                        return Ok(kw_tok);
-                    }
+                if check_keyword && let Some(kw_tok) = word_to_keyword_token(&self.word_raw) {
+                    return Ok(kw_tok);
                 }
             }
 
@@ -2765,42 +2756,42 @@ mod tests {
     fn build_word_parts_for_slice_dquote_with_dollar() {
         let raw = b"${x:-\"$y\"}";
         let parts = build_word_parts_for_slice(raw, 5, 9, 0, false);
-        assert!(parts.len() >= 1);
+        assert!(!parts.is_empty());
     }
 
     #[test]
     fn build_word_parts_for_slice_dquote_with_backslash() {
         let raw = b"${x:-\"a\\$b\"}";
         let parts = build_word_parts_for_slice(raw, 5, 11, 0, false);
-        assert!(parts.len() >= 1);
+        assert!(!parts.is_empty());
     }
 
     #[test]
     fn build_word_parts_for_slice_dquote_with_backtick() {
         let raw = b"${x:-\"`echo y`\"}";
         let parts = build_word_parts_for_slice(raw, 5, 15, 0, false);
-        assert!(parts.len() >= 1);
+        assert!(!parts.is_empty());
     }
 
     #[test]
     fn build_word_parts_for_slice_top_level_backslash() {
         let raw = b"${x:-a\\nb}";
         let parts = build_word_parts_for_slice(raw, 5, 9, 0, false);
-        assert!(parts.len() >= 1);
+        assert!(!parts.is_empty());
     }
 
     #[test]
     fn build_word_parts_for_slice_top_level_dollar() {
         let raw = b"${x:-$y}";
         let parts = build_word_parts_for_slice(raw, 5, 7, 0, false);
-        assert!(parts.len() >= 1);
+        assert!(!parts.is_empty());
     }
 
     #[test]
     fn build_word_parts_for_slice_top_level_backtick() {
         let raw = b"${x:-`echo z`}";
         let parts = build_word_parts_for_slice(raw, 5, 13, 0, false);
-        assert!(parts.len() >= 1);
+        assert!(!parts.is_empty());
     }
 
     #[test]
@@ -2993,27 +2984,24 @@ mod tests {
 
     #[test]
     fn display_name_for_keywords_and_word() {
-        assert_eq!(&*Token::If.display_name(), b"if");
-        assert_eq!(&*Token::Then.display_name(), b"then");
-        assert_eq!(&*Token::Else.display_name(), b"else");
-        assert_eq!(&*Token::Elif.display_name(), b"elif");
-        assert_eq!(&*Token::Fi.display_name(), b"fi");
-        assert_eq!(&*Token::Do.display_name(), b"do");
-        assert_eq!(&*Token::Done.display_name(), b"done");
-        assert_eq!(&*Token::Case.display_name(), b"case");
-        assert_eq!(&*Token::Esac.display_name(), b"esac");
-        assert_eq!(&*Token::In.display_name(), b"in");
-        assert_eq!(&*Token::While.display_name(), b"while");
-        assert_eq!(&*Token::Until.display_name(), b"until");
-        assert_eq!(&*Token::For.display_name(), b"for");
-        assert_eq!(&*Token::Function.display_name(), b"function");
-        assert_eq!(&*Token::Bang.display_name(), b"!");
-        assert_eq!(&*Token::LBrace.display_name(), b"{");
-        assert_eq!(&*Token::RBrace.display_name(), b"}");
-        assert_eq!(
-            &*Token::Word(bx(b"foo"), Vec::new()).display_name(),
-            b"word"
-        );
+        assert_eq!(Token::If.display_name(), b"if");
+        assert_eq!(Token::Then.display_name(), b"then");
+        assert_eq!(Token::Else.display_name(), b"else");
+        assert_eq!(Token::Elif.display_name(), b"elif");
+        assert_eq!(Token::Fi.display_name(), b"fi");
+        assert_eq!(Token::Do.display_name(), b"do");
+        assert_eq!(Token::Done.display_name(), b"done");
+        assert_eq!(Token::Case.display_name(), b"case");
+        assert_eq!(Token::Esac.display_name(), b"esac");
+        assert_eq!(Token::In.display_name(), b"in");
+        assert_eq!(Token::While.display_name(), b"while");
+        assert_eq!(Token::Until.display_name(), b"until");
+        assert_eq!(Token::For.display_name(), b"for");
+        assert_eq!(Token::Function.display_name(), b"function");
+        assert_eq!(Token::Bang.display_name(), b"!");
+        assert_eq!(Token::LBrace.display_name(), b"{");
+        assert_eq!(Token::RBrace.display_name(), b"}");
+        assert_eq!(Token::Word(bx(b"foo"), Vec::new()).display_name(), b"word");
     }
 
     #[test]

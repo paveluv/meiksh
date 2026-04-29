@@ -67,14 +67,14 @@ pub(crate) enum EditlineLookup {
 /// Any byte that is neither `^` nor the start of a valid escape is
 /// emitted literally. This tolerates the spade of ESC-bracket CSI
 /// sequences (`^[[A`, `\e[1;5C`, etc.) found in real init files.
-pub(crate) fn decode_editline_keyseq(bytes: &[u8]) -> Result<Vec<u8>, String> {
+pub(crate) fn decode_editline_keyseq(bytes: &[u8]) -> Result<Vec<u8>, Vec<u8>> {
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
         match bytes[i] {
             b'^' => {
                 if i + 1 >= bytes.len() {
-                    return Err("dangling `^` in key sequence".to_string());
+                    return Err(b"dangling `^` in key sequence".to_vec());
                 }
                 let c = bytes[i + 1];
                 let byte = if c == b'?' {
@@ -87,7 +87,7 @@ pub(crate) fn decode_editline_keyseq(bytes: &[u8]) -> Result<Vec<u8>, String> {
             }
             b'\\' => {
                 if i + 1 >= bytes.len() {
-                    return Err("dangling backslash in key sequence".to_string());
+                    return Err(b"dangling backslash in key sequence".to_vec());
                 }
                 // `\E` is the editline synonym of `\e`. Everything else
                 // delegates to the shared readline decoder so the byte
@@ -119,7 +119,7 @@ pub(crate) fn decode_editline_keyseq(bytes: &[u8]) -> Result<Vec<u8>, String> {
         }
     }
     if out.is_empty() {
-        return Err("empty key sequence".to_string());
+        return Err(b"empty key sequence".to_vec());
     }
     Ok(out)
 }
@@ -137,7 +137,7 @@ pub(crate) fn translate_editline_function(name: &[u8]) -> EditlineLookup {
             return EditlineLookup::Mapped(*func);
         }
     }
-    if UNSUPPORTED_NAMES.iter().any(|n| *n == name) || is_ed_tty_family(name) {
+    if UNSUPPORTED_NAMES.contains(&name) || is_ed_tty_family(name) {
         return EditlineLookup::Unsupported;
     }
     EditlineLookup::Unknown
@@ -223,6 +223,7 @@ fn is_ed_tty_family(name: &[u8]) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::disallowed_types, clippy::disallowed_macros)]
     use super::*;
     use crate::sys::test_support::assert_no_syscalls;
 

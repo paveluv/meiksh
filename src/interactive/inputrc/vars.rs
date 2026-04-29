@@ -67,10 +67,10 @@ pub(crate) enum EditingMode {
 }
 
 /// Parse `<name> <value>` from the line after the leading `set `.
-pub(crate) fn parse_assignment(line: &[u8], vars: &mut InputrcVars) -> Result<(), String> {
+pub(crate) fn parse_assignment(line: &[u8], vars: &mut InputrcVars) -> Result<(), Vec<u8>> {
     let (name, rest) = split_name_value(line);
     if name.is_empty() {
-        return Err("expected variable name after `set`".to_string());
+        return Err(b"expected variable name after `set`".to_vec());
     }
     let val = rest.unwrap_or(b"");
     match name {
@@ -80,10 +80,9 @@ pub(crate) fn parse_assignment(line: &[u8], vars: &mut InputrcVars) -> Result<()
                 b"audible" => BellStyle::Audible,
                 b"visible" => BellStyle::Visible,
                 other => {
-                    return Err(format!(
-                        "invalid value for bell-style: {}",
-                        String::from_utf8_lossy(other)
-                    ));
+                    let mut msg = b"invalid value for bell-style: ".to_vec();
+                    msg.extend_from_slice(other);
+                    return Err(msg);
                 }
             };
             Ok(())
@@ -100,10 +99,9 @@ pub(crate) fn parse_assignment(line: &[u8], vars: &mut InputrcVars) -> Result<()
                 b"emacs" => EditingMode::Emacs,
                 b"vi" => EditingMode::Vi,
                 other => {
-                    return Err(format!(
-                        "invalid editing-mode: {}",
-                        String::from_utf8_lossy(other)
-                    ));
+                    let mut msg = b"invalid editing-mode: ".to_vec();
+                    msg.extend_from_slice(other);
+                    return Err(msg);
                 }
             };
             Ok(())
@@ -120,10 +118,11 @@ pub(crate) fn parse_assignment(line: &[u8], vars: &mut InputrcVars) -> Result<()
         // have no runtime effect.
         b"input-meta" | b"meta-flag" => set_bool(val, &mut vars.input_meta, name),
         b"output-meta" => set_bool(val, &mut vars.output_meta, name),
-        other => Err(format!(
-            "unknown variable: {}",
-            String::from_utf8_lossy(other)
-        )),
+        other => {
+            let mut msg = b"unknown variable: ".to_vec();
+            msg.extend_from_slice(other);
+            Err(msg)
+        }
     }
 }
 
@@ -151,7 +150,7 @@ fn split_name_value(line: &[u8]) -> (&[u8], Option<&[u8]>) {
     }
 }
 
-fn set_bool(val: &[u8], slot: &mut bool, name: &[u8]) -> Result<(), String> {
+fn set_bool(val: &[u8], slot: &mut bool, name: &[u8]) -> Result<(), Vec<u8>> {
     match val.to_ascii_lowercase().as_slice() {
         b"on" | b"true" | b"yes" | b"1" => {
             *slot = true;
@@ -161,27 +160,29 @@ fn set_bool(val: &[u8], slot: &mut bool, name: &[u8]) -> Result<(), String> {
             *slot = false;
             Ok(())
         }
-        other => Err(format!(
-            "invalid boolean for {}: {}",
-            String::from_utf8_lossy(name),
-            String::from_utf8_lossy(other)
-        )),
+        other => {
+            let mut msg = b"invalid boolean for ".to_vec();
+            msg.extend_from_slice(name);
+            msg.extend_from_slice(b": ");
+            msg.extend_from_slice(other);
+            Err(msg)
+        }
     }
 }
 
-fn set_u32(val: &[u8], slot: &mut u32, name: &[u8]) -> Result<(), String> {
+fn set_u32(val: &[u8], slot: &mut u32, name: &[u8]) -> Result<(), Vec<u8>> {
     let s = std::str::from_utf8(val).map_err(|_| {
-        format!(
-            "invalid integer for {}: non-utf8",
-            String::from_utf8_lossy(name)
-        )
+        let mut msg = b"invalid integer for ".to_vec();
+        msg.extend_from_slice(name);
+        msg.extend_from_slice(b": non-utf8");
+        msg
     })?;
     let n: u32 = s.trim().parse().map_err(|_| {
-        format!(
-            "invalid integer for {}: {}",
-            String::from_utf8_lossy(name),
-            s
-        )
+        let mut msg = b"invalid integer for ".to_vec();
+        msg.extend_from_slice(name);
+        msg.extend_from_slice(b": ");
+        msg.extend_from_slice(s.as_bytes());
+        msg
     })?;
     *slot = n;
     Ok(())
@@ -189,6 +190,7 @@ fn set_u32(val: &[u8], slot: &mut u32, name: &[u8]) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::disallowed_types, clippy::disallowed_macros)]
     use super::*;
     use crate::sys::test_support::assert_no_syscalls;
 
@@ -219,7 +221,7 @@ mod tests {
         assert_no_syscalls(|| {
             let mut v = InputrcVars::default();
             let err = parse_assignment(b"whatever 1", &mut v).unwrap_err();
-            assert!(err.contains("unknown variable"));
+            assert!(err.windows(16).any(|w| w == b"unknown variable"));
         });
     }
 
@@ -272,11 +274,19 @@ mod tests {
         assert_no_syscalls(|| {
             let mut v = InputrcVars::default();
             let err = parse_assignment(b"", &mut v).unwrap_err();
-            assert!(err.contains("expected variable name"), "got: {err}");
+            assert!(
+                err.windows(22).any(|w| w == b"expected variable name"),
+                "got: {:?}",
+                String::from_utf8_lossy(&err)
+            );
             // Whitespace-only input also has no name: split_name_value
             // reads zero non-space bytes, returning an empty name.
             let err = parse_assignment(b"  ", &mut v).unwrap_err();
-            assert!(err.contains("expected variable name"), "got: {err}");
+            assert!(
+                err.windows(22).any(|w| w == b"expected variable name"),
+                "got: {:?}",
+                String::from_utf8_lossy(&err)
+            );
         });
     }
 
@@ -289,9 +299,17 @@ mod tests {
             // integer parse failure on an empty string.
             let mut v = InputrcVars::default();
             let err = parse_assignment(b"history-size", &mut v).unwrap_err();
-            assert!(err.contains("invalid integer"), "got: {err}");
+            assert!(
+                err.windows(15).any(|w| w == b"invalid integer"),
+                "got: {:?}",
+                String::from_utf8_lossy(&err)
+            );
             let err = parse_assignment(b"completion-ignore-case", &mut v).unwrap_err();
-            assert!(err.contains("invalid boolean"), "got: {err}");
+            assert!(
+                err.windows(15).any(|w| w == b"invalid boolean"),
+                "got: {:?}",
+                String::from_utf8_lossy(&err)
+            );
         });
     }
 
@@ -311,7 +329,12 @@ mod tests {
         assert_no_syscalls(|| {
             let mut v = InputrcVars::default();
             let err = parse_assignment(b"bell-style loud", &mut v).unwrap_err();
-            assert!(err.contains("invalid value for bell-style"), "got: {err}");
+            assert!(
+                err.windows(28)
+                    .any(|w| w == b"invalid value for bell-style"),
+                "got: {:?}",
+                String::from_utf8_lossy(&err)
+            );
         });
     }
 
@@ -350,7 +373,11 @@ mod tests {
             parse_assignment(b"editing-mode emacs", &mut v).unwrap();
             assert_eq!(v.editing_mode, EditingMode::Emacs);
             let err = parse_assignment(b"editing-mode ksh", &mut v).unwrap_err();
-            assert!(err.contains("invalid editing-mode"), "got: {err}");
+            assert!(
+                err.windows(20).any(|w| w == b"invalid editing-mode"),
+                "got: {:?}",
+                String::from_utf8_lossy(&err)
+            );
         });
     }
 
@@ -369,7 +396,11 @@ mod tests {
             parse_assignment(b"completion-ignore-case 0", &mut v).unwrap();
             assert!(!v.completion_ignore_case);
             let err = parse_assignment(b"completion-ignore-case maybe", &mut v).unwrap_err();
-            assert!(err.contains("invalid boolean"), "got: {err}");
+            assert!(
+                err.windows(15).any(|w| w == b"invalid boolean"),
+                "got: {:?}",
+                String::from_utf8_lossy(&err)
+            );
         });
     }
 
@@ -379,10 +410,18 @@ mod tests {
             let mut v = InputrcVars::default();
             // Non-utf8: pass bytes containing a stray 0xff.
             let err = parse_assignment(b"history-size \xff", &mut v).unwrap_err();
-            assert!(err.contains("invalid integer"), "got: {err}");
+            assert!(
+                err.windows(15).any(|w| w == b"invalid integer"),
+                "got: {:?}",
+                String::from_utf8_lossy(&err)
+            );
             // Non-numeric utf8.
             let err = parse_assignment(b"history-size abc", &mut v).unwrap_err();
-            assert!(err.contains("invalid integer"), "got: {err}");
+            assert!(
+                err.windows(15).any(|w| w == b"invalid integer"),
+                "got: {:?}",
+                String::from_utf8_lossy(&err)
+            );
             // keyseq-timeout takes the same set_u32 path.
             parse_assignment(b"keyseq-timeout 250", &mut v).unwrap();
             assert_eq!(v.keyseq_timeout_ms, 250);

@@ -16,7 +16,7 @@ pub(super) fn jobs(shell: &mut Shell, argv: &[Vec<u8>]) -> BuiltinOutcome {
     let finished = shell.reap_jobs();
     let current_id = shell.current_job_id();
     let previous_id = shell.previous_job_id();
-    let selected_contains = |id: usize| selected.as_ref().map_or(true, |ids| ids.contains(&id));
+    let selected_contains = |id: usize| selected.as_ref().is_none_or(|ids| ids.contains(&id));
 
     if mode != JobsMode::PidOnly {
         for (id, state) in &finished {
@@ -204,7 +204,7 @@ pub(super) fn parse_jobs_operands(
 pub(super) fn job_display_pid(job: &crate::shell::jobs::Job) -> Option<sys::types::Pid> {
     job.pgid
         .or_else(|| job.children.first().map(|child| child.pid))
-        .or_else(|| job.last_pid)
+        .or(job.last_pid)
 }
 
 pub(super) fn fg(shell: &mut Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutcome, ShellError> {

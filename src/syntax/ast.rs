@@ -382,9 +382,8 @@ impl<'a> Parser<'a> {
                 if stop_on_closer && matches!(tok, Token::RBrace | Token::RParen) {
                     break;
                 }
-                match tok {
-                    Token::Eof => break,
-                    _ => {}
+                if tok == &Token::Eof {
+                    break;
                 }
             }
 
@@ -697,19 +696,19 @@ impl<'a> Parser<'a> {
             }
 
             let (raw, parts) = self.take_word();
-            if words.is_empty() {
-                if let Some((name, value_raw)) = split_assignment(&raw) {
-                    let value_parts = build_assignment_value_parts(value_raw);
-                    assignments.push(Assignment::new(
-                        name.to_vec(),
-                        Word {
-                            raw: value_raw.to_vec(),
-                            parts: value_parts,
-                            line,
-                        },
-                    ));
-                    continue;
-                }
+            if words.is_empty()
+                && let Some((name, value_raw)) = split_assignment(&raw)
+            {
+                let value_parts = build_assignment_value_parts(value_raw);
+                assignments.push(Assignment::new(
+                    name.to_vec(),
+                    Word {
+                        raw: value_raw.to_vec(),
+                        parts: value_parts,
+                        line,
+                    },
+                ));
+                continue;
             }
             words.push(Word { raw, parts, line });
         }
@@ -731,10 +730,10 @@ impl<'a> Parser<'a> {
         }
 
         let mut fd: Option<i32> = None;
-        if matches!(self.peek_token()?, Token::IoNumber(_)) {
-            if let Token::IoNumber(n) = self.next_token() {
-                fd = Some(n);
-            }
+        if matches!(self.peek_token()?, Token::IoNumber(_))
+            && let Token::IoNumber(n) = self.next_token()
+        {
+            fd = Some(n);
         }
 
         let line = self.current_line();
@@ -1574,7 +1573,7 @@ mod tests {
         let aliases = alias_map(&[(b"foo", b"echo aliased")]);
         let err = parse_with_aliases_test("foo () { true; }", &aliases).unwrap_err();
         assert!(
-            err.message.iter().any(|&b| b == b'('),
+            err.message.contains(&b'('),
             "error should mention '(': {:?}",
             err.message
         );
@@ -2820,7 +2819,7 @@ mod tests {
             cmd.redirections[1]
                 .here_doc
                 .as_ref()
-                .map_or(false, |h| h.strip_tabs)
+                .is_some_and(|h| h.strip_tabs)
         );
     }
 
@@ -3036,7 +3035,7 @@ mod tests {
         let program = parse_test("for x in ; do echo $x; done").expect("for in with empty list");
         assert!(matches!(
             &program.items[0].and_or.first.commands[0],
-            Command::For(f) if f.items.as_ref().map_or(false, |i| i.is_empty())
+            Command::For(f) if f.items.as_ref().is_some_and(|i| i.is_empty())
         ));
     }
 
@@ -3097,7 +3096,7 @@ mod tests {
         assert!(
             program.items.len() >= 2 || {
                 let pipeline = &program.items[0].and_or.first;
-                pipeline.commands.len() >= 1
+                !pipeline.commands.is_empty()
             }
         );
     }

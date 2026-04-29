@@ -157,6 +157,7 @@ pub(crate) type ShellSet<K> = HashSet<K, ShellBuildHasher>;
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::disallowed_macros)]
     use super::*;
 
     use std::hash::BuildHasher;
