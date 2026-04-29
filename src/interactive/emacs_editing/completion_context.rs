@@ -48,10 +48,17 @@ pub(super) enum CompletionContext {
 /// push a fresh unquoted frame; the matching closer pops back to the
 /// containing frame. Single- and double-quoted frames do not nest
 /// further (their substring is treated by their own rules).
+///
+/// `DoubleQuote` carries the byte position of its opening `"` so the
+/// completion dispatch can use it as the word boundary for prefix
+/// substitution; `Unquoted` and the command-substitution frames have
+/// no associated quote position.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum FrameKind {
     Unquoted,
-    DoubleQuote,
+    DoubleQuote {
+        open_at: usize,
+    },
     /// `$(...)` substitution. Pops on `)`.
     CmdSubParen,
     /// Backtick-wrapped substitution. Pops on `` ` ``.
@@ -61,12 +68,31 @@ enum FrameKind {
 /// Walk `buf[0..cursor]` once and return the lexical state of the top
 /// scanner frame at `cursor`. Input beyond `cursor` is never read.
 pub(super) fn classify_completion_context(buf: &[u8], cursor: usize) -> CompletionContext {
+    scan(buf, cursor).0
+}
+
+/// Byte position of the open `'` or `"` whose still-open string
+/// contains `cursor`, or `None` if the cursor is not inside an open
+/// single- or double-quoted string. Used by completion dispatch to set
+/// the word-replacement boundary just past the opening quote so the
+/// partial word inside the quotes can be replaced with the requoted
+/// candidate.
+pub(super) fn find_open_quote_pos(buf: &[u8], cursor: usize) -> Option<usize> {
+    scan(buf, cursor).1
+}
+
+/// Single source of truth for [`classify_completion_context`] and
+/// [`find_open_quote_pos`]: walks the buffer once and returns both the
+/// classification and, when applicable, the byte offset of the
+/// currently-open quote character.
+fn scan(buf: &[u8], cursor: usize) -> (CompletionContext, Option<usize>) {
     let end = cursor.min(buf.len());
     let mut stack: Vec<FrameKind> = vec![FrameKind::Unquoted];
     // Parallel flags for the top frame. They are only meaningful when
     // the top-of-stack is `Unquoted` / `DoubleQuote` / a command-sub
     // frame; they always reset on frame push / pop.
     let mut in_single = false;
+    let mut single_open_at: Option<usize> = None;
     let mut in_comment = false;
     let mut after_backslash = false;
     let mut at_token_start = true;
@@ -84,6 +110,7 @@ pub(super) fn classify_completion_context(buf: &[u8], cursor: usize) -> Completi
         if in_single {
             if b == b'\'' {
                 in_single = false;
+                single_open_at = None;
                 at_token_start = false;
             }
             i += 1;
@@ -102,7 +129,7 @@ pub(super) fn classify_completion_context(buf: &[u8], cursor: usize) -> Completi
         let top = *stack.last().expect("scanner stack never empties");
 
         match top {
-            FrameKind::DoubleQuote => {
+            FrameKind::DoubleQuote { .. } => {
                 match b {
                     b'"' => {
                         stack.pop();
@@ -146,10 +173,11 @@ pub(super) fn classify_completion_context(buf: &[u8], cursor: usize) -> Completi
                     }
                     b'\'' => {
                         in_single = true;
+                        single_open_at = Some(i);
                         at_token_start = false;
                     }
                     b'"' => {
-                        stack.push(FrameKind::DoubleQuote);
+                        stack.push(FrameKind::DoubleQuote { open_at: i });
                         at_token_start = false;
                     }
                     b'$' => {
@@ -191,17 +219,19 @@ pub(super) fn classify_completion_context(buf: &[u8], cursor: usize) -> Completi
     }
 
     if after_backslash {
-        return CompletionContext::AfterBackslash;
+        return (CompletionContext::AfterBackslash, None);
     }
     if in_single {
-        return CompletionContext::InsideSingleQuote;
+        return (CompletionContext::InsideSingleQuote, single_open_at);
     }
     if in_comment {
-        return CompletionContext::InsideComment;
+        return (CompletionContext::InsideComment, None);
     }
     match stack.last().copied() {
-        Some(FrameKind::DoubleQuote) => CompletionContext::InsideDoubleQuote,
-        _ => CompletionContext::Normal,
+        Some(FrameKind::DoubleQuote { open_at }) => {
+            (CompletionContext::InsideDoubleQuote, Some(open_at))
+        }
+        _ => (CompletionContext::Normal, None),
     }
 }
 
@@ -368,5 +398,62 @@ mod tests {
             classify_completion_context(b"echo 'hello", 6),
             CompletionContext::InsideSingleQuote
         );
+    }
+
+    // --- find_open_quote_pos --------------------------------------------
+
+    #[test]
+    fn open_quote_pos_normal_is_none() {
+        assert_eq!(find_open_quote_pos(b"echo hello", 10), None);
+    }
+
+    #[test]
+    fn open_quote_pos_after_backslash_is_none() {
+        assert_eq!(find_open_quote_pos(b"echo foo\\", 9), None);
+    }
+
+    #[test]
+    fn open_quote_pos_in_comment_is_none() {
+        assert_eq!(find_open_quote_pos(b"# foo bar", 9), None);
+    }
+
+    #[test]
+    fn open_quote_pos_single_quote_returns_open_byte() {
+        // `echo 'he` — the `'` is at index 5.
+        assert_eq!(find_open_quote_pos(b"echo 'he", 8), Some(5));
+    }
+
+    #[test]
+    fn open_quote_pos_double_quote_returns_open_byte() {
+        // `echo "he` — the `"` is at index 5.
+        assert_eq!(find_open_quote_pos(b"echo \"he", 8), Some(5));
+    }
+
+    #[test]
+    fn open_quote_pos_closed_quote_clears() {
+        // Closed pair — no open quote.
+        assert_eq!(find_open_quote_pos(b"echo 'hi' x", 11), None);
+        assert_eq!(find_open_quote_pos(b"echo \"hi\" x", 11), None);
+    }
+
+    #[test]
+    fn open_quote_pos_innermost_quote_wins() {
+        // `echo "$(echo 'he` — innermost is `'` at index 13.
+        let buf: &[u8] = b"echo \"$(echo 'he";
+        assert_eq!(find_open_quote_pos(buf, buf.len()), Some(13));
+    }
+
+    #[test]
+    fn open_quote_pos_double_quote_inside_cmd_sub() {
+        // `echo $(echo "he` — inside the cmd-sub the `"` opens at 12.
+        let buf: &[u8] = b"echo $(echo \"he";
+        assert_eq!(find_open_quote_pos(buf, buf.len()), Some(12));
+    }
+
+    #[test]
+    fn open_quote_pos_single_quote_after_double_close() {
+        // `cat "x" 'y` — `"..."` closed, then `'` opens at 8.
+        let buf: &[u8] = b"cat \"x\" 'y";
+        assert_eq!(find_open_quote_pos(buf, buf.len()), Some(8));
     }
 }

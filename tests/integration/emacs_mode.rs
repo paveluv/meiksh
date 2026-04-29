@@ -1840,9 +1840,12 @@ fn ctrl_v_synonym_for_quoted_insert() {
 // candidates. A no-match completion rings the bell.
 // =====================================================================
 
-/// § 5.7: a single matching filename shall replace the partial word
-/// with the full name. The fixture directory contains exactly one
-/// entry that starts with `FOOBARUNIQ`, so TAB must complete it.
+/// § 5.8.1: a single matching filename shall replace the partial word
+/// with the full name and append a trailing SPACE so the next typed
+/// token starts cleanly. The fixture directory contains exactly one
+/// entry starting with `FOOBARUNIQ`, so TAB must complete it; appending
+/// `extra` after TAB and observing it as a *second* `printf` argument
+/// proves the SPACE landed.
 #[test]
 fn tab_single_filename_completion_fills_whole_name() {
     use std::fs;
@@ -1856,15 +1859,16 @@ fn tab_single_filename_completion_fills_whole_name() {
     enable_emacs(&mut pty);
     pty.send(format!("cd {dir}\n").as_bytes());
     let _ = drain_until_contains(&mut pty, b"$ ");
-    // printf '(%s)' FOOB<TAB> — TAB should expand to FOOBARUNIQA.
-    pty.send(b"printf '(%s)' FOOB\x09");
+    // printf '(%s)' FOOB<TAB>extra — TAB should expand to FOOBARUNIQA
+    // followed by a SPACE, so `extra` lands as a second printf arg.
+    pty.send(b"printf '(%s)' FOOB\x09extra");
     let out = accept_then_drain_end(&mut pty);
     let _ = pty.exit_and_wait();
     let _ = fs::remove_dir_all(&dir);
     let text = String::from_utf8_lossy(&out);
     assert!(
-        text.contains("(FOOBARUNIQA)"),
-        "expected TAB to complete FOOB to FOOBARUNIQA: {text:?}"
+        text.contains("(FOOBARUNIQA)") && text.contains("(extra)"),
+        "expected TAB to complete to FOOBARUNIQA + SPACE so `extra` becomes its own arg: {text:?}"
     );
 }
 
@@ -1975,8 +1979,9 @@ fn tab_variable_completion_via_brace_prefix() {
     );
 }
 
-/// § 5.8: filename completion via a path containing `/`. TAB on
-/// `/tmp/<fixture>/FOOB` completes to the full filename.
+/// § 5.8.1: filename completion via a path containing `/` shall fill
+/// in the full filename and append a trailing SPACE. Typing `extra`
+/// immediately after TAB therefore lands as a separate printf argument.
 #[test]
 fn tab_filename_completion_with_slash_path() {
     use std::fs;
@@ -1988,7 +1993,7 @@ fn tab_filename_completion_with_slash_path() {
     fs::create_dir_all(&dir).expect("mkdir");
     fs::write(format!("{dir}/FOOBARSLASHA"), b"").expect("touch");
     enable_emacs(&mut pty);
-    let cmd = format!("printf '[%s]' {dir}/FOOB\x09");
+    let cmd = format!("printf '[%s]' {dir}/FOOB\x09extra");
     pty.send(cmd.as_bytes());
     let out = accept_then_drain_end(&mut pty);
     let _ = pty.exit_and_wait();
@@ -1996,8 +2001,8 @@ fn tab_filename_completion_with_slash_path() {
     let text = String::from_utf8_lossy(&out);
     let expected = format!("[{dir}/FOOBARSLASHA]");
     assert!(
-        text.contains(&expected),
-        "expected full path completion {expected:?} in: {text:?}"
+        text.contains(&expected) && text.contains("[extra]"),
+        "expected full path completion {expected:?} + SPACE so `extra` is a second arg: {text:?}"
     );
 }
 
@@ -2122,26 +2127,63 @@ fn tab_completes_command_inside_command_substitution() {
     );
 }
 
-/// § 5.8: inside a still-open single-quoted string TAB shall not
-/// trigger completion — it must land as a literal TAB byte so quoted
-/// strings can contain tabs without clobbering them.
+/// § 5.8.1: inside a still-open single-quoted string TAB completes in
+/// SQUOTE mode — the partial word inside `'...'` matches against
+/// on-disk filenames and the unique candidate is spliced back in,
+/// followed by the closing `'` and a trailing SPACE.
 #[test]
-fn tab_inside_single_quote_inserts_literal_tab() {
+fn tab_inside_single_quote_completes_with_close_quote_and_space() {
+    use std::fs;
     let Some(mut pty) = spawn_or_skip() else {
         return;
     };
+    let dir = format!("/tmp/meiksh-compl-squote-{}", std::process::id());
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).expect("mkdir");
+    // SQUOTE mode candidate: a filename with a literal `$` so we can
+    // verify the surrounding `'...'` neutralizes it (no expansion).
+    fs::write(format!("{dir}/SQUOTE$X"), b"").expect("touch");
     enable_emacs(&mut pty);
-    // Type `printf '[%s]' 'he<TAB>llo'` and accept. The TAB lands
-    // inside the single-quoted argument, so printf receives the
-    // three bytes `h`, `e`, `\t`, `l`, `l`, `o` and emits them
-    // framed by square brackets.
-    pty.send(b"printf '[%s]' 'he\x09llo'");
+    pty.send(format!("cd {dir}\n").as_bytes());
+    let _ = drain_until_contains(&mut pty, b"$ ");
+    // `printf '[%s]' 'SQ<TAB>extra` — TAB inside `'...'` completes to
+    // `'SQUOTE$X' ` (close quote + SPACE), so `extra` lands as a
+    // separate argument.
+    pty.send(b"printf '[%s]' 'SQ\x09extra");
     let out = accept_then_drain_end(&mut pty);
     let _ = pty.exit_and_wait();
+    let _ = fs::remove_dir_all(&dir);
+    let text = String::from_utf8_lossy(&out);
     assert!(
-        out.windows(b"[he\tllo]".len()).any(|w| w == b"[he\tllo]"),
-        "expected literal TAB inside single quote: {:?}",
-        String::from_utf8_lossy(&out)
+        text.contains("[SQUOTE$X]") && text.contains("[extra]"),
+        "expected SQUOTE-mode completion to insert candidate, close quote, and SPACE: {text:?}"
+    );
+}
+
+/// § 5.8.1: inside a still-open single-quoted string with no matching
+/// candidate, TAB shall ring the bell and leave the buffer untouched
+/// (consistent with the Normal-mode "no match" behavior).
+#[test]
+fn tab_inside_empty_single_quote_with_no_match_rings_bell() {
+    use std::fs;
+    let Some(mut pty) = spawn_or_skip() else {
+        return;
+    };
+    let dir = format!("/tmp/meiksh-compl-squote-empty-{}", std::process::id());
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).expect("mkdir");
+    enable_emacs(&mut pty);
+    pty.send(format!("cd {dir}\n").as_bytes());
+    let _ = drain_until_contains(&mut pty, b"$ ");
+    let _ = drain_brief(&mut pty);
+    pty.send(b"printf NOSUCH 'NOSUCHQX\x09");
+    let probe = drain_brief(&mut pty);
+    pty.send(b"\x15\n");
+    let _ = pty.exit_and_wait();
+    let _ = fs::remove_dir_all(&dir);
+    assert!(
+        bell_count(&probe) >= 1,
+        "expected BEL when SQUOTE-mode TAB has no candidate"
     );
 }
 
@@ -2210,45 +2252,66 @@ fn tab_inside_double_quote_still_completes_commands() {
     );
 }
 
-/// § 5.8: a single-quote inside a `$(...)` substitution inside a
-/// double-quoted string must still be detected as the top context —
-/// the literal TAB shall be inserted rather than a filename listing.
+/// § 5.8.1: a single-quote inside a `$(...)` substitution inside a
+/// double-quoted string shall be detected as the innermost context, so
+/// SQUOTE-mode completion (not BSQUOTE) fires. The fixture filename
+/// contains `$`; SQUOTE inserts it bare and auto-appends the closing
+/// `'`, so the surrounding `'...'` keeps the `$` literal and `printf`
+/// emits `[HE$LLO]`. (BSQUOTE would have escaped to `\$` and `printf`
+/// inside `'...'` would have rendered the literal backslash too.)
 #[test]
-fn tab_inside_nested_single_quote_inserts_literal_tab() {
+fn tab_inside_nested_single_quote_uses_squote_mode() {
+    use std::fs;
     let Some(mut pty) = spawn_or_skip() else {
         return;
     };
+    let dir = format!("/tmp/meiksh-compl-nested-sq-{}", std::process::id());
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).expect("mkdir");
+    fs::write(format!("{dir}/HE$LLO"), b"").expect("touch");
     enable_emacs(&mut pty);
-    // `echo "$(printf '[%s]' 'he<TAB>llo')"` — innermost context at
-    // TAB is the single-quoted string, so TAB drops a literal tab
-    // and printf emits `[he\tllo]`.
-    pty.send(b"echo \"$(printf '[%s]' 'he\x09llo')\"");
+    pty.send(format!("cd {dir}\n").as_bytes());
+    let _ = drain_until_contains(&mut pty, b"$ ");
+    // After TAB the buffer holds:
+    //   echo "$(printf '[%s]\n' 'HE$LLO' )"
+    // which prints `[HE$LLO]` — the literal `$` round-trips through
+    // the inner `'...'` because SQUOTE inserted it bare.
+    pty.send(b"echo \"$(printf '[%s]\\n' 'HE\x09)\"");
     let out = accept_then_drain_end(&mut pty);
     let _ = pty.exit_and_wait();
+    let _ = fs::remove_dir_all(&dir);
+    let text = String::from_utf8_lossy(&out);
     assert!(
-        out.windows(b"[he\tllo]".len()).any(|w| w == b"[he\tllo]"),
-        "expected literal TAB in nested single quote: {:?}",
-        String::from_utf8_lossy(&out)
+        text.contains("[HE$LLO]"),
+        "expected SQUOTE-mode completion to insert `HE$LLO` bare with closing `'`: {text:?}"
+    );
+    assert!(
+        !text.contains("\\$"),
+        "BSQUOTE escaping must not leak into the SQUOTE-mode insertion: {text:?}"
     );
 }
 
-/// § 5.8 bullet 2: "if the cursor is on the first word of the command
-/// line, meiksh shall attempt command completion."
+/// § 5.8 bullet 2 + § 5.8.1: "if the cursor is on the first word of
+/// the command line, meiksh shall attempt command completion." A
+/// unique match shall be followed by a trailing SPACE; sending the
+/// suffix `DONE` (with no leading space) right after TAB therefore
+/// still lands as a separate argument.
 #[test]
 fn tab_completes_command_on_first_word() {
     let Some(mut pty) = spawn_or_skip() else {
         return;
     };
     enable_emacs(&mut pty);
-    // `ech<TAB>` should become `echo` because `echo` is a known
-    // builtin. Follow with ` DONE` and accept-line.
-    pty.send(b"ech\x09 DONE");
+    // `ech<TAB>DONE` should become `echo DONE` because `echo` is a
+    // known builtin and the trailing SPACE lands between `echo` and
+    // `DONE`.
+    pty.send(b"ech\x09DONE");
     let out = accept_then_drain_end(&mut pty);
     let _ = pty.exit_and_wait();
     let text = String::from_utf8_lossy(&out);
     assert!(
         text.contains("\r\nDONE") || text.contains("\nDONE"),
-        "expected `echo DONE` execution after first-word TAB: {text:?}"
+        "expected `echo DONE` execution after first-word TAB + auto SPACE: {text:?}"
     );
 }
 
@@ -2275,6 +2338,277 @@ fn tab_directory_completion_appends_trailing_slash() {
     assert!(
         text.contains("[SUBDIRUNIQ/X]"),
         "expected trailing `/` on directory completion: {text:?}"
+    );
+}
+
+// =====================================================================
+// § 5.8.1 Quoting of inserted candidates.
+// =====================================================================
+
+/// § 5.8.1 BSQUOTE: a unique match whose name contains a SPACE shall
+/// be inserted with the SPACE backslash-escaped, so the parser still
+/// tokenizes the line as a single argument.
+#[test]
+fn tab_bsquote_escapes_space_in_filename() {
+    use std::fs;
+    let Some(mut pty) = spawn_or_skip() else {
+        return;
+    };
+    let dir = format!("/tmp/meiksh-compl-bsq-space-{}", std::process::id());
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).expect("mkdir");
+    fs::write(format!("{dir}/foo bar"), b"").expect("touch");
+    enable_emacs(&mut pty);
+    pty.send(format!("cd {dir}\n").as_bytes());
+    let _ = drain_until_contains(&mut pty, b"$ ");
+    pty.send(b"printf '[%s]' foo\x09");
+    let out = accept_then_drain_end(&mut pty);
+    let _ = pty.exit_and_wait();
+    let _ = fs::remove_dir_all(&dir);
+    let text = String::from_utf8_lossy(&out);
+    assert!(
+        text.contains("[foo bar]"),
+        "expected `foo bar` to splice as one arg via BSQUOTE: {text:?}"
+    );
+}
+
+/// § 5.8.1 BSQUOTE: a unique match containing `$` shall escape it so
+/// the parser does not treat the rest as parameter expansion.
+#[test]
+fn tab_bsquote_escapes_dollar_in_filename() {
+    use std::fs;
+    let Some(mut pty) = spawn_or_skip() else {
+        return;
+    };
+    let dir = format!("/tmp/meiksh-compl-bsq-dollar-{}", std::process::id());
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).expect("mkdir");
+    fs::write(format!("{dir}/baz$qux"), b"").expect("touch");
+    enable_emacs(&mut pty);
+    pty.send(format!("cd {dir}\n").as_bytes());
+    let _ = drain_until_contains(&mut pty, b"$ ");
+    pty.send(b"printf '[%s]' baz\x09");
+    let out = accept_then_drain_end(&mut pty);
+    let _ = pty.exit_and_wait();
+    let _ = fs::remove_dir_all(&dir);
+    let text = String::from_utf8_lossy(&out);
+    assert!(
+        text.contains("[baz$qux]"),
+        "expected `baz$qux` to splice without parameter expansion: {text:?}"
+    );
+}
+
+/// § 5.8.1 BSQUOTE: glob metacharacter `*` in a filename shall be
+/// escaped on insertion so the candidate is not re-globbed by the
+/// parser.
+#[test]
+fn tab_bsquote_escapes_glob_star_in_filename() {
+    use std::fs;
+    let Some(mut pty) = spawn_or_skip() else {
+        return;
+    };
+    let dir = format!("/tmp/meiksh-compl-bsq-star-{}", std::process::id());
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).expect("mkdir");
+    // The literal `*` filename and a decoy file so a re-glob would
+    // produce two args instead of one.
+    fs::write(format!("{dir}/a*b"), b"").expect("touch");
+    fs::write(format!("{dir}/aXXb"), b"").expect("touch");
+    enable_emacs(&mut pty);
+    pty.send(format!("cd {dir}\n").as_bytes());
+    let _ = drain_until_contains(&mut pty, b"$ ");
+    pty.send(b"printf '[%s]' a*\x09");
+    let out = accept_then_drain_end(&mut pty);
+    let _ = pty.exit_and_wait();
+    let _ = fs::remove_dir_all(&dir);
+    let text = String::from_utf8_lossy(&out);
+    assert!(
+        text.contains("[a*b]"),
+        "expected literal `a*b` candidate (no re-glob): {text:?}"
+    );
+    assert!(
+        !text.contains("[aXXb]"),
+        "literal `*` must not match `aXXb` after BSQUOTE escape: {text:?}"
+    );
+}
+
+/// § 5.8.1 BSQUOTE: multi-match completion fills the longest common
+/// prefix and re-quotes it; it shall not append a closing or trailing
+/// SPACE so the user can keep typing.
+#[test]
+fn tab_bsquote_lcp_quotes_partial_without_terminator() {
+    use std::fs;
+    let Some(mut pty) = spawn_or_skip() else {
+        return;
+    };
+    let dir = format!("/tmp/meiksh-compl-bsq-lcp-{}", std::process::id());
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).expect("mkdir");
+    fs::write(format!("{dir}/foo bar"), b"").expect("touch");
+    fs::write(format!("{dir}/foo bar baz"), b"").expect("touch");
+    enable_emacs(&mut pty);
+    pty.send(format!("cd {dir}\n").as_bytes());
+    let _ = drain_until_contains(&mut pty, b"$ ");
+    // After TAB the buffer shall contain the LCP `foo\ bar` (escaped
+    // SPACE, no closing terminator). Typing ` baz` after extends the
+    // word to `foo\ bar baz` — but the trailing ` baz` is bare, so
+    // the parser splits it into a second arg.  Easier proof of LCP:
+    // immediately accept-line; the partial filename `foo\ bar` does
+    // not exist on disk, only the two longer entries do, so a literal
+    // path command would fail. We instead use printf, which doesn't
+    // touch the filesystem, and check both args appear.
+    pty.send(b"printf '[%s]\\n' foo\x09 trailer");
+    let out = accept_then_drain_end(&mut pty);
+    let _ = pty.exit_and_wait();
+    let _ = fs::remove_dir_all(&dir);
+    let text = String::from_utf8_lossy(&out);
+    assert!(
+        text.contains("[foo bar]") && text.contains("[trailer]"),
+        "expected LCP `foo\\ bar` (no auto SPACE) so ` trailer` is the next arg: {text:?}"
+    );
+    assert!(
+        !text.contains("[foo bar baz]"),
+        "LCP must stop at common prefix, not consume `baz`: {text:?}"
+    );
+}
+
+/// § 5.8.1 BSQUOTE prefix dequoting: the partial word may contain
+/// user-typed `\X` escapes; they shall be stripped before matching
+/// against on-disk filenames.
+#[test]
+fn tab_bsquote_prefix_dequotes_before_match() {
+    use std::fs;
+    let Some(mut pty) = spawn_or_skip() else {
+        return;
+    };
+    let dir = format!("/tmp/meiksh-compl-bsq-deq-{}", std::process::id());
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).expect("mkdir");
+    fs::write(format!("{dir}/foo bar"), b"").expect("touch");
+    enable_emacs(&mut pty);
+    pty.send(format!("cd {dir}\n").as_bytes());
+    let _ = drain_until_contains(&mut pty, b"$ ");
+    // Type `printf '[%s]' foo\ ba<TAB>` — the prefix `foo\ ba` shall
+    // dequote to `foo ba`, match `foo bar`, and re-quote on insertion.
+    pty.send(b"printf '[%s]' foo\\ ba\x09");
+    let out = accept_then_drain_end(&mut pty);
+    let _ = pty.exit_and_wait();
+    let _ = fs::remove_dir_all(&dir);
+    let text = String::from_utf8_lossy(&out);
+    assert!(
+        text.contains("[foo bar]"),
+        "expected prefix dequoting + BSQUOTE re-insert of `foo\\ bar`: {text:?}"
+    );
+}
+
+/// § 5.8.1 DQUOTE: inside `"..."`, the open `"` is the word boundary
+/// and the candidate is inserted bare except for `\ " $ ` `. The
+/// closing `"` and a trailing SPACE shall be auto-appended.
+#[test]
+fn tab_dquote_completes_filename_with_space() {
+    use std::fs;
+    let Some(mut pty) = spawn_or_skip() else {
+        return;
+    };
+    let dir = format!("/tmp/meiksh-compl-dq-space-{}", std::process::id());
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).expect("mkdir");
+    fs::write(format!("{dir}/foo bar"), b"").expect("touch");
+    enable_emacs(&mut pty);
+    pty.send(format!("cd {dir}\n").as_bytes());
+    let _ = drain_until_contains(&mut pty, b"$ ");
+    pty.send(b"printf '[%s]' \"foo\x09extra");
+    let out = accept_then_drain_end(&mut pty);
+    let _ = pty.exit_and_wait();
+    let _ = fs::remove_dir_all(&dir);
+    let text = String::from_utf8_lossy(&out);
+    assert!(
+        text.contains("[foo bar]") && text.contains("[extra]"),
+        "expected DQUOTE close `\"` + SPACE so `extra` is a second arg: {text:?}"
+    );
+}
+
+/// § 5.8.1 DQUOTE: inside `"..."`, `$` in a candidate shall be
+/// backslash-escaped so the parser does not attempt parameter
+/// expansion when running the completed line.
+#[test]
+fn tab_dquote_escapes_dollar_in_filename() {
+    use std::fs;
+    let Some(mut pty) = spawn_or_skip() else {
+        return;
+    };
+    let dir = format!("/tmp/meiksh-compl-dq-dollar-{}", std::process::id());
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).expect("mkdir");
+    fs::write(format!("{dir}/baz$qux"), b"").expect("touch");
+    enable_emacs(&mut pty);
+    pty.send(format!("cd {dir}\n").as_bytes());
+    let _ = drain_until_contains(&mut pty, b"$ ");
+    pty.send(b"printf '[%s]' \"baz\x09");
+    let out = accept_then_drain_end(&mut pty);
+    let _ = pty.exit_and_wait();
+    let _ = fs::remove_dir_all(&dir);
+    let text = String::from_utf8_lossy(&out);
+    assert!(
+        text.contains("[baz$qux]"),
+        "expected DQUOTE-mode `$` escape preventing expansion: {text:?}"
+    );
+}
+
+/// § 5.8.1 SQUOTE: inside `'...'`, an embedded literal `'` in the
+/// candidate shall be encoded as `'\''` (close-escape-reopen) and the
+/// closing `'` plus trailing SPACE shall be auto-appended.
+#[test]
+fn tab_squote_encodes_embedded_quote_with_close_escape_reopen() {
+    use std::fs;
+    let Some(mut pty) = spawn_or_skip() else {
+        return;
+    };
+    let dir = format!("/tmp/meiksh-compl-sq-quote-{}", std::process::id());
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).expect("mkdir");
+    fs::write(format!("{dir}/x'y"), b"").expect("touch");
+    enable_emacs(&mut pty);
+    pty.send(format!("cd {dir}\n").as_bytes());
+    let _ = drain_until_contains(&mut pty, b"$ ");
+    pty.send(b"printf '[%s]' 'x\x09");
+    let out = accept_then_drain_end(&mut pty);
+    let _ = pty.exit_and_wait();
+    let _ = fs::remove_dir_all(&dir);
+    let text = String::from_utf8_lossy(&out);
+    assert!(
+        text.contains("[x'y]"),
+        "expected SQUOTE `'\\''` encoding to round-trip the literal `'`: {text:?}"
+    );
+}
+
+/// § 5.8.1: a directory match in DQUOTE mode appends `/` but **no**
+/// closing `"` and no trailing SPACE — the user is mid-path.
+#[test]
+fn tab_dquote_directory_appends_slash_without_close_quote() {
+    use std::fs;
+    let Some(mut pty) = spawn_or_skip() else {
+        return;
+    };
+    let dir = format!("/tmp/meiksh-compl-dq-dir-{}", std::process::id());
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(format!("{dir}/my dir")).expect("mkdir sub");
+    fs::write(format!("{dir}/my dir/inside"), b"").expect("touch");
+    enable_emacs(&mut pty);
+    pty.send(format!("cd {dir}\n").as_bytes());
+    let _ = drain_until_contains(&mut pty, b"$ ");
+    // Type `printf '[%s]' "my<TAB>inside"` — the directory completion
+    // shall append `/` but leave the `"` unclosed so we can keep
+    // typing `inside"`. The full path `my dir/inside` shall round-trip
+    // as a single argument.
+    pty.send(b"printf '[%s]' \"my\x09inside\"");
+    let out = accept_then_drain_end(&mut pty);
+    let _ = pty.exit_and_wait();
+    let _ = fs::remove_dir_all(&dir);
+    let text = String::from_utf8_lossy(&out);
+    assert!(
+        text.contains("[my dir/inside]"),
+        "expected DQUOTE directory completion to leave the `\"` open: {text:?}"
     );
 }
 

@@ -191,6 +191,66 @@ All printable bytes (0x20 through 0x7E) not otherwise bound, plus all bytes with
 - When `show-all-if-ambiguous` is on, a single `TAB` on a partial word with multiple completions shall list them immediately rather than requiring a second `TAB`.
 - When `completion-ignore-case` is on, case differences between the partial word and the candidate shall not prevent a match.
 
+#### 5.8.1 Quoting of Inserted Candidates
+
+When the candidate is inserted back into the line buffer it shall be quoted so that the shell parser tokenizes the surrounding command identically to how it would tokenize the original partial word. The quoting transform depends on the lexical context of the cursor at the moment `TAB` was pressed:
+
+- **BSQUOTE** — cursor in unquoted context (the `Normal` classification in `src/interactive/emacs_editing/completion_context.rs`). Each byte of the candidate that is a member of the **filename-quote set** shall be prefixed with a single backslash. The filename-quote set is exactly the 25 bytes:
+
+  ```
+  SPACE  HT  LF  \  "  '  @  <  >  =  ;  |  &  (  )  #  $  `  ?  *  [  !  :  {  ~
+  ```
+
+- **DQUOTE** — cursor inside an open `"..."` string (`InsideDoubleQuote`). Only the bytes that retain their special meaning inside double quotes — `\`, `"`, `$`, and `` ` `` — shall be backslash-escaped. All other bytes (including SPACE, `*`, `'`, etc.) shall be inserted verbatim.
+
+- **SQUOTE** — cursor inside an open `'...'` string (`InsideSingleQuote`). No byte of the candidate is special inside single quotes except `'` itself, which shall be encoded as the four-byte sequence `'\''` (close, escape, reopen). All other bytes shall be inserted verbatim.
+
+The cursor classifications `InsideComment` and `AfterBackslash` shall continue to suppress completion: a literal TAB byte shall be inserted at the cursor instead.
+
+##### Prefix dequoting
+
+In **BSQUOTE** mode the partial word `[word_start..cursor]` may already contain user-typed backslash escapes (for example `foo\ ba`). Before matching the prefix against on-disk filenames or command names, the shell shall walk the prefix once and strip every `\X` escape down to the literal `X`. A trailing dangling `\` shall be dropped. The matched candidate is then re-quoted per the rules above before being spliced back into the buffer.
+
+For example, with a fixture file `foo bar` in the cwd, typing `cat foo\ ba` and pressing `TAB` shall:
+1. Take `foo\ ba` as the raw prefix (the BSQUOTE word-start scanner walks back across `\<delim>` pairs so the bare SPACE before `cat` remains the boundary).
+2. Dequote it to `foo ba`.
+3. Find the unique on-disk match `foo bar`.
+4. Re-quote it as `foo\ bar` and replace the raw prefix.
+
+In **DQUOTE** and **SQUOTE** modes the word-start position is one byte past the matching open `"` / `'`; the prefix is taken verbatim because the surrounding quote already neutralizes shell metacharacters.
+
+##### Closing-quote auto-append and trailing SPACE
+
+On a single, unique match the inserted candidate shall be terminated as follows:
+
+- If the candidate is a directory (matched by `is_dir_candidate`), append a trailing `/` and **no** closing quote and **no** trailing SPACE — the user is mid-path.
+- If the prefix begins with `${` (brace-wrapped variable expansion), append the closing `}`.
+- Otherwise:
+  - In **DQUOTE** mode, append the closing `"`.
+  - In **SQUOTE** mode, append the closing `'`.
+  - In all three modes, then append a trailing SPACE so the next token starts cleanly.
+
+On a multi-match completion that fills the longest common prefix, the inserted partial shall be re-quoted per the active mode but **shall not** receive a closing quote or trailing SPACE — the user is still mid-word.
+
+##### Examples
+
+| Setup | Cursor context | Input | Buffer after `TAB` |
+| --- | --- | --- | --- |
+| file `foo bar` | Normal | `cat foo` | `cat foo\ bar ` |
+| files `foo bar`, `foo bar baz` | Normal | `cat foo` | `cat foo\ bar` (LCP, no close, no space) |
+| file `baz$qux` | Normal | `cat baz` | `cat baz\$qux ` |
+| file `a*b` | Normal | `cat a` | `cat a\*b ` |
+| file `~tilde` | Normal | `cat \~ti` | `cat \~tilde ` |
+| file `foo bar` | InsideDoubleQuote | `cat "foo` | `cat "foo bar" ` |
+| file `baz$qux` | InsideDoubleQuote | `cat "baz` | `cat "baz\$qux" ` |
+| file `foo bar` | InsideSingleQuote | `cat 'foo` | `cat 'foo bar' ` |
+| file `x'y` | InsideSingleQuote | `cat 'x` | `cat 'x'\''y' ` |
+| file `foo bar` | Normal | `cat foo\ ba` | `cat foo\ bar ` (prefix dequoting) |
+| dir `my dir/` | Normal | `cat my` | `cat my\ dir/` (slash, no close, no space) |
+| dir `my dir/` | InsideDoubleQuote | `cat "my` | `cat "my dir/` (slash, no close) |
+
+This specification matches bash 5.x's `default_filename_quote_characters` set in `bashline.c`. Out of scope for this revision: mid-word mixed-quote prefixes such as `foo' 'bar`, `direxpand`, and the `complete_fullquote=0` variant of DQUOTE.
+
 ### 5.9 Miscellaneous
 
 | Key | Function | Behavior |

@@ -15,6 +15,7 @@
 
 #![allow(dead_code)]
 pub(crate) mod completion_context;
+pub(crate) mod completion_quoting;
 pub(crate) mod functions;
 pub(crate) mod keymap;
 pub(crate) mod kill_buffer;

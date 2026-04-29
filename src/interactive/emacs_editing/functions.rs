@@ -14,7 +14,10 @@ use super::super::editor::history_search::{Direction, find_prefix};
 use super::super::editor::input::write_bytes;
 use super::super::editor::redraw::{char_len_at, display_width, prev_char_start};
 use super::super::editor::words::{WordClass, next_word_boundary, prev_word_boundary};
-use super::completion_context::{CompletionContext, classify_completion_context};
+use super::completion_context::{
+    CompletionContext, classify_completion_context, find_open_quote_pos,
+};
+use super::completion_quoting::{QuoteMode, bsquote_dequote, quote_filename};
 use super::keymap::EmacsFn;
 use super::kill_buffer::KillDirection;
 use super::state::{EmacsState, YankArgState};
@@ -684,13 +687,40 @@ fn is_command_position(buf: &[u8], word_start: usize) -> bool {
     true
 }
 
-/// Find the start of the completion-word containing `cursor`, walking
-/// backwards across non-delimiter bytes per spec § 5.8.
+/// Find the start of the completion-word containing `cursor` for
+/// BSQUOTE mode (cursor in unquoted context), walking backwards across
+/// non-delimiter bytes per spec § 5.8. Backslash-escaped delimiters
+/// (e.g. `\<space>`) are treated as part of the word, so a partial
+/// word like `foo\ ba` resolves to `word_start = 0` rather than
+/// stopping at the escaped space. The parity check on consecutive
+/// backslashes immediately preceding a delimiter mirrors POSIX § 2.2.1
+/// "Escape Character (Backslash)": an odd run escapes the next byte,
+/// an even run is a literal `\\`-encoded backslash sequence and the
+/// delimiter that follows is unescaped.
+///
+/// DQUOTE / SQUOTE modes do not use this helper — the word boundary is
+/// the byte just past the open `'` or `"` reported by
+/// [`find_open_quote_pos`].
 fn find_completion_word_start(buf: &[u8], cursor: usize) -> usize {
     let mut s = cursor;
     while s > 0 {
         let prev = prev_char_start(buf, s);
         if is_completion_delim(buf[prev]) {
+            let mut bs_count = 0;
+            let mut p = prev;
+            while p > 0 && buf[p - 1] == b'\\' {
+                bs_count += 1;
+                p -= 1;
+            }
+            if bs_count % 2 == 1 {
+                // The delim is backslash-escaped: it's part of the
+                // word. Step past the delim and the single escaping
+                // backslash; any further backslashes are paired
+                // (`\\<delim>`) escapes that the next loop iteration
+                // walks through naturally.
+                s = prev - 1;
+                continue;
+            }
             break;
         }
         s = prev;
@@ -725,29 +755,48 @@ struct Candidate {
 }
 
 fn do_complete(shell: &mut Shell, state: &mut EmacsState, out: &mut Outcome) {
-    // Before touching the completion cascade, classify the lexical
-    // context to the left of the cursor. Inside a still-open single
-    // quote, a `#` line comment, or right after a trailing backslash
-    // the user's TAB should land as a literal TAB byte (matching
-    // `self-insert` on a plain character), not as a completion
-    // request. Double quotes and nested `$(...)` / `` `...` ``
-    // substitutions continue through the normal cascade.
-    match classify_completion_context(&state.buf, state.cursor) {
-        CompletionContext::InsideSingleQuote
-        | CompletionContext::InsideComment
-        | CompletionContext::AfterBackslash => {
+    // Classify the lexical context to the left of the cursor. Inside a
+    // `#` line comment or right after a trailing backslash, the user's
+    // TAB lands as a literal byte. Inside open quotes, completion still
+    // fires but uses the appropriate quoting mode for re-insertion;
+    // see `super::completion_quoting`.
+    let mode = match classify_completion_context(&state.buf, state.cursor) {
+        CompletionContext::InsideComment | CompletionContext::AfterBackslash => {
             state.insert_bytes_at_cursor(b"\t");
             return;
         }
-        CompletionContext::Normal | CompletionContext::InsideDoubleQuote => {}
-    }
+        CompletionContext::Normal => QuoteMode::Bsquote,
+        CompletionContext::InsideDoubleQuote => QuoteMode::Dquote,
+        CompletionContext::InsideSingleQuote => QuoteMode::Squote,
+    };
 
-    let word_start = find_completion_word_start(&state.buf, state.cursor);
-    let prefix = state.buf[word_start..state.cursor].to_vec();
+    // Word boundary differs by mode: BSQUOTE walks back across
+    // backslash-escaped delimiters; DQUOTE / SQUOTE start one byte past
+    // the matching open `"` / `'`. The classifier and
+    // `find_open_quote_pos` agree on which open quote is "current", so
+    // when mode is Dquote / Squote the position is always Some.
+    let word_start = match mode {
+        QuoteMode::Bsquote => find_completion_word_start(&state.buf, state.cursor),
+        QuoteMode::Dquote | QuoteMode::Squote => find_open_quote_pos(&state.buf, state.cursor)
+            .map(|q| q + 1)
+            .expect("Dquote/Squote mode implies an open quote position"),
+    };
+    let raw_prefix = state.buf[word_start..state.cursor].to_vec();
+
+    // Dequote the prefix before matching against on-disk filenames /
+    // command names. Inside `"..."` or `'...'`, the prefix bytes are
+    // already literal as far as completion is concerned (the parser
+    // would only re-interpret `$`, `` ` ``, `\` inside double quotes —
+    // none of which a partial filename realistically contains; we keep
+    // the prefix as-is to match bash's behavior here).
+    let matching_prefix = match mode {
+        QuoteMode::Bsquote => bsquote_dequote(&raw_prefix),
+        QuoteMode::Dquote | QuoteMode::Squote => raw_prefix.clone(),
+    };
 
     let is_first_word = is_command_position(&state.buf, word_start);
 
-    let (mut candidates, kind) = gather_candidates(shell, &prefix, is_first_word);
+    let (mut candidates, kind) = gather_candidates(shell, &matching_prefix, is_first_word);
     if candidates.is_empty() {
         out.bell = true;
         return;
@@ -756,16 +805,20 @@ fn do_complete(shell: &mut Shell, state: &mut EmacsState, out: &mut Outcome) {
     candidates.dedup_by(|a, b| a.word == b.word);
 
     if candidates.len() == 1 {
-        let mut full = candidates[0].word.clone();
-        append_terminator(&mut full, &candidates[0], kind);
-        replace_prefix_with(state, word_start, prefix.len(), &full);
+        let mut full = requote_for_kind(&candidates[0].word, kind, mode);
+        append_terminator(&mut full, &candidates[0], kind, mode);
+        replace_prefix_with(state, word_start, raw_prefix.len(), &full);
         return;
     }
 
     let words: Vec<Vec<u8>> = candidates.iter().map(|c| c.word.clone()).collect();
     let lcp = longest_common_prefix(&words).unwrap_or_default();
-    if lcp.len() > prefix.len() {
-        replace_prefix_with(state, word_start, prefix.len(), &lcp);
+    if lcp.len() > matching_prefix.len() {
+        // Re-quote the LCP so the partial inserted text remains
+        // syntactically valid in the surrounding context, but emit no
+        // closing quote / trailing space — the user is still mid-word.
+        let partial = requote_for_kind(&lcp, kind, mode);
+        replace_prefix_with(state, word_start, raw_prefix.len(), &partial);
         return;
     }
 
@@ -773,6 +826,26 @@ fn do_complete(shell: &mut Shell, state: &mut EmacsState, out: &mut Outcome) {
         list_candidates(&candidates);
     } else {
         out.bell = true;
+    }
+}
+
+/// Re-quote a candidate's bytes for splicing back into the buffer.
+///
+/// Filesystem and command candidates ([`CompletionKind::Path`],
+/// [`CompletionKind::Command`]) go through
+/// [`super::completion_quoting::quote_filename`] so any shell
+/// metacharacter in the candidate is escaped under the active quote
+/// mode. Variable expansions ([`CompletionKind::Variable`],
+/// [`CompletionKind::BraceVariable`]) are inserted verbatim — the
+/// candidate already begins with `$` / `${`, which the BSQUOTE rules
+/// would otherwise escape into the literal sequence `\$` and break
+/// the round-tripped expansion. The trailing terminator (close brace,
+/// close quote, trailing SPACE) is still appended by
+/// [`append_terminator`].
+fn requote_for_kind(word: &[u8], kind: CompletionKind, mode: QuoteMode) -> Vec<u8> {
+    match kind {
+        CompletionKind::Variable | CompletionKind::BraceVariable => word.to_vec(),
+        CompletionKind::Path | CompletionKind::Command => quote_filename(word, mode),
     }
 }
 
@@ -803,17 +876,39 @@ fn replace_prefix_with(
     });
 }
 
-/// Append the per-candidate terminator (spec § 5.8): `/` for a
-/// directory match in [`CompletionKind::Path`]; `}` to close a
-/// brace-wrapped variable expansion; nothing for anything else. We
-/// intentionally do not auto-insert a space after file / command
-/// names — the user is free to continue typing flags / paths.
-fn append_terminator(full: &mut Vec<u8>, cand: &Candidate, kind: CompletionKind) {
+/// Append the per-candidate terminator on a unique match (spec § 5.8):
+///
+/// * Directory in [`CompletionKind::Path`] → trailing `/`, no closing
+///   quote, no trailing SPACE — the user is mid-path and must keep
+///   typing.
+/// * [`CompletionKind::BraceVariable`] → closing `}` (the open brace
+///   was typed as part of the prefix).
+/// * Otherwise → for `Dquote` / `Squote` mode, append the matching
+///   closing quote byte; then append a trailing SPACE so the next
+///   token starts cleanly.
+///
+/// `full` is the candidate bytes already requoted by
+/// [`super::completion_quoting::quote_filename`], so for `Dquote` /
+/// `Squote` the closing quote is appended verbatim (`b'"'` / `b'\''`)
+/// regardless of whether the candidate itself contained quote chars.
+fn append_terminator(full: &mut Vec<u8>, cand: &Candidate, kind: CompletionKind, mode: QuoteMode) {
     match kind {
-        CompletionKind::Path if is_dir_candidate(&cand.word) => full.push(b'/'),
-        CompletionKind::BraceVariable => full.push(b'}'),
+        CompletionKind::Path if is_dir_candidate(&cand.word) => {
+            full.push(b'/');
+            return;
+        }
+        CompletionKind::BraceVariable => {
+            full.push(b'}');
+            return;
+        }
         _ => {}
     }
+    match mode {
+        QuoteMode::Bsquote => {}
+        QuoteMode::Dquote => full.push(b'"'),
+        QuoteMode::Squote => full.push(b'\''),
+    }
+    full.push(b' ');
 }
 
 fn is_dir_candidate(word: &[u8]) -> bool {
@@ -1871,6 +1966,151 @@ mod tests {
         assert_no_syscalls(|| {
             assert!(!is_dir_candidate(b""));
             assert!(!is_dir_candidate(b"foo/"));
+        });
+    }
+
+    // --- find_completion_word_start (BSQUOTE-aware) ----------------
+
+    #[test]
+    fn word_start_stops_at_bare_space() {
+        assert_no_syscalls(|| {
+            // `cat foo` — bare space at index 3 is the boundary.
+            let buf: &[u8] = b"cat foo";
+            assert_eq!(find_completion_word_start(buf, buf.len()), 4);
+        });
+    }
+
+    #[test]
+    fn word_start_walks_back_across_escaped_space() {
+        assert_no_syscalls(|| {
+            // `cat foo\ ba` — the `\ ` is an escaped space and part of
+            // the word; the bare space at index 3 is the boundary.
+            let buf: &[u8] = b"cat foo\\ ba";
+            assert_eq!(find_completion_word_start(buf, buf.len()), 4);
+        });
+    }
+
+    #[test]
+    fn word_start_walks_back_across_multiple_escaped_delims() {
+        assert_no_syscalls(|| {
+            // `cat foo\ bar\;baz` — the `\;` is also escaped.
+            let buf: &[u8] = b"cat foo\\ bar\\;baz";
+            assert_eq!(find_completion_word_start(buf, buf.len()), 4);
+        });
+    }
+
+    #[test]
+    fn word_start_treats_double_backslash_as_unescaped_delim() {
+        assert_no_syscalls(|| {
+            // `cat foo\\\\ bar` — the `\\\\` represents an escaped
+            // backslash (literal `\\`) followed by an *unescaped*
+            // space, so the second word starts at `bar`.
+            let buf: &[u8] = b"cat foo\\\\ bar";
+            assert_eq!(find_completion_word_start(buf, buf.len()), 10);
+        });
+    }
+
+    #[test]
+    fn word_start_handles_three_consecutive_backslashes_before_delim() {
+        assert_no_syscalls(|| {
+            // `cat foo\\\\\\ bar` — three `\` followed by space:
+            // odd count, so the space is escaped and the whole run is
+            // part of the word that started at index 4.
+            let buf: &[u8] = b"cat foo\\\\\\ bar";
+            assert_eq!(find_completion_word_start(buf, buf.len()), 4);
+        });
+    }
+
+    #[test]
+    fn word_start_at_buffer_start_returns_zero() {
+        assert_no_syscalls(|| {
+            let buf: &[u8] = b"foo";
+            assert_eq!(find_completion_word_start(buf, buf.len()), 0);
+        });
+    }
+
+    #[test]
+    fn word_start_with_empty_buffer_returns_zero() {
+        assert_no_syscalls(|| {
+            assert_eq!(find_completion_word_start(b"", 0), 0);
+        });
+    }
+
+    #[test]
+    fn word_start_walks_across_escaped_quote() {
+        assert_no_syscalls(|| {
+            // `cat x\'y` — escaped single-quote is part of the word,
+            // so the boundary is the bare space at index 3.
+            let buf: &[u8] = b"cat x\\'y";
+            assert_eq!(find_completion_word_start(buf, buf.len()), 4);
+        });
+    }
+
+    // --- append_terminator -----------------------------------------
+
+    #[test]
+    fn append_terminator_bsquote_non_dir_appends_only_space() {
+        assert_no_syscalls(|| {
+            let cand = Candidate {
+                word: b"FOO_unique".to_vec(),
+                display: b"FOO_unique".to_vec(),
+            };
+            let mut full = b"FOO_unique".to_vec();
+            append_terminator(
+                &mut full,
+                &cand,
+                CompletionKind::Command,
+                QuoteMode::Bsquote,
+            );
+            assert_eq!(full, b"FOO_unique ");
+        });
+    }
+
+    #[test]
+    fn append_terminator_dquote_appends_close_quote_then_space() {
+        // Use `Command` kind so we don't trigger the directory probe
+        // (which would issue a `stat` syscall and trip
+        // `assert_no_syscalls`). The mode-aware terminator path is
+        // independent of `Path` vs `Command`.
+        assert_no_syscalls(|| {
+            let cand = Candidate {
+                word: b"foo bar".to_vec(),
+                display: b"foo bar".to_vec(),
+            };
+            let mut full = b"foo bar".to_vec();
+            append_terminator(&mut full, &cand, CompletionKind::Command, QuoteMode::Dquote);
+            assert_eq!(full, b"foo bar\" ");
+        });
+    }
+
+    #[test]
+    fn append_terminator_squote_appends_close_quote_then_space() {
+        assert_no_syscalls(|| {
+            let cand = Candidate {
+                word: b"foo bar".to_vec(),
+                display: b"foo bar".to_vec(),
+            };
+            let mut full = b"foo bar".to_vec();
+            append_terminator(&mut full, &cand, CompletionKind::Command, QuoteMode::Squote);
+            assert_eq!(full, b"foo bar' ");
+        });
+    }
+
+    #[test]
+    fn append_terminator_brace_variable_appends_close_brace_only() {
+        assert_no_syscalls(|| {
+            let cand = Candidate {
+                word: b"${HOME".to_vec(),
+                display: b"HOME".to_vec(),
+            };
+            let mut full = b"${HOME".to_vec();
+            append_terminator(
+                &mut full,
+                &cand,
+                CompletionKind::BraceVariable,
+                QuoteMode::Bsquote,
+            );
+            assert_eq!(full, b"${HOME}");
         });
     }
 
