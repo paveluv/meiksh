@@ -204,6 +204,32 @@ pub(crate) fn unlink(path: &[u8]) -> SysResult<()> {
     }
 }
 
+/// Create a named FIFO at `path` with permission bits `mode`. Used by
+/// the FIFO-fallback path of process substitution
+/// (`docs/features/process-substitution.md` § 6.3) on systems that
+/// do not expose `/dev/fd`.
+pub(crate) fn make_fifo(path: &[u8], mode: mode_t) -> SysResult<()> {
+    let c_path = to_cstring(path)?;
+    let result = interface::mkfifo(c_path.as_ptr(), mode);
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(last_error())
+    }
+}
+
+/// Probe whether the directory `/dev/fd` exists and is itself a
+/// directory. Linux exposes it via a symlink to `/proc/self/fd`;
+/// macOS and BSDs expose it via `fdescfs`. The probe uses `stat(2)`
+/// (which follows symlinks) so the symlinked Linux path counts as
+/// "supported".
+pub(crate) fn dev_fd_supported() -> bool {
+    match stat_path(b"/dev/fd") {
+        Ok(stat) => stat.is_dir(),
+        Err(_) => false,
+    }
+}
+
 pub(crate) fn file_needs_binary_rejection(path: &[u8]) -> bool {
     let fd = match open_file(path, O_RDONLY | O_CLOEXEC, 0) {
         Ok(fd) => fd,

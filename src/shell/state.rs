@@ -148,6 +148,21 @@ pub(crate) struct Shell {
     /// that itself uses substitution, etc.) cleans up at the right
     /// scope. See § 10.4.
     pub(crate) proc_sub_leases: Vec<super::proc_substitute::ProcSubLease>,
+    /// Per-shell sequence counter used to give each FIFO created for
+    /// the FIFO-fallback path of process substitution a unique
+    /// basename. See `docs/features/process-substitution.md` § 6.3.
+    /// Starts at 1 in fresh shells; subshell forks inherit the
+    /// parent's value but only ever advance in the child, never
+    /// affecting the parent.
+    pub(crate) proc_sub_seq: u64,
+    /// Cached result of the runtime `/dev/fd` probe per
+    /// `docs/features/process-substitution.md` § 6.1. `None` until
+    /// the first process substitution forces the probe; once filled,
+    /// reused for the lifetime of the shell. The cell is `Cell` so
+    /// the cache fill does not require `&mut self` — paths that
+    /// observe `&self` (test fixtures, future `set -o` printers)
+    /// can fill the cache without escalating to a mutable borrow.
+    pub(crate) dev_fd_supported: std::cell::Cell<Option<bool>>,
 }
 
 impl Shell {

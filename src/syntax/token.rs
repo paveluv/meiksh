@@ -877,9 +877,20 @@ impl<'a> Parser<'a> {
             Some(b'<') if self.is_proc_sub_opener() => {
                 self.produce_proc_sub_token(crate::syntax::word_part::ProcSubDirection::Read)
             }
+            // Adjacent `<(` with `bash_procsub` off — emit the
+            // option-aware diagnostic from spec § 9.1 instead of
+            // falling through to a generic "expected redirection
+            // target" error. Users porting bash scripts hit this on
+            // their first run; this message names the fix.
+            Some(b'<') if self.peek_byte_after() == Some(b'(') => {
+                Err(self.error(b"process substitution requires `set -o bash_procsub'"))
+            }
             Some(b'<') => self.produce_less_token(),
             Some(b'>') if self.is_proc_sub_opener() => {
                 self.produce_proc_sub_token(crate::syntax::word_part::ProcSubDirection::Write)
+            }
+            Some(b'>') if self.peek_byte_after() == Some(b'(') => {
+                Err(self.error(b"process substitution requires `set -o bash_procsub'"))
             }
             Some(b'>') => self.produce_great_token(),
             Some(b'0'..=b'9') => self.produce_io_number_or_word(),
@@ -3537,6 +3548,33 @@ mod tests {
         assert!(
             msg.contains("unterminated process substitution"),
             "expected unterminated-procsub diagnostic, got {msg:?}",
+        );
+    }
+
+    #[test]
+    fn procsub_off_emits_option_aware_diagnostic() {
+        // Spec § 9.1: `<(` adjacent with `bash_procsub` off shall
+        // produce a syntax error whose body names the option, not
+        // the generic "expected redirection target" the parser
+        // would have emitted for `<` followed by an unparseable
+        // word.
+        let err = parse_without_procsub(b"cat <(echo hi)\n").expect_err("expected error");
+        let msg = std::str::from_utf8(&err.message).unwrap_or("");
+        assert!(
+            msg.contains("process substitution requires"),
+            "expected option-aware diagnostic, got {msg:?}",
+        );
+        assert!(
+            msg.contains("bash_procsub"),
+            "expected the message to name the option, got {msg:?}",
+        );
+
+        // Symmetric case for `>(`.
+        let err = parse_without_procsub(b"tee >(grep foo)\n").expect_err("expected error");
+        let msg = std::str::from_utf8(&err.message).unwrap_or("");
+        assert!(
+            msg.contains("process substitution requires"),
+            "expected option-aware diagnostic for `>(`, got {msg:?}",
         );
     }
 

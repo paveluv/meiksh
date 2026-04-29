@@ -157,6 +157,8 @@ impl Shell {
             exec_scratch_pool: crate::exec::scratch::ExecScratchPool::new(),
             bytes_pool: crate::exec::scratch::BytesPool::new(),
             proc_sub_leases: Vec::new(),
+            proc_sub_seq: 1,
+            dev_fd_supported: std::cell::Cell::new(None),
         })
     }
 
@@ -242,6 +244,8 @@ impl Shell {
             exec_scratch_pool: crate::exec::scratch::ExecScratchPool::new(),
             bytes_pool: crate::exec::scratch::BytesPool::new(),
             proc_sub_leases: Vec::new(),
+            proc_sub_seq: 1,
+            dev_fd_supported: std::cell::Cell::new(None),
         })
     }
 

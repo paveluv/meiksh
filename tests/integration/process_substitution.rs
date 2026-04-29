@@ -165,12 +165,13 @@ fn procsub_off_emits_diagnostic_pointing_at_option() {
         "expected non-zero exit when bash_procsub is off",
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
-    // The exact diagnostic shape is not pinned to a specific string,
-    // but failing here without any stderr would point to a silent
-    // misparse and is worth catching.
     assert!(
-        !stderr.is_empty(),
-        "expected a stderr diagnostic; got nothing",
+        stderr.contains("bash_procsub"),
+        "expected the diagnostic to name `bash_procsub`, got {stderr:?}",
+    );
+    assert!(
+        stderr.contains("process substitution"),
+        "expected `process substitution` in diagnostic, got {stderr:?}",
     );
 }
 

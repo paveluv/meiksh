@@ -76,6 +76,12 @@ pub fn test_shell() -> Shell {
         exec_scratch_pool: crate::exec::scratch::ExecScratchPool::new(),
         bytes_pool: crate::exec::scratch::BytesPool::new(),
         proc_sub_leases: Vec::new(),
+        proc_sub_seq: 1,
+        // Default to `/dev/fd` supported in tests so process
+        // substitution traces don't have to expect a stat-on-/dev/fd
+        // call on every test. Tests that exercise the FIFO fallback
+        // explicitly flip this to `Some(false)`.
+        dev_fd_supported: std::cell::Cell::new(Some(true)),
     }
 }
 

@@ -128,6 +128,10 @@ pub(crate) const S_IFSOCK: mode_t = libc::S_IFSOCK;
 pub(crate) const S_IXUSR: mode_t = libc::S_IXUSR;
 pub(crate) const S_IXGRP: mode_t = libc::S_IXGRP;
 pub(crate) const S_IXOTH: mode_t = libc::S_IXOTH;
+/// Owner read+write (`0o600`). Used as the FIFO permission mode for
+/// the process-substitution fallback path
+/// (`docs/features/process-substitution.md` § 6.3).
+pub(crate) const S_IRUSR_BITS: mode_t = libc::S_IRUSR | libc::S_IWUSR;
 
 pub(crate) const RLIMIT_CORE: i32 = libc::RLIMIT_CORE as i32;
 pub(crate) const RLIMIT_DATA: i32 = libc::RLIMIT_DATA as i32;

@@ -459,6 +459,15 @@ pub(super) fn unlink(path: *const c_char) -> c_int {
 }
 
 #[cfg(not(test))]
+pub(super) fn mkfifo(path: *const c_char, mode: libc::mode_t) -> c_int {
+    unsafe { libc::mkfifo(path, mode) }
+}
+#[cfg(test)]
+pub(super) fn mkfifo(path: *const c_char, mode: libc::mode_t) -> c_int {
+    super::test_support::trace_mkfifo(path, mode)
+}
+
+#[cfg(not(test))]
 pub(super) fn fork() -> Pid {
     unsafe { libc::fork() }
 }

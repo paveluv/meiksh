@@ -815,6 +815,15 @@ pub(super) fn trace_unlink(path: *const c_char) -> c_int {
     }
 }
 
+pub(super) fn trace_mkfifo(path: *const c_char, mode: libc::mode_t) -> c_int {
+    let p = crate::bstr::bytes_from_cstr(unsafe { CStr::from_ptr(path) });
+    let entry = trace_dispatch(
+        "mkfifo",
+        &[ArgMatcher::Str(p), ArgMatcher::Int(mode as i64)],
+    );
+    apply_trace_result_int(&entry)
+}
+
 pub(super) fn trace_realpath(path: *const c_char, resolved: *mut c_char) -> *mut c_char {
     let p = crate::bstr::bytes_from_cstr(unsafe { CStr::from_ptr(path) });
     let entry = trace_dispatch("realpath", &[ArgMatcher::Str(p), ArgMatcher::Any]);

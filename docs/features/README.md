@@ -49,5 +49,5 @@ Each spec declares its own implementation status in a `Status` section at the to
 |---|---|
 | [emacs-editing-mode.md](emacs-editing-mode.md) - Emacs-style interactive line-editing mode enabled by `set -o emacs`, including the `bind` builtin. A pragmatic subset of GNU Readline's emacs mode. | Implemented |
 | [inputrc.md](inputrc.md) - The `inputrc` configuration file format used by the `bind -f` builtin and read at startup from `$INPUTRC`, `$HOME/.inputrc`, or `/etc/inputrc`. | Implemented |
-| [process-substitution.md](process-substitution.md) - Bash-compatible `<(list)` / `>(list)` process-substitution syntax, gated by the `bash_procsub` shell option (default off). Uses `/dev/fd/N` paths where available with a FIFO fallback under `${TMPDIR:-/tmp}`. | Partially implemented |
+| [process-substitution.md](process-substitution.md) - Bash-compatible `<(list)` / `>(list)` process-substitution syntax, gated by the `bash_procsub` shell option (default off). Uses `/dev/fd/N` paths where available with a FIFO fallback under `${TMPDIR:-/tmp}`. | Implemented |
 | [ps1-prompt-extensions.md](ps1-prompt-extensions.md) - Bash-compatible backslash-escape prompt language for `PS1`, `PS2`, `PS4`, non-printing `\[` / `\]` delimiters, and the `bash_prompts` shell option that gates the extensions on top of strict POSIX prompt expansion. | Implemented |

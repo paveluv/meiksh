@@ -4,31 +4,33 @@
 //! [`docs/features/process-substitution.md`](../../../docs/features/process-substitution.md):
 //!
 //! - Fork a subshell to run the embedded list with stdin or stdout
-//!   connected through a pipe to a substitution file descriptor in
+//!   connected through a pipe (or FIFO) to a substitution path in
 //!   the parent shell (§ 5).
-//! - Return the path-shaped word that opens that fd (§ 6).
+//! - Return the path-shaped word that opens that path (§ 6).
 //!
 //! ## Path representation
 //!
-//! This implementation always emits a `/dev/fd/N` path. On Linux that
-//! is a symlink under `/proc/self/fd`; on macOS and other BSDs it is
-//! a kernel-provided directory entry. The spec § 6.3 also mandates a
-//! FIFO fallback under `${TMPDIR:-/tmp}` for systems without
-//! `/dev/fd`; that fallback is intentionally out of scope for the
-//! initial implementation and tracked in Appendix B of the spec. On
-//! a system without `/dev/fd` the consuming command will simply fail
-//! to open the substituted path with `ENOENT` — a clean degraded
-//! mode that the test suite does not exercise because the shell only
-//! supports Linux today.
+//! Two backings, selected by a runtime probe of `/dev/fd` (§ 6.1):
+//!
+//! * **`/dev/fd/N`** ([`ProcSubBacking::DevFd`]): the parent forks
+//!   with a `pipe(2)`, retains one end as fd N, and emits the path
+//!   `/dev/fd/N`. Used on Linux (where `/dev/fd` is a symlink to
+//!   `/proc/self/fd`) and on macOS / *BSDs that mount `fdescfs`.
+//! * **Named FIFO under `${TMPDIR:-/tmp}`** ([`ProcSubBacking::Fifo`]):
+//!   the parent creates a FIFO via `mkfifo(2)` with permissions
+//!   `0600`, forks the subshell, and the subshell opens the FIFO
+//!   itself with the appropriate direction. The path is the FIFO
+//!   path. Used on systems without `/dev/fd`. The cleanup hook
+//!   unlinks the FIFO after the consumer exits.
 //!
 //! ## Lifetime
 //!
 //! Each successful substitution pushes a [`ProcSubLease`] onto
 //! [`Shell::proc_sub_leases`]. The consuming command's exit hook
-//! (`drain_proc_sub_leases_to`) closes the parent-side fd and reaps
-//! the subshell. The leases are popped in reverse order so the
-//! left-to-right substitution order in the source line is preserved
-//! (§ 7.3).
+//! (`drain_proc_sub_leases_to`) closes the parent-side fd (or
+//! unlinks the FIFO), then reaps the subshell. The leases are popped
+//! in reverse order so the left-to-right substitution order in the
+//! source line is preserved (§ 7.3).
 
 use std::rc::Rc;
 
@@ -40,6 +42,19 @@ use crate::sys::types::Pid;
 
 use super::state::Shell;
 
+/// What the parent shell holds for an active substitution. The
+/// choice is made by [`process_substitute`] based on the runtime
+/// probe; cleanup ([`cleanup_lease`]) inspects the variant to decide
+/// between `close(fd)` and `unlink(path)`.
+#[derive(Clone, Debug)]
+pub(crate) enum ProcSubBacking {
+    /// `/dev/fd/N` path; parent retains the substitution `fd`.
+    DevFd { fd: i32 },
+    /// FIFO path; parent does not hold an fd. The path is unlinked
+    /// during cleanup.
+    Fifo { path: Vec<u8> },
+}
+
 /// One active process substitution. Created during arg expansion;
 /// drained after the consuming command finishes.
 ///
@@ -48,18 +63,16 @@ use super::state::Shell;
 /// **duplicated** view of leases the parent already owns. Subshell
 /// forks (`(...)`, function bodies, command substitutions) must
 /// clear `proc_sub_leases` immediately after forking so they do not
-/// double-close fds or double-reap pids the parent will clean up.
-/// `process_substitute` does this for its own subshell;
+/// double-close fds, double-reap pids, or double-unlink FIFOs the
+/// parent will clean up. `process_substitute` does this for its own
+/// subshell;
 /// [`crate::shell::run::Shell::capture_output_program`] does the same
 /// for `$(...)`.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct ProcSubLease {
-    /// Substitution fd held by the parent shell. For `<(list)` this
-    /// is the read end of the pipe; for `>(list)` the write end. The
-    /// consuming command (forked from the parent) inherits the fd
-    /// and resolves `/dev/fd/N` against it. Closed by the cleanup
-    /// hook after the consumer exits.
-    pub(crate) fd: i32,
+    /// What the parent shell holds: a substitution fd (for
+    /// `/dev/fd/N` mode) or a FIFO path (for the FIFO fallback).
+    pub(crate) backing: ProcSubBacking,
     /// Subshell child running the embedded list. Reaped by the
     /// cleanup hook with `waitpid(2)`.
     pub(crate) child_pid: Pid,
@@ -73,6 +86,30 @@ pub(crate) struct ProcSubLease {
 /// `meiksh:` prefix and trailing newline; those are added by the
 /// expansion error reporter.
 pub(crate) fn process_substitute(
+    shell: &mut Shell,
+    program: &Rc<Program>,
+    direction: ProcSubDirection,
+) -> Result<Vec<u8>, Vec<u8>> {
+    if dev_fd_supported(shell) {
+        process_substitute_dev_fd(shell, program, direction)
+    } else {
+        process_substitute_fifo(shell, program, direction)
+    }
+}
+
+/// Lazy-initialize and return the cached `/dev/fd` probe result.
+fn dev_fd_supported(shell: &Shell) -> bool {
+    if let Some(supported) = shell.dev_fd_supported.get() {
+        return supported;
+    }
+    let supported = sys::fs::dev_fd_supported();
+    shell.dev_fd_supported.set(Some(supported));
+    supported
+}
+
+/// `/dev/fd/N` backing path: pipe + fork; child dups its end to
+/// stdin/stdout; parent retains the other end as fd N.
+fn process_substitute_dev_fd(
     shell: &mut Shell,
     program: &Rc<Program>,
     direction: ProcSubDirection,
@@ -95,8 +132,6 @@ pub(crate) fn process_substitute(
     let pid = match sys::process::fork_process() {
         Ok(pid) => pid,
         Err(e) => {
-            // On fork failure roll back the pipe so we do not leak
-            // the file descriptors.
             let _ = sys::fd_io::close_fd(read_fd);
             let _ = sys::fd_io::close_fd(write_fd);
             return Err(diagnose(b"fork", &e));
@@ -104,34 +139,13 @@ pub(crate) fn process_substitute(
     };
 
     if pid == 0 {
-        // Child path. Wire the appropriate pipe end to the standard
-        // fd, close the pipe ends we own, and execute the embedded
-        // program. Per spec § 5.1 the subshell is a POSIX subshell
-        // (§ 2.13), so we mark `in_subshell`, clear the parent's
-        // job-control state, restore signals, and reset traps before
-        // executing.
         let _ = sys::fd_io::close_fd(parent_fd);
         let _ = sys::fd_io::duplicate_fd(child_pipe_end, child_target_fd);
         let _ = sys::fd_io::close_fd(child_pipe_end);
-        // The substitution subshell does not inherit other in-flight
-        // procsub leases from the parent. The parent owns those; the
-        // subshell would close fds the parent still needs at exit.
-        shell.proc_sub_leases.clear();
-        shell.owns_terminal = false;
-        shell.in_subshell = true;
-        shell.subshell_nesting_level = shell.subshell_nesting_level.saturating_add(1);
-        shell.restore_signals_for_child();
-        let _ = shell.reset_traps_for_subshell();
-        let status = shell.execute_program(program).unwrap_or(1);
-        let status = shell.run_exit_trap(status).unwrap_or(status);
-        sys::process::exit_process(status as sys::types::RawFd);
+        run_subshell(shell, program);
     }
 
-    // Parent path. Close the pipe end we are not retaining; the
-    // remaining end is the substitution fd `parent_fd`.
     if let Err(e) = sys::fd_io::close_fd(parent_other_end) {
-        // The child has already forked; tear it down before
-        // reporting the error so we do not orphan the subshell.
         let _ = sys::fd_io::close_fd(parent_fd);
         let _ = reap_until_exit(pid);
         return Err(diagnose(b"close", &e));
@@ -139,10 +153,94 @@ pub(crate) fn process_substitute(
 
     let path = format_dev_fd_path(parent_fd);
     shell.proc_sub_leases.push(ProcSubLease {
-        fd: parent_fd,
+        backing: ProcSubBacking::DevFd { fd: parent_fd },
         child_pid: pid,
     });
     Ok(path)
+}
+
+/// FIFO backing path: mkfifo + fork; child opens the FIFO with the
+/// appropriate direction (rendezvousing with the consumer's open),
+/// dups it to stdin/stdout, and runs the program. Parent does not
+/// hold an fd; cleanup unlinks the FIFO.
+fn process_substitute_fifo(
+    shell: &mut Shell,
+    program: &Rc<Program>,
+    direction: ProcSubDirection,
+) -> Result<Vec<u8>, Vec<u8>> {
+    let path = generate_fifo_path(shell);
+    sys::fs::make_fifo(&path, sys::constants::S_IRUSR_BITS).map_err(|e| diagnose(b"mkfifo", &e))?;
+
+    let (child_open_flags, child_target_fd) = match direction {
+        // `<(producer)`: child writes to FIFO; consumer reads.
+        ProcSubDirection::Read => (sys::constants::O_WRONLY, sys::constants::STDOUT_FILENO),
+        // `>(consumer)`: child reads from FIFO; producer writes.
+        ProcSubDirection::Write => (sys::constants::O_RDONLY, sys::constants::STDIN_FILENO),
+    };
+
+    let pid = match sys::process::fork_process() {
+        Ok(pid) => pid,
+        Err(e) => {
+            let _ = sys::fs::unlink(&path);
+            return Err(diagnose(b"fork", &e));
+        }
+    };
+
+    if pid == 0 {
+        // The child's open(FIFO) blocks until the consumer (or
+        // producer, for `>(...)`) opens the other end. That
+        // rendezvous is the whole point of the FIFO fallback.
+        let fd = match sys::fs::open_file(&path, child_open_flags, 0) {
+            Ok(fd) => fd,
+            Err(_) => {
+                sys::process::exit_process(1);
+            }
+        };
+        let _ = sys::fd_io::duplicate_fd(fd, child_target_fd);
+        let _ = sys::fd_io::close_fd(fd);
+        run_subshell(shell, program);
+    }
+
+    shell.proc_sub_leases.push(ProcSubLease {
+        backing: ProcSubBacking::Fifo { path: path.clone() },
+        child_pid: pid,
+    });
+    Ok(path)
+}
+
+/// Run the embedded `program` in this (forked-child) process and
+/// `_exit`. Caller has already wired the appropriate fds. Per spec
+/// § 5.1 the subshell is a POSIX subshell: `in_subshell` set,
+/// signals restored, traps reset. The substitution subshell does
+/// not inherit other in-flight procsub leases from the parent; the
+/// parent owns those.
+fn run_subshell(shell: &mut Shell, program: &Rc<Program>) -> ! {
+    shell.proc_sub_leases.clear();
+    shell.owns_terminal = false;
+    shell.in_subshell = true;
+    shell.subshell_nesting_level = shell.subshell_nesting_level.saturating_add(1);
+    shell.restore_signals_for_child();
+    let _ = shell.reset_traps_for_subshell();
+    let status = shell.execute_program(program).unwrap_or(1);
+    let status = shell.run_exit_trap(status).unwrap_or(status);
+    sys::process::exit_process(status as sys::types::RawFd);
+}
+
+/// Build the FIFO path
+/// `${TMPDIR:-/tmp}/meiksh-procsub.<pid>.<seq>` and increment the
+/// per-shell seq counter so the next call gets a fresh basename.
+fn generate_fifo_path(shell: &mut Shell) -> Vec<u8> {
+    let tmpdir: Vec<u8> = shell
+        .var_value(b"TMPDIR")
+        .filter(|v| !v.is_empty())
+        .map(<[u8]>::to_vec)
+        .unwrap_or_else(|| b"/tmp".to_vec());
+    let seq = shell.proc_sub_seq;
+    shell.proc_sub_seq = shell.proc_sub_seq.wrapping_add(1);
+    let mut buf = ByteWriter::new().bytes(&tmpdir).bytes(b"/meiksh-procsub.");
+    buf = buf.i64_val(shell.pid as i64);
+    buf = buf.bytes(b".").i64_val(seq as i64);
+    buf.finish()
 }
 
 /// Drain all leases pushed at-or-after `mark` from
@@ -165,10 +263,21 @@ pub(crate) fn drain_proc_sub_leases_to(shell: &mut Shell, mark: usize) {
 }
 
 fn cleanup_lease(lease: ProcSubLease) {
-    // Closing the parent-side fd lets the subshell observe EOF on
-    // its stdin (`>(...)`) or `SIGPIPE` on its next stdout write
-    // (`<(...)`), which lets cooperating programs exit promptly.
-    let _ = sys::fd_io::close_fd(lease.fd);
+    // For `/dev/fd/N` mode: closing the parent-side fd lets the
+    // subshell observe EOF on its stdin (`>(...)`) or `SIGPIPE` on
+    // its next stdout write (`<(...)`), so cooperating programs
+    // exit promptly. For FIFO mode: there is no parent-side fd to
+    // close, but unlinking the FIFO node removes it from the
+    // filesystem; the subshell's open fd keeps the inode alive
+    // until it exits, then the kernel reclaims it.
+    match lease.backing {
+        ProcSubBacking::DevFd { fd } => {
+            let _ = sys::fd_io::close_fd(fd);
+        }
+        ProcSubBacking::Fifo { path } => {
+            let _ = sys::fs::unlink(&path);
+        }
+    }
     let _ = reap_until_exit(lease.child_pid);
 }
 
@@ -238,8 +347,7 @@ mod tests {
 
     #[test]
     fn cleanup_lease_closes_fd_and_reaps_child() {
-        // Cleanup is the inverse of setup: close the fd, then waitpid
-        // until the subshell exits. The trace covers the happy path.
+        // /dev/fd backing: cleanup closes the fd, then waits.
         run_trace(
             trace_entries![
                 close(fd(7)) -> 0,
@@ -247,7 +355,28 @@ mod tests {
             ],
             || {
                 cleanup_lease(ProcSubLease {
-                    fd: 7,
+                    backing: ProcSubBacking::DevFd { fd: 7 },
+                    child_pid: 1234,
+                });
+            },
+        );
+    }
+
+    #[test]
+    fn cleanup_lease_unlinks_fifo_and_reaps_child() {
+        // FIFO backing: cleanup unlinks the path, then waits. The
+        // subshell still has its own fd open against the FIFO; the
+        // unlink only removes the directory entry.
+        run_trace(
+            trace_entries![
+                unlink(str(b"/tmp/meiksh-procsub.99.1")) -> 0,
+                waitpid(1234, _) -> status(0),
+            ],
+            || {
+                cleanup_lease(ProcSubLease {
+                    backing: ProcSubBacking::Fifo {
+                        path: b"/tmp/meiksh-procsub.99.1".to_vec(),
+                    },
                     child_pid: 1234,
                 });
             },
@@ -268,11 +397,11 @@ mod tests {
             || {
                 let mut shell = crate::shell::test_support::test_shell();
                 shell.proc_sub_leases.push(ProcSubLease {
-                    fd: 10,
+                    backing: ProcSubBacking::DevFd { fd: 10 },
                     child_pid: 1001,
                 });
                 shell.proc_sub_leases.push(ProcSubLease {
-                    fd: 11,
+                    backing: ProcSubBacking::DevFd { fd: 11 },
                     child_pid: 1002,
                 });
                 drain_proc_sub_leases_to(&mut shell, 0);
@@ -293,18 +422,91 @@ mod tests {
             || {
                 let mut shell = crate::shell::test_support::test_shell();
                 shell.proc_sub_leases.push(ProcSubLease {
-                    fd: 10,
+                    backing: ProcSubBacking::DevFd { fd: 10 },
                     child_pid: 1001,
                 });
                 let mark = shell.proc_sub_leases.len();
                 shell.proc_sub_leases.push(ProcSubLease {
-                    fd: 12,
+                    backing: ProcSubBacking::DevFd { fd: 12 },
                     child_pid: 1003,
                 });
                 drain_proc_sub_leases_to(&mut shell, mark);
                 assert_eq!(shell.proc_sub_leases.len(), 1);
-                assert_eq!(shell.proc_sub_leases[0].fd, 10);
+                assert!(matches!(
+                    shell.proc_sub_leases[0].backing,
+                    ProcSubBacking::DevFd { fd: 10 }
+                ));
             },
         );
+    }
+
+    #[test]
+    fn drain_with_mixed_backings_dispatches_correctly() {
+        // Stack with FIFO on top, DevFd at bottom. Drain pops in
+        // reverse order: FIFO first (unlink), then DevFd (close).
+        run_trace(
+            trace_entries![
+                unlink(str(b"/tmp/meiksh-procsub.7.1")) -> 0,
+                waitpid(1100, _) -> status(0),
+                close(fd(20)) -> 0,
+                waitpid(1101, _) -> status(0),
+            ],
+            || {
+                let mut shell = crate::shell::test_support::test_shell();
+                shell.proc_sub_leases.push(ProcSubLease {
+                    backing: ProcSubBacking::DevFd { fd: 20 },
+                    child_pid: 1101,
+                });
+                shell.proc_sub_leases.push(ProcSubLease {
+                    backing: ProcSubBacking::Fifo {
+                        path: b"/tmp/meiksh-procsub.7.1".to_vec(),
+                    },
+                    child_pid: 1100,
+                });
+                drain_proc_sub_leases_to(&mut shell, 0);
+                assert!(shell.proc_sub_leases.is_empty());
+            },
+        );
+    }
+
+    // --- generate_fifo_path -----------------------------------------
+
+    #[test]
+    fn generate_fifo_path_uses_default_tmpdir_when_unset() {
+        assert_no_syscalls(|| {
+            let mut shell = crate::shell::test_support::test_shell();
+            shell.pid = 4242;
+            shell.proc_sub_seq = 1;
+            let path = generate_fifo_path(&mut shell);
+            assert_eq!(path, b"/tmp/meiksh-procsub.4242.1");
+            // The seq counter advances on each call.
+            let path2 = generate_fifo_path(&mut shell);
+            assert_eq!(path2, b"/tmp/meiksh-procsub.4242.2");
+        });
+    }
+
+    #[test]
+    fn generate_fifo_path_honors_tmpdir_when_set() {
+        assert_no_syscalls(|| {
+            let mut shell = crate::shell::test_support::test_shell();
+            let _ = shell.set_var(b"TMPDIR", b"/var/tmp");
+            shell.pid = 13;
+            shell.proc_sub_seq = 5;
+            let path = generate_fifo_path(&mut shell);
+            assert_eq!(path, b"/var/tmp/meiksh-procsub.13.5");
+        });
+    }
+
+    #[test]
+    fn generate_fifo_path_falls_back_when_tmpdir_empty() {
+        // Empty TMPDIR is treated as unset (matches POSIX `: -`
+        // expansion behavior with `${TMPDIR:-/tmp}`).
+        assert_no_syscalls(|| {
+            let mut shell = crate::shell::test_support::test_shell();
+            let _ = shell.set_var(b"TMPDIR", b"");
+            shell.pid = 7;
+            let path = generate_fifo_path(&mut shell);
+            assert_eq!(path, b"/tmp/meiksh-procsub.7.1");
+        });
     }
 }
