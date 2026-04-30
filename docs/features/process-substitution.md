@@ -369,7 +369,7 @@ This section is normative.
 
 ### 14.3 Matrix Tests
 
-- Matrix tests under `tests/matrix/non_posix/process-substitution.md` shall reference this spec and verify each numbered requirement in Sections 2 through 9. The matrix tests run the built shell binary as a black box per [docs/IMPLEMENTATION_POLICY.md § Test Policy](../IMPLEMENTATION_POLICY.md#test-policy).
+- The matrix suite under `tests/matrix/` is reserved for POSIX conformance and does not currently host non-POSIX features. Black-box end-to-end coverage for this spec lives in `tests/integration/process_substitution.rs` (Section 14.2). Should `tests/matrix/` later grow a non-POSIX section, the integration tests for this feature shall be lifted into a matrix suite that references this spec.
 
 ### 14.4 Coverage
 

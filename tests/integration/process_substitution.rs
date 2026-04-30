@@ -267,6 +267,52 @@ fn procsub_fds_are_released_between_consumers() {
 // (Appendix B) this test becomes meaningful.
 // =====================================================================
 
+/// § 2.3: the option is sampled at **parse time** for each
+/// "complete command" (a list ended by newline / `&` / EOF). A
+/// `;`-separated `set -o bash_procsub; cat <(...)` therefore parses
+/// both commands together while the option is still off, and the
+/// `<(...)` rejection fires before the `set` ever runs. Users must
+/// put the `set` on its own line (or in their startup file) for it
+/// to take effect on subsequent parses. This test pins the
+/// behavior so a future "lift the gate to execute-time" rework
+/// trips on it.
+#[test]
+fn procsub_option_must_be_set_before_the_parse_that_uses_it() {
+    let out = Command::new(meiksh())
+        .args(["-c", "set -o bash_procsub; cat <(printf hi)"])
+        .output()
+        .expect("run meiksh");
+    assert!(
+        !out.status.success(),
+        "expected the same-line `set -o; cat <(...)` to be rejected at parse time",
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("bash_procsub"),
+        "expected the option-aware diagnostic, got {stderr:?}",
+    );
+}
+
+/// § 4.2: a process substitution may be juxtaposed with adjacent
+/// unquoted bytes; the result is a single word whose expansion
+/// concatenates `prefix` + path + `suffix` into one argument.
+#[test]
+fn procsub_concatenates_with_surrounding_literals() {
+    let out = run_with_procsub("printf '[%s]' prefix<(printf x)suffix");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    // Path is implementation-defined (`/dev/fd/N`), so we look for
+    // the bracketed shape with the literal prefix/suffix sitting
+    // tight against an inserted path.
+    assert!(
+        stdout.starts_with("[prefix/dev/fd/"),
+        "expected `[prefix/dev/fd/...suffix]`, got {stdout:?}",
+    );
+    assert!(
+        stdout.ends_with("suffix]"),
+        "expected the suffix to concatenate after the path, got {stdout:?}",
+    );
+}
+
 /// `set -o bash_procsub` followed by `set +o bash_procsub` toggles
 /// the option as expected; a `<(...)` after disabling fails again.
 #[test]

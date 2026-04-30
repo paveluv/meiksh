@@ -1565,6 +1565,42 @@ impl<'a> Parser<'a> {
         loop {
             match self.peek_byte() {
                 None => break,
+                // Mid-word `<(` / `>(` when `bash_procsub` is on:
+                // splice in a ProcSubstitution part instead of
+                // breaking the word, so `prefix<(echo)suffix`
+                // becomes one word with three parts per
+                // process-substitution.md § 4.2. Must come before
+                // the `is_word_break` arm because `<` and `>` are
+                // both word breaks in the default classifier.
+                Some(b @ (b'<' | b'>'))
+                    if self.parse_options.bash_procsub && self.peek_byte_after() == Some(b'(') =>
+                {
+                    flush_literal(raw, lit_start, raw.len(), parts);
+                    flush_quoted_buf(qbuf, parts);
+                    let direction = if b == b'<' {
+                        crate::syntax::word_part::ProcSubDirection::Read
+                    } else {
+                        crate::syntax::word_part::ProcSubDirection::Write
+                    };
+                    let opener_line = self.line;
+                    self.advance_byte(); // `<` or `>`
+                    self.advance_byte(); // `(`
+                    let body = self.collect_proc_sub_body(opener_line)?;
+                    let program = crate::syntax::parse(&body).unwrap_or_default();
+                    raw.push(b);
+                    raw.push(b'(');
+                    raw.extend_from_slice(&body);
+                    raw.push(b')');
+                    parts.push(WordPart::Expansion {
+                        kind: crate::syntax::word_part::ExpansionKind::ProcSubstitution {
+                            program: Rc::new(program),
+                            direction,
+                        },
+                        quoted: false,
+                    });
+                    lit_start = raw.len();
+                    continue;
+                }
                 Some(b) if is_word_break(b) => break,
                 Some(b'#') if raw.is_empty() => break,
                 Some(b'\\') => {
@@ -3763,6 +3799,53 @@ mod tests {
         // assert the outer parse succeeded; a deep inspection would
         // duplicate the lexer test for the inner case.
         assert_eq!(word.raw, b"$(cat <(echo hi))");
+    }
+
+    #[test]
+    fn procsub_mid_word_concatenates_with_literals() {
+        // § 4.2: `prefix<(echo)suffix` is one word with three parts:
+        // Literal "prefix", ProcSubstitution, Literal "suffix".
+        let prog = parse_with_procsub(b"echo prefix<(echo hi)suffix\n").expect("parse");
+        let word = extract_procsub_word(&prog, 1);
+        assert_eq!(word.raw, b"prefix<(echo hi)suffix");
+        assert_eq!(word.parts.len(), 3);
+        assert!(matches!(
+            word.parts[0],
+            WordPart::Literal {
+                start: 0, end: 6, ..
+            }
+        ));
+        assert!(matches!(
+            word.parts[1],
+            WordPart::Expansion {
+                kind: ExpansionKind::ProcSubstitution { .. },
+                ..
+            }
+        ));
+        assert!(matches!(
+            word.parts[2],
+            WordPart::Literal {
+                start: 16,
+                end: 22,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn procsub_mid_word_with_only_prefix_keeps_concatenation() {
+        // `prefix<(echo)` — two parts: Literal + ProcSubstitution.
+        let prog = parse_with_procsub(b"echo prefix<(echo hi)\n").expect("parse");
+        let word = extract_procsub_word(&prog, 1);
+        assert_eq!(word.raw, b"prefix<(echo hi)");
+        assert_eq!(word.parts.len(), 2);
+        assert!(matches!(
+            word.parts[1],
+            WordPart::Expansion {
+                kind: ExpansionKind::ProcSubstitution { .. },
+                ..
+            }
+        ));
     }
 
     #[test]
