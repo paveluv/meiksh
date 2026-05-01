@@ -3812,7 +3812,9 @@ mod tests {
         assert!(matches!(
             word.parts[0],
             WordPart::Literal {
-                start: 0, end: 6, ..
+                start: 0,
+                end: 6,
+                ..
             }
         ));
         assert!(matches!(

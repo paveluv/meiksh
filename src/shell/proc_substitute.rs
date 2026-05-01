@@ -646,6 +646,39 @@ mod tests {
     }
 
     #[test]
+    fn process_substitute_dev_fd_parent_close_failure_rolls_back() {
+        // Pipe + fork succeed in the parent. The parent's close of
+        // the unused pipe end then fails (e.g. EBADF). We must
+        // close the substitution fd, reap the subshell, and report
+        // a `close` diagnostic so the caller knows setup failed.
+        run_trace(
+            trace_entries![
+                pipe() -> fds(80, 81),
+                fork() -> pid(2400), child: [
+                    close(fd(80)) -> 0,
+                    dup2(fd(81), fd(sys::constants::STDOUT_FILENO)) -> 0,
+                    close(fd(81)) -> 0,
+                ],
+                close(fd(81)) -> err(sys::constants::EBADF),
+                close(fd(80)) -> 0,
+                waitpid(2400, _) -> status(0),
+            ],
+            || {
+                let mut shell = crate::shell::test_support::test_shell();
+                let program = Rc::new(Program::default());
+                let err = process_substitute(&mut shell, &program, ProcSubDirection::Read)
+                    .expect_err("expected close failure");
+                let msg = std::str::from_utf8(&err).unwrap_or("");
+                assert!(
+                    msg.starts_with("process substitution: close: "),
+                    "expected close-failure diagnostic, got {msg:?}",
+                );
+                assert!(shell.proc_sub_leases.is_empty());
+            },
+        );
+    }
+
+    #[test]
     fn process_substitute_dev_fd_pipe_failure_diagnoses_pipe() {
         run_trace(
             trace_entries![pipe() -> err(sys::constants::EMFILE)],
@@ -719,6 +752,35 @@ mod tests {
                 let program = Rc::new(Program::default());
                 let path = process_substitute(&mut shell, &program, ProcSubDirection::Write)
                     .expect("setup");
+                assert_eq!(path, b"/tmp/meiksh-procsub.99.1");
+            },
+        );
+    }
+
+    #[test]
+    fn process_substitute_fifo_child_open_failure_exits_one() {
+        // The child's open() of the FIFO can fail (e.g. EACCES if
+        // the FIFO was concurrently chmod'd). The defensive path
+        // calls exit_process(1) so the parent reaps a non-zero
+        // status; this prevents the consuming command from blocking
+        // forever waiting for the rendezvous. The default
+        // exit_process trace entry the test runner auto-appends
+        // catches the resulting `ChildExitPanic`.
+        run_trace(
+            trace_entries![
+                mkfifo(str(b"/tmp/meiksh-procsub.99.1"), int(sys::constants::S_IRUSR_BITS as i64)) -> 0,
+                fork() -> pid(2500), child: [
+                    open(str(b"/tmp/meiksh-procsub.99.1"), int(sys::constants::O_WRONLY as i64), int(0)) -> err(sys::constants::EACCES),
+                ],
+            ],
+            || {
+                let mut shell = crate::shell::test_support::test_shell();
+                shell.dev_fd_supported.set(Some(false));
+                shell.pid = 99;
+                shell.proc_sub_seq = 1;
+                let program = Rc::new(Program::default());
+                let path = process_substitute(&mut shell, &program, ProcSubDirection::Read)
+                    .expect("parent path returns ok even if child can't open");
                 assert_eq!(path, b"/tmp/meiksh-procsub.99.1");
             },
         );
