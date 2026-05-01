@@ -293,6 +293,23 @@ fn procsub_option_must_be_set_before_the_parse_that_uses_it() {
     );
 }
 
+/// § 4.2 negative-test: two procsubs at the start of a token
+/// position — `<(a)<(b)` — are two separate words, not one
+/// concatenated word. The juxtaposition rule applies to mid-word
+/// expansions; once a Word token has been produced, the next `<(`
+/// starts a fresh token. Matches bash.
+#[test]
+fn procsub_two_adjacent_at_token_start_are_two_args() {
+    let out = run_with_procsub("printf '[%s] ' <(printf a)<(printf b)");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    // Two `[...]` segments → two args.
+    let segments = stdout.matches("[/dev/fd/").count();
+    assert_eq!(
+        segments, 2,
+        "expected two `[/dev/fd/N]` segments (two args), got {stdout:?}",
+    );
+}
+
 /// § 4.2: a process substitution may be juxtaposed with adjacent
 /// unquoted bytes; the result is a single word whose expansion
 /// concatenates `prefix` + path + `suffix` into one argument.
