@@ -71,13 +71,16 @@ pub(super) fn ulimit(shell: &Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutcome, 
     }
 
     if report_all {
-        for &opt in b"cdfnstv" {
-            // Skip resources that are unavailable on this platform —
-            // notably `-v`/`RLIMIT_AS` on OpenBSD — instead of
-            // panicking on `unwrap`.
-            let Some((resource, desc, unit)) = ulimit_resource_for_option(opt) else {
-                continue;
-            };
+        // Resources unavailable on this platform — notably
+        // `-v`/`RLIMIT_AS` on OpenBSD — drop out of the iterator at
+        // the source instead of leaving a defensive `continue` arm
+        // inside the loop body. That keeps the loop body free of
+        // platform-only dead code without introducing a per-platform
+        // `cfg` outside `src/sys/`.
+        let entries = b"cdfnstv"
+            .iter()
+            .filter_map(|&opt| ulimit_resource_for_option(opt).map(|(r, d, u)| (opt, r, d, u)));
+        for (opt, resource, desc, unit) in entries {
             let (soft, hard) = sys::process::getrlimit(resource)
                 .map_err(|e| shell.diagnostic_prefixed_syserr(1, b"ulimit: ", &e))?;
             let val = if use_hard { hard } else { soft };
