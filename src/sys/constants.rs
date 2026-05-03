@@ -139,7 +139,18 @@ pub(crate) const RLIMIT_FSIZE: i32 = libc::RLIMIT_FSIZE as i32;
 pub(crate) const RLIMIT_NOFILE: i32 = libc::RLIMIT_NOFILE as i32;
 pub(crate) const RLIMIT_STACK: i32 = libc::RLIMIT_STACK as i32;
 pub(crate) const RLIMIT_CPU: i32 = libc::RLIMIT_CPU as i32;
-pub(crate) const RLIMIT_AS: i32 = libc::RLIMIT_AS as i32;
+/// Address-space (virtual-memory) rlimit, used by `ulimit -v`.
+///
+/// `RLIMIT_AS` is absent on OpenBSD: the kernel does not enforce a
+/// per-process virtual-address-space cap and `<sys/resource.h>`
+/// simply does not define the constant. We model that here as
+/// `None` so callers — currently only `ulimit -v` — can degrade
+/// gracefully (drop the option) instead of failing to compile or
+/// silently aliasing to a different resource.
+#[cfg(not(target_os = "openbsd"))]
+pub(crate) const RLIMIT_AS: Option<i32> = Some(libc::RLIMIT_AS as i32);
+#[cfg(target_os = "openbsd")]
+pub(crate) const RLIMIT_AS: Option<i32> = None;
 pub(crate) const RLIM_INFINITY: u64 = libc::RLIM_INFINITY;
 
 #[cfg(test)]

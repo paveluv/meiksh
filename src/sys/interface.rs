@@ -108,6 +108,15 @@ unsafe fn errno_ptr() -> *mut c_int {
     {
         unsafe { libc::__error() }
     }
+    // OpenBSD (and NetBSD) expose the per-thread errno via `__errno()`
+    // (single-underscore prefix), distinct from FreeBSD/macOS's
+    // `__error()` and Linux/glibc's `__errno_location()`. The libc
+    // crate already declares this entry point under the netbsdlike
+    // tree, so we just call it directly.
+    #[cfg(any(target_os = "openbsd", target_os = "netbsd"))]
+    {
+        unsafe { libc::__errno() }
+    }
 }
 
 pub(super) fn last_error() -> SysError {

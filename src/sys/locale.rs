@@ -78,6 +78,18 @@ fn libc_mb_cur_max() -> usize {
         }
         unsafe { ___mb_cur_max() as usize }
     }
+    // On OpenBSD (and NetBSD) `<stdlib.h>` defines `MB_CUR_MAX` as
+    // `__mb_cur_max()` (two leading underscores) — a real function
+    // returning `size_t`. There is no triple-underscore variant and
+    // no extern data object, so we link straight to the symbol the
+    // public macro uses.
+    #[cfg(any(target_os = "openbsd", target_os = "netbsd"))]
+    {
+        unsafe extern "C" {
+            fn __mb_cur_max() -> usize;
+        }
+        unsafe { __mb_cur_max() }
+    }
 }
 
 #[cfg(not(test))]

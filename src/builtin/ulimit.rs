@@ -12,7 +12,11 @@ pub(super) fn ulimit_resource_for_option(ch: u8) -> Option<(i32, &'static [u8], 
         b'n' => Some((sys::constants::RLIMIT_NOFILE, b"open files", 1)),
         b's' => Some((sys::constants::RLIMIT_STACK, b"stack size (kbytes)", 1024)),
         b't' => Some((sys::constants::RLIMIT_CPU, b"cpu time (seconds)", 1)),
-        b'v' => Some((sys::constants::RLIMIT_AS, b"virtual memory (kbytes)", 1024)),
+        // `RLIMIT_AS` is absent on platforms where the kernel does
+        // not enforce an address-space cap (currently OpenBSD); on
+        // those platforms `sys::constants::RLIMIT_AS` is `None` and
+        // `-v` is silently dropped from the supported option set.
+        b'v' => sys::constants::RLIMIT_AS.map(|r| (r, b"virtual memory (kbytes)" as &[u8], 1024)),
         _ => None,
     }
 }
@@ -41,7 +45,12 @@ pub(super) fn ulimit(shell: &Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutcome, 
                     b'H' => use_hard = true,
                     b'S' => use_soft = true,
                     b'a' => report_all = true,
-                    b'c' | b'd' | b'f' | b'n' | b's' | b't' | b'v' => resource_opt = Some(ch),
+                    // Resource-selecting options are recognised by
+                    // delegating to `ulimit_resource_for_option`,
+                    // which already handles platform-specific
+                    // availability (e.g. `-v` is rejected as invalid
+                    // on systems where `RLIMIT_AS` is not defined).
+                    _ if ulimit_resource_for_option(ch).is_some() => resource_opt = Some(ch),
                     _ => {
                         let msg = ByteWriter::new()
                             .bytes(b"ulimit: invalid option: -")
@@ -63,7 +72,12 @@ pub(super) fn ulimit(shell: &Shell, argv: &[Vec<u8>]) -> Result<BuiltinOutcome, 
 
     if report_all {
         for &opt in b"cdfnstv" {
-            let (resource, desc, unit) = ulimit_resource_for_option(opt).unwrap();
+            // Skip resources that are unavailable on this platform —
+            // notably `-v`/`RLIMIT_AS` on OpenBSD — instead of
+            // panicking on `unwrap`.
+            let Some((resource, desc, unit)) = ulimit_resource_for_option(opt) else {
+                continue;
+            };
             let (soft, hard) = sys::process::getrlimit(resource)
                 .map_err(|e| shell.diagnostic_prefixed_syserr(1, b"ulimit: ", &e))?;
             let val = if use_hard { hard } else { soft };
@@ -136,9 +150,17 @@ mod tests {
 
     #[test]
     fn ulimit_resource_for_option_covers_all_and_unknown() {
-        for ch in [b'c', b'd', b'f', b'n', b's', b't', b'v'] {
+        for ch in [b'c', b'd', b'f', b'n', b's', b't'] {
             assert!(ulimit_resource_for_option(ch).is_some());
         }
+        // `-v` (`RLIMIT_AS`) is portable but optional: on OpenBSD the
+        // kernel does not expose an address-space rlimit, so the
+        // option resolves to `None` instead. Mirror whatever
+        // `sys::constants::RLIMIT_AS` reports for this build.
+        assert_eq!(
+            ulimit_resource_for_option(b'v').is_some(),
+            sys::constants::RLIMIT_AS.is_some()
+        );
         assert!(ulimit_resource_for_option(b'z').is_none());
     }
 }
