@@ -177,6 +177,17 @@ fn kill_session(sid: libc::pid_t) {
     #[cfg(target_os = "macos")]
     let killed = kill_session_listpids(sid);
 
+    // Platforms without one of the dedicated enumeration paths above
+    // (currently OpenBSD and NetBSD) fall back to the process-group
+    // `kill(-sid, SIGKILL)` performed at the top of this function.
+    // That already reaches every descendant still sharing the
+    // session leader's pgrp; processes that have escaped into their
+    // own session via `setsid` leak through, which is acceptable for
+    // a best-effort matrix-runner cleanup on platforms where the
+    // matrix suite is not wired up yet.
+    #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "macos")))]
+    let killed: usize = 0;
+
     vlog!("kill_session: killed {killed} session members");
 }
 
