@@ -633,9 +633,41 @@ fn hash_not_found_error() {
 
 // ── ulimit builtin ──
 
+/// Discover which resource-selecting options the running `meiksh`
+/// build accepts, by parsing the `-` lines of `ulimit -a`. The set is
+/// platform-conditional — `RLIMIT_AS` (`-v`) is absent on OpenBSD,
+/// for example, so the option list there is `cdfnst` instead of
+/// `cdfnstv`. Driving every assertion below off this list keeps the
+/// test platform-agnostic without sprinkling `cfg(target_os = …)`
+/// across the integration suite.
+fn supported_ulimit_options() -> Vec<char> {
+    let out = Command::new(meiksh())
+        .args(["-c", "ulimit -a"])
+        .output()
+        .expect("run");
+    assert!(out.status.success(), "ulimit -a failed");
+    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+    let mut opts = Vec::new();
+    for line in stdout.lines() {
+        let trimmed = line.trim_start();
+        if let Some(rest) = trimmed.strip_prefix('-')
+            && let Some(opt) = rest.chars().next()
+            && opt.is_ascii_alphabetic()
+        {
+            opts.push(opt);
+        }
+    }
+    assert!(
+        opts.contains(&'f'),
+        "ulimit -a missing the mandatory `-f` line: {stdout}"
+    );
+    opts
+}
+
 #[test]
 fn ulimit_get_and_set() {
-    for opt in ['c', 'd', 'f', 'n', 's', 't', 'v'] {
+    let supported = supported_ulimit_options();
+    for &opt in &supported {
         let out = Command::new(meiksh())
             .args(["-c", &format!("ulimit -{opt}")])
             .output()
@@ -648,7 +680,10 @@ fn ulimit_get_and_set() {
         .output()
         .expect("run");
     assert!(out.status.success());
-    assert!(String::from_utf8_lossy(&out.stdout).lines().count() >= 7);
+    assert!(
+        String::from_utf8_lossy(&out.stdout).lines().count() >= supported.len(),
+        "ulimit -a printed fewer lines than the supported option set ({supported:?})",
+    );
 
     let out = Command::new(meiksh())
         .args(["-c", "ulimit -Hf"])
