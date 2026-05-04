@@ -81,6 +81,31 @@ pub fn set_nonblocking(fd: RawFd, nonblocking: bool) -> io::Result<()> {
     Ok(())
 }
 
+/// Toggle `FD_CLOEXEC` on an open file descriptor. The interactive
+/// PTY harness uses this to keep the master end of `openpty(3)` from
+/// leaking into the spawned `meiksh -i` child across `execvp`. On
+/// OpenBSD a process that ends up holding both ends of the same pty
+/// can land its tty driver in a state where master writes complete
+/// successfully (no `EAGAIN`, no `EPIPE`) yet never wake up the
+/// slave's `read()` — the shell stays blocked on input and the test
+/// harness reports a 5s timeout on `exit_and_wait`. Linux happens to
+/// tolerate the leak, so this hadn't surfaced before OpenBSD CI.
+pub fn set_cloexec(fd: RawFd, cloexec: bool) -> io::Result<()> {
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFD, 0) };
+    if flags < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let new_flags = if cloexec {
+        flags | libc::FD_CLOEXEC
+    } else {
+        flags & !libc::FD_CLOEXEC
+    };
+    if unsafe { libc::fcntl(fd, libc::F_SETFD, new_flags) } < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
 /// Start a new session and adopt `fd` as the controlling terminal. When
 /// `dup_stderr` is true, also `dup2(fd, 2)` so the child's stderr goes
 /// to the terminal.

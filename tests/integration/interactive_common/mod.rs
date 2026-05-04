@@ -87,6 +87,16 @@ pub fn spawn_meiksh_pty(extra_env: &[(&str, &str)]) -> Option<PtyChild> {
         Err(p) => p.into_inner(),
     };
     let (primary, secondary) = sys::open_pty_pair()?;
+    // Mark the master fd close-on-exec so the spawned `meiksh -i`
+    // child does NOT inherit a copy of it. A child holding both ends
+    // of its own pty hangs the tty driver on OpenBSD: master writes
+    // complete (no `EAGAIN`, no `EPIPE`) but never wake the slave's
+    // `read()`, and the test harness then panics with a 5s timeout in
+    // `exit_and_wait`. Linux's tty subsystem happens to tolerate the
+    // leak, so this was latent until the suite was first run on
+    // OpenBSD. Equivalent to the explicit `close(primary)` that the
+    // C reference reproducer does between `fork` and `execvp`.
+    let _ = sys::set_cloexec(primary, true);
     let secondary_fd = secondary;
     let stdout_fd = sys::dup_fd(secondary_fd).ok()?;
     let stderr_fd = sys::dup_fd(secondary_fd).ok()?;
