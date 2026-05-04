@@ -342,4 +342,93 @@ mod tests {
             assert!(shell.trap_action(cond).is_none());
         });
     }
+
+    #[test]
+    fn restore_signals_for_child_resets_interactive_and_monitor_signals() {
+        // No user traps, not inherited-ignored: every signal in the
+        // interactive set (SIGTERM/SIGQUIT/SIGINT) and the monitor
+        // set (SIGTSTP/SIGTTIN/SIGTTOU) must be reset to default.
+        run_trace(
+            trace_entries![
+                signal(int(sys::constants::SIGTERM as i64), _) -> 0,
+                signal(int(sys::constants::SIGQUIT as i64), _) -> 0,
+                signal(int(sys::constants::SIGINT as i64), _) -> 0,
+                signal(int(sys::constants::SIGTSTP as i64), _) -> 0,
+                signal(int(sys::constants::SIGTTIN as i64), _) -> 0,
+                signal(int(sys::constants::SIGTTOU as i64), _) -> 0,
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.interactive = true;
+                shell.options.monitor = true;
+                shell.restore_signals_for_child();
+            },
+        );
+    }
+
+    #[test]
+    fn restore_signals_for_child_skips_user_trapped_ignore_signals() {
+        // `trap '' SIGTERM` ran *after* startup: SIGTERM is in
+        // `trap_actions` as `Ignore` but not in `ignored_on_entry`.
+        // POSIX § 2.14 keeps that signal ignored across `fork+exec`,
+        // so the trace contains only SIGQUIT, SIGINT, and the
+        // monitor-mode trio — SIGTERM is absent.
+        run_trace(
+            trace_entries![
+                signal(int(sys::constants::SIGQUIT as i64), _) -> 0,
+                signal(int(sys::constants::SIGINT as i64), _) -> 0,
+                signal(int(sys::constants::SIGTSTP as i64), _) -> 0,
+                signal(int(sys::constants::SIGTTIN as i64), _) -> 0,
+                signal(int(sys::constants::SIGTTOU as i64), _) -> 0,
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.interactive = true;
+                shell.options.monitor = true;
+                shell.trap_actions.insert(
+                    TrapCondition::Signal(sys::constants::SIGTERM),
+                    TrapAction::Ignore,
+                );
+                shell.restore_signals_for_child();
+            },
+        );
+    }
+
+    #[test]
+    fn restore_signals_for_child_resets_inherited_ignored_signals() {
+        // Inherited-ignored case: `ignored_on_entry` contains SIGTSTP
+        // (e.g. the parent ksh on OpenBSD propagates `SIG_IGN` for
+        // job-control signals), and `Shell::probe_ignored_signals`
+        // seeded `trap_actions[SIGTSTP] = Ignore` accordingly. The
+        // closure must distinguish that from a user-set ignore and
+        // reset SIGTSTP to default for monitor-mode children — that's
+        // what makes Ctrl-Z stop the foreground job.
+        run_trace(
+            trace_entries![
+                signal(int(sys::constants::SIGTSTP as i64), _) -> 0,
+                signal(int(sys::constants::SIGTTIN as i64), _) -> 0,
+                signal(int(sys::constants::SIGTTOU as i64), _) -> 0,
+            ],
+            || {
+                let mut shell = test_shell();
+                shell.options.monitor = true;
+                let cond = TrapCondition::Signal(sys::constants::SIGTSTP);
+                shell.ignored_on_entry.insert(cond);
+                shell.trap_actions.insert(cond, TrapAction::Ignore);
+                shell.restore_signals_for_child();
+            },
+        );
+    }
+
+    #[test]
+    fn restore_signals_for_child_noninteractive_nonmonitor_is_noop() {
+        // Default subshell: neither interactive nor monitor mode
+        // active, so `restore_signals_for_child` issues no syscalls.
+        // This covers the early-exit fall-through where neither
+        // branch's signal-set is iterated.
+        assert_no_syscalls(|| {
+            let shell = test_shell();
+            shell.restore_signals_for_child();
+        });
+    }
 }

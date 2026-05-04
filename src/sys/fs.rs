@@ -246,31 +246,11 @@ pub(crate) fn dev_fd_supported() -> bool {
         Ok(fds) => fds,
         Err(_) => return false,
     };
-    // Format `/dev/fd/<read_fd>` into a stack buffer; `read_fd` is a
-    // small positive int so the i32-decimal worst case fits in 11
-    // bytes after the prefix.
-    let mut buf: [u8; 32] = [0; 32];
-    let prefix = b"/dev/fd/";
-    buf[..prefix.len()].copy_from_slice(prefix);
-    let mut len = prefix.len();
-    let mut n = read_fd as u32;
-    let mut digits: [u8; 16] = [0; 16];
-    let mut digit_count = 0;
-    if n == 0 {
-        digits[0] = b'0';
-        digit_count = 1;
-    } else {
-        while n > 0 {
-            digits[digit_count] = b'0' + (n % 10) as u8;
-            digit_count += 1;
-            n /= 10;
-        }
-    }
-    for i in 0..digit_count {
-        buf[len + i] = digits[digit_count - 1 - i];
-    }
-    len += digit_count;
-    let supported = stat_path(&buf[..len]).is_ok();
+    let path = crate::bstr::ByteWriter::new()
+        .bytes(b"/dev/fd/")
+        .i32_val(read_fd)
+        .finish();
+    let supported = stat_path(&path).is_ok();
     let _ = crate::sys::fd_io::close_fd(read_fd);
     let _ = crate::sys::fd_io::close_fd(write_fd);
     supported
@@ -599,6 +579,71 @@ mod tests {
             ],
             || {
                 assert!(!file_needs_binary_rejection(b"/some/text"));
+            },
+        );
+    }
+
+    #[test]
+    fn dev_fd_supported_returns_false_when_dev_fd_missing() {
+        test_support::run_trace(
+            trace_entries![
+                stat(str(b"/dev/fd"), _) -> err(libc::ENOENT),
+            ],
+            || {
+                assert!(!dev_fd_supported());
+            },
+        );
+    }
+
+    #[test]
+    fn dev_fd_supported_returns_false_when_pipe_creation_fails() {
+        test_support::run_trace(
+            trace_entries![
+                stat(str(b"/dev/fd"), _) -> stat_dir,
+                pipe() -> err(libc::EMFILE),
+            ],
+            || {
+                assert!(!dev_fd_supported());
+            },
+        );
+    }
+
+    #[test]
+    fn dev_fd_supported_returns_false_when_fd_path_stat_fails() {
+        // FreeBSD without `fdescfs` mounted at `/dev/fd`: the directory
+        // exists (static `0`/`1`/`2` entries from devfs), but a freshly-
+        // opened pipe fd is not visible under `/dev/fd/N`. The probe
+        // must fall through to FIFO mode.
+        test_support::run_trace(
+            trace_entries![
+                stat(str(b"/dev/fd"), _) -> stat_dir,
+                pipe() -> fds(7, 8),
+                stat(str(b"/dev/fd/7"), _) -> err(libc::ENOENT),
+                close(fd(7)) -> int(0),
+                close(fd(8)) -> int(0),
+            ],
+            || {
+                assert!(!dev_fd_supported());
+            },
+        );
+    }
+
+    #[test]
+    fn dev_fd_supported_returns_true_when_fd_path_stat_succeeds() {
+        // Linux/macOS/OpenBSD (and FreeBSD with `fdescfs` mounted at
+        // `/dev/fd`): the freshly-opened pipe fd is visible under
+        // `/dev/fd/N` and stat returns an appropriate entry. Process
+        // substitution can use the `/dev/fd` backing.
+        test_support::run_trace(
+            trace_entries![
+                stat(str(b"/dev/fd"), _) -> stat_dir,
+                pipe() -> fds(7, 8),
+                stat(str(b"/dev/fd/7"), _) -> stat_fifo,
+                close(fd(7)) -> int(0),
+                close(fd(8)) -> int(0),
+            ],
+            || {
+                assert!(dev_fd_supported());
             },
         );
     }
