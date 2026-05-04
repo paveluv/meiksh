@@ -24,6 +24,33 @@ use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
+/// Temporary diagnostic gate. Set `MEIKSH_PTY_TRACE=1` in the
+/// environment when running an interactive PTY test to make the
+/// harness eprintln every send/drain/exit step. Used to localize a
+/// platform-specific test-harness regression on OpenBSD; this gate is
+/// expected to be removed once that regression is understood.
+fn pty_trace_enabled() -> bool {
+    std::env::var_os("MEIKSH_PTY_TRACE")
+        .map(|v| v != "0" && v != "" && v != "false")
+        .unwrap_or(false)
+}
+
+fn pty_dump(label: &str, bytes: &[u8]) {
+    if !pty_trace_enabled() {
+        return;
+    }
+    let mut rendered = String::with_capacity(bytes.len() * 4);
+    for &b in bytes {
+        match b {
+            b'\n' => rendered.push_str("\\n"),
+            b'\r' => rendered.push_str("\\r"),
+            0x20..=0x7e => rendered.push(b as char),
+            _ => rendered.push_str(&format!("\\x{b:02x}")),
+        }
+    }
+    eprintln!("[pty-trace] {label} ({} bytes): {rendered}", bytes.len());
+}
+
 /// Interactive PTY tests share a single process-wide mutex to keep
 /// them from contending for the host's scarce PTY slots when cargo's
 /// test harness runs them in parallel with the rest of the suite.
@@ -131,8 +158,21 @@ impl PtyChild {
     /// with retries; the test will fail if the write cannot be
     /// completed in a reasonable amount of time.
     pub fn send(&mut self, bytes: &[u8]) {
-        self.primary.write_all(bytes).expect("write to PTY");
-        let _ = self.primary.flush();
+        pty_dump("send", bytes);
+        match self.primary.write_all(bytes) {
+            Ok(()) => {}
+            Err(e) => {
+                if pty_trace_enabled() {
+                    eprintln!("[pty-trace] send write_all failed: {e}");
+                }
+                panic!("write to PTY: {e}");
+            }
+        }
+        if let Err(e) = self.primary.flush()
+            && pty_trace_enabled()
+        {
+            eprintln!("[pty-trace] send flush failed: {e}");
+        }
     }
 
     /// Drain everything the child has produced on its standard output
@@ -156,15 +196,21 @@ impl PtyChild {
         let _ = sys::set_nonblocking(fd, true);
         let mut buf = Vec::new();
         let mut chunk = [0u8; 4096];
+        let started = Instant::now();
         // Short poll interval: PTY roundtrips commonly resolve in
         // 100µs-5ms, so a 2ms sleep on WouldBlock keeps us within ~2ms
         // of any arriving byte without busy-spinning the host. This
         // directly trims multi-hundreds-of-milliseconds off a test
         // suite of ~15 PTY roundtrips.
         let poll_sleep = Duration::from_millis(2);
+        let mut hit_eof = false;
+        let mut last_err: Option<String> = None;
         while Instant::now() < deadline {
             match self.primary.read(&mut chunk) {
-                Ok(0) => break,
+                Ok(0) => {
+                    hit_eof = true;
+                    break;
+                }
                 Ok(n) => {
                     buf.extend_from_slice(&chunk[..n]);
                     if pred(&buf) {
@@ -177,8 +223,28 @@ impl PtyChild {
                     }
                     thread::sleep(poll_sleep);
                 }
-                Err(_) => break,
+                Err(e) => {
+                    last_err = Some(e.to_string());
+                    break;
+                }
             }
+        }
+        if pty_trace_enabled() {
+            let elapsed = started.elapsed().as_millis();
+            let exit_reason = if hit_eof {
+                "eof".to_string()
+            } else if let Some(e) = last_err {
+                format!("err({e})")
+            } else if Instant::now() >= deadline {
+                "deadline".to_string()
+            } else {
+                "matched".to_string()
+            };
+            eprintln!(
+                "[pty-trace] drain end after {elapsed}ms ({exit_reason}, {} bytes)",
+                buf.len()
+            );
+            pty_dump("drain", &buf);
         }
         buf
     }
@@ -211,15 +277,60 @@ impl PtyChild {
     /// post-`exit` wait; exceeding it kills the child, reaps it, and
     /// returns `None`.
     pub fn exit_and_wait_with_timeout(mut self, timeout: Duration) -> Option<ExitStatus> {
-        let _ = self.primary.write_all(b"exit\n");
-        let _ = self.primary.flush();
+        if pty_trace_enabled() {
+            eprintln!("[pty-trace] exit_and_wait_with_timeout: writing `exit\\n`");
+        }
+        let write_result = self.primary.write_all(b"exit\n");
+        if pty_trace_enabled() {
+            match &write_result {
+                Ok(()) => eprintln!("[pty-trace] exit_and_wait: write_all OK"),
+                Err(e) => eprintln!("[pty-trace] exit_and_wait: write_all FAILED: {e}"),
+            }
+        }
+        let _ = write_result;
+        let flush_result = self.primary.flush();
+        if pty_trace_enabled() {
+            match &flush_result {
+                Ok(()) => eprintln!("[pty-trace] exit_and_wait: flush OK"),
+                Err(e) => eprintln!("[pty-trace] exit_and_wait: flush FAILED: {e}"),
+            }
+        }
+        let _ = flush_result;
         let deadline = Instant::now() + timeout;
         while Instant::now() < deadline {
             match self.child.try_wait() {
-                Ok(Some(status)) => return Some(status),
+                Ok(Some(status)) => {
+                    if pty_trace_enabled() {
+                        eprintln!("[pty-trace] exit_and_wait: child exited {status:?}");
+                    }
+                    return Some(status);
+                }
                 Ok(None) => thread::sleep(Duration::from_millis(10)),
-                Err(_) => return None,
+                Err(e) => {
+                    if pty_trace_enabled() {
+                        eprintln!("[pty-trace] exit_and_wait: try_wait err: {e}");
+                    }
+                    return None;
+                }
             }
+        }
+        if pty_trace_enabled() {
+            eprintln!("[pty-trace] exit_and_wait: TIMEOUT, killing child");
+            // Drain any final bytes that arrived during the wait, so
+            // we can see what the shell wrote (or didn't) before being
+            // killed. This is best-effort.
+            let fd = self.primary_fd();
+            let _ = sys::set_nonblocking(fd, true);
+            let mut buf = Vec::new();
+            let mut chunk = [0u8; 4096];
+            for _ in 0..20 {
+                match self.primary.read(&mut chunk) {
+                    Ok(0) => break,
+                    Ok(n) => buf.extend_from_slice(&chunk[..n]),
+                    Err(_) => break,
+                }
+            }
+            pty_dump("post-timeout drain", &buf);
         }
         let _ = self.child.kill();
         let _ = self.child.wait();
