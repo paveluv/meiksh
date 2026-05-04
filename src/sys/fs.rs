@@ -218,16 +218,62 @@ pub(crate) fn make_fifo(path: &[u8], mode: mode_t) -> SysResult<()> {
     }
 }
 
-/// Probe whether the directory `/dev/fd` exists and is itself a
-/// directory. Linux exposes it via a symlink to `/proc/self/fd`;
-/// macOS and BSDs expose it via `fdescfs`. The probe uses `stat(2)`
-/// (which follows symlinks) so the symlinked Linux path counts as
-/// "supported".
+/// Probe whether `/dev/fd/N` actually reflects the calling process's
+/// open file descriptors — i.e. whether opening `/dev/fd/N` for any
+/// `N` we currently own gives us back the same kernel description.
+/// Linux exposes this via a symlink from `/dev/fd` to
+/// `/proc/self/fd`; macOS and OpenBSD provide it natively; FreeBSD
+/// requires `fdescfs` to be mounted at `/dev/fd` and by default only
+/// publishes static entries `0`, `1`, `2` under `/dev/fd` (the live
+/// `fdescfs` mount lives at `/compat/linux/dev/fd`). The previous
+/// probe ("`/dev/fd` is a directory") returned a false positive on
+/// FreeBSD without `fdescfs`, breaking process substitution at
+/// runtime with `cat: /dev/fd/3: No such file or directory`.
+///
+/// We now require positive evidence: open a fresh pipe (which will
+/// land at some fd ≥ 3), stat `/dev/fd/<that fd>`, and return `true`
+/// only when the stat succeeds. The pipe is closed before returning.
+/// On Linux/macOS/OpenBSD the stat succeeds and we get the same
+/// answer as the directory check; on FreeBSD without `fdescfs`
+/// mounted at `/dev/fd` the stat fails with `ENOENT` and we
+/// transparently fall through to the FIFO-backed path defined by
+/// `docs/features/process-substitution.md` § 6.3.
 pub(crate) fn dev_fd_supported() -> bool {
-    match stat_path(b"/dev/fd") {
-        Ok(stat) => stat.is_dir(),
-        Err(_) => false,
+    if !matches!(stat_path(b"/dev/fd"), Ok(s) if s.is_dir()) {
+        return false;
     }
+    let (read_fd, write_fd) = match crate::sys::fd_io::create_pipe() {
+        Ok(fds) => fds,
+        Err(_) => return false,
+    };
+    // Format `/dev/fd/<read_fd>` into a stack buffer; `read_fd` is a
+    // small positive int so the i32-decimal worst case fits in 11
+    // bytes after the prefix.
+    let mut buf: [u8; 32] = [0; 32];
+    let prefix = b"/dev/fd/";
+    buf[..prefix.len()].copy_from_slice(prefix);
+    let mut len = prefix.len();
+    let mut n = read_fd as u32;
+    let mut digits: [u8; 16] = [0; 16];
+    let mut digit_count = 0;
+    if n == 0 {
+        digits[0] = b'0';
+        digit_count = 1;
+    } else {
+        while n > 0 {
+            digits[digit_count] = b'0' + (n % 10) as u8;
+            digit_count += 1;
+            n /= 10;
+        }
+    }
+    for i in 0..digit_count {
+        buf[len + i] = digits[digit_count - 1 - i];
+    }
+    len += digit_count;
+    let supported = stat_path(&buf[..len]).is_ok();
+    let _ = crate::sys::fd_io::close_fd(read_fd);
+    let _ = crate::sys::fd_io::close_fd(write_fd);
+    supported
 }
 
 pub(crate) fn file_needs_binary_rejection(path: &[u8]) -> bool {

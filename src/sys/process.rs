@@ -314,7 +314,12 @@ pub(crate) fn getrlimit(resource: i32) -> SysResult<(u64, u64)> {
         return Err(last_error());
     }
     let rlim = unsafe { rlim.assume_init() };
-    Ok((rlim.rlim_cur, rlim.rlim_max))
+    // `rlim_cur` and `rlim_max` are `rlim_t`, which is `u64` on
+    // Linux/macOS/OpenBSD and `i64` on FreeBSD. Cast unconditionally
+    // to `u64` so the API stays portable — `RLIM_INFINITY` is encoded
+    // as `-1`/`u64::MAX` in both representations, so the bit pattern
+    // round-trips losslessly.
+    Ok((rlim.rlim_cur as u64, rlim.rlim_max as u64))
 }
 
 pub(crate) fn setrlimit(resource: i32, soft: u64, hard: u64) -> SysResult<()> {

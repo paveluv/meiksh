@@ -107,15 +107,20 @@ fn procsub_in_command_name_position_attempts_resolution() {
     assert!(!out.status.success() || out.status.success());
 }
 
-/// § 6.2: the substituted word looks like `/dev/fd/N`. `printf %s`
-/// echoes its argument unchanged, so we can read it back.
+/// § 6.2 / § 6.3: the substituted word is one of the two
+/// implementation-defined path forms — `/dev/fd/N` when the runtime
+/// probe finds `/dev/fd` is a live fd-mirroring filesystem (Linux,
+/// macOS, OpenBSD, FreeBSD with `fdescfs` mounted at `/dev/fd`), or
+/// the FIFO path `${TMPDIR:-/tmp}/meiksh-procsub.<pid>.<seq>`
+/// otherwise (FreeBSD without `fdescfs`). Per § 6.4, conforming
+/// scripts shall not depend on the form; this test accepts either.
 #[test]
-fn procsub_word_renders_as_dev_fd_path() {
+fn procsub_word_renders_as_path() {
     let out = run_with_procsub("printf '%s\\n' <(printf hi)");
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
-        stdout.starts_with("/dev/fd/"),
-        "expected `/dev/fd/N` path, got {stdout:?}",
+        stdout.starts_with("/dev/fd/") || stdout.contains("/meiksh-procsub."),
+        "expected `/dev/fd/N` or FIFO path, got {stdout:?}",
     );
 }
 
@@ -302,11 +307,19 @@ fn procsub_option_must_be_set_before_the_parse_that_uses_it() {
 fn procsub_two_adjacent_at_token_start_are_two_args() {
     let out = run_with_procsub("printf '[%s] ' <(printf a)<(printf b)");
     let stdout = String::from_utf8_lossy(&out.stdout);
-    // Two `[...]` segments → two args.
-    let segments = stdout.matches("[/dev/fd/").count();
+    // Two `[...]` segments → two args. The path form is
+    // implementation-defined (`/dev/fd/N` or a FIFO under
+    // `${TMPDIR:-/tmp}`, per spec § 6.4); we count by the bracket
+    // pair count instead of binding to a specific path prefix.
+    let segments = stdout.matches('[').count();
     assert_eq!(
         segments, 2,
-        "expected two `[/dev/fd/N]` segments (two args), got {stdout:?}",
+        "expected two `[...]` segments (two args), got {stdout:?}",
+    );
+    assert_eq!(
+        stdout.matches(']').count(),
+        2,
+        "expected two `]` closers, got {stdout:?}",
     );
 }
 
@@ -317,16 +330,21 @@ fn procsub_two_adjacent_at_token_start_are_two_args() {
 fn procsub_concatenates_with_surrounding_literals() {
     let out = run_with_procsub("printf '[%s]' prefix<(printf x)suffix");
     let stdout = String::from_utf8_lossy(&out.stdout);
-    // Path is implementation-defined (`/dev/fd/N`), so we look for
-    // the bracketed shape with the literal prefix/suffix sitting
-    // tight against an inserted path.
+    // The path between `prefix` and `suffix` is implementation-
+    // defined (`/dev/fd/N` or a FIFO under `${TMPDIR:-/tmp}`, per
+    // spec § 6.4). We assert the literal prefix and suffix sit
+    // tight against an inserted path of either form.
     assert!(
-        stdout.starts_with("[prefix/dev/fd/"),
-        "expected `[prefix/dev/fd/...suffix]`, got {stdout:?}",
+        stdout.starts_with("[prefix/"),
+        "expected `[prefix/...]`, got {stdout:?}",
     );
     assert!(
         stdout.ends_with("suffix]"),
         "expected the suffix to concatenate after the path, got {stdout:?}",
+    );
+    assert!(
+        stdout.contains("/dev/fd/") || stdout.contains("/meiksh-procsub."),
+        "expected an implementation-defined path between literals, got {stdout:?}",
     );
 }
 

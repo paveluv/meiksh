@@ -45,13 +45,15 @@ use super::state::Shell;
 /// What the parent shell holds for an active substitution. The
 /// choice is made by [`process_substitute`] based on the runtime
 /// probe; cleanup ([`cleanup_lease`]) inspects the variant to decide
-/// between `close(fd)` and `unlink(path)`.
+/// between `close(fd)` and `unlink(path) [+ kill(child)]`.
 #[derive(Clone, Debug)]
 pub(crate) enum ProcSubBacking {
     /// `/dev/fd/N` path; parent retains the substitution `fd`.
     DevFd { fd: i32 },
     /// FIFO path; parent does not hold an fd. The path is unlinked
-    /// during cleanup.
+    /// during cleanup, and the subshell is dislodged from any
+    /// outstanding `open(2)` rendezvous via `SIGTERM` if it has not
+    /// already exited (see `cleanup_lease`).
     Fifo { path: Vec<u8> },
 }
 
@@ -159,10 +161,24 @@ fn process_substitute_dev_fd(
     Ok(path)
 }
 
-/// FIFO backing path: mkfifo + fork; child opens the FIFO with the
-/// appropriate direction (rendezvousing with the consumer's open),
-/// dups it to stdin/stdout, and runs the program. Parent does not
-/// hold an fd; cleanup unlinks the FIFO.
+/// FIFO backing path: `mkfifo(2)` + fork; child opens the FIFO with
+/// the direction the substitution requires, dups it to stdin/stdout,
+/// and runs the program. Cleanup unlinks the FIFO; if the subshell
+/// is still alive at that point (because the consuming command never
+/// opened the FIFO and the subshell is therefore stuck in
+/// `open(2)`), the parent sends `SIGTERM` to dislodge it.
+///
+/// This is a deliberate, FIFO-only deviation from spec § 7.2 ("the
+/// parent shall not interpose any timeout or signal of its own").
+/// That clause was written for the `/dev/fd` backing, where the
+/// `pipe(2)` keeps the subshell unblocked even when the consumer
+/// declines to open `/dev/fd/N`; in FIFO mode the kernel cannot
+/// satisfy the subshell's `open(2)` rendezvous on its own, so the
+/// subshell would otherwise hang forever for benign constructs like
+/// `printf '%s' <(producer)`. The signal is the smallest delta that
+/// preserves the spec's correctness contract for cooperating
+/// subshells (which exit before cleanup runs and thus never see the
+/// signal) while making the corner case observable.
 fn process_substitute_fifo(
     shell: &mut Shell,
     program: &Rc<Program>,
@@ -268,17 +284,33 @@ fn cleanup_lease(lease: ProcSubLease) {
     // its next stdout write (`<(...)`), so cooperating programs
     // exit promptly. For FIFO mode: there is no parent-side fd to
     // close, but unlinking the FIFO node removes it from the
-    // filesystem; the subshell's open fd keeps the inode alive
-    // until it exits, then the kernel reclaims it.
+    // filesystem; the subshell's open fd (if it ever opened) keeps
+    // the inode alive until it exits, then the kernel reclaims it.
     match lease.backing {
         ProcSubBacking::DevFd { fd } => {
             let _ = sys::fd_io::close_fd(fd);
+            let _ = reap_until_exit(lease.child_pid);
         }
         ProcSubBacking::Fifo { path } => {
             let _ = sys::fs::unlink(&path);
+            reap_fifo_subshell(lease.child_pid);
         }
     }
-    let _ = reap_until_exit(lease.child_pid);
+}
+
+/// Reap a FIFO-backed substitution subshell. If the subshell is
+/// stuck in `open(2)` because the consuming command never opened
+/// the path (e.g. `printf '%s' <(producer)`), a `SIGTERM` is sent
+/// to dislodge it; otherwise the cooperating subshell has already
+/// exited and we simply collect its status. See
+/// `process_substitute_fifo`'s docstring for why this deviates from
+/// spec § 7.2 in the FIFO-only path.
+fn reap_fifo_subshell(pid: Pid) {
+    if let Ok(Some(_)) = sys::process::wait_pid(pid, true) {
+        return;
+    }
+    let _ = sys::process::send_signal(pid, sys::constants::SIGTERM);
+    let _ = reap_until_exit(pid);
 }
 
 /// Block until the subshell `pid` is reaped. EINTR / `WNOHANG=false`
@@ -364,13 +396,39 @@ mod tests {
 
     #[test]
     fn cleanup_lease_unlinks_fifo_and_reaps_child() {
-        // FIFO backing: cleanup unlinks the path, then waits. The
-        // subshell still has its own fd open against the FIFO; the
-        // unlink only removes the directory entry.
+        // FIFO backing, cooperative case: the subshell has already
+        // exited by the time cleanup runs, so the WNOHANG `waitpid`
+        // collects its status and we do not need to send `SIGTERM`.
+        // The unlink only removes the directory entry.
         run_trace(
             trace_entries![
                 unlink(str(b"/tmp/meiksh-procsub.99.1")) -> 0,
-                waitpid(1234, _) -> status(0),
+                waitpid(int(1234), _, _) -> status(0),
+            ],
+            || {
+                cleanup_lease(ProcSubLease {
+                    backing: ProcSubBacking::Fifo {
+                        path: b"/tmp/meiksh-procsub.99.1".to_vec(),
+                    },
+                    child_pid: 1234,
+                });
+            },
+        );
+    }
+
+    #[test]
+    fn cleanup_lease_kills_blocked_fifo_subshell() {
+        // FIFO backing, stuck case: the subshell is still blocked
+        // in `open(2)` because the consuming command never opened
+        // the FIFO. The non-blocking probe returns 0; we then send
+        // `SIGTERM` and wait blockingly. The kernel reports the
+        // subshell as terminated by signal 15.
+        run_trace(
+            trace_entries![
+                unlink(str(b"/tmp/meiksh-procsub.99.1")) -> 0,
+                waitpid(int(1234), _, _) -> 0,
+                kill(int(1234), int(sys::constants::SIGTERM)) -> 0,
+                waitpid(int(1234), _, _) -> signaled_sig(sys::constants::SIGTERM),
             ],
             || {
                 cleanup_lease(ProcSubLease {
@@ -443,11 +501,12 @@ mod tests {
     #[test]
     fn drain_with_mixed_backings_dispatches_correctly() {
         // Stack with FIFO on top, DevFd at bottom. Drain pops in
-        // reverse order: FIFO first (unlink), then DevFd (close).
+        // reverse order: FIFO first (unlink + non-blocking reap),
+        // then DevFd (close + blocking reap).
         run_trace(
             trace_entries![
                 unlink(str(b"/tmp/meiksh-procsub.7.1")) -> 0,
-                waitpid(1100, _) -> status(0),
+                waitpid(int(1100), _, _) -> status(0),
                 close(fd(20)) -> 0,
                 waitpid(1101, _) -> status(0),
             ],

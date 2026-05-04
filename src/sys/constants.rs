@@ -151,7 +151,12 @@ pub(crate) const RLIMIT_CPU: i32 = libc::RLIMIT_CPU as i32;
 pub(crate) const RLIMIT_AS: Option<i32> = Some(libc::RLIMIT_AS as i32);
 #[cfg(target_os = "openbsd")]
 pub(crate) const RLIMIT_AS: Option<i32> = None;
-pub(crate) const RLIM_INFINITY: u64 = libc::RLIM_INFINITY;
+// `libc::RLIM_INFINITY` is `u64` (`rlim_t`) on Linux/macOS/OpenBSD but
+// `i64` on FreeBSD, where `rlim_t = __int64_t`. Cast unconditionally to
+// `u64` so the constant has a single, portable type — the bit pattern
+// (`-1` ↔ `u64::MAX`) is identical across both representations, which
+// is exactly what the kernel ABI uses.
+pub(crate) const RLIM_INFINITY: u64 = libc::RLIM_INFINITY as u64;
 
 #[cfg(test)]
 mod tests {

@@ -78,8 +78,22 @@ pub fn run_meiksh_with_nonblocking_stdin(stdin: &[u8]) -> std::process::Output {
 }
 
 pub fn run_interactive(input: &[u8]) -> std::process::Output {
+    // Point `HOME` at a fresh empty directory and drop `ENV` so the
+    // spawned `meiksh -i` does NOT source the developer's personal
+    // `~/.profile` / `~/.shrc`. On FreeBSD the default `~/.profile`
+    // calls `fortune freebsd-tips` which prints a random tip on
+    // every interactive login; that random text bleeds into stdout
+    // and breaks word-counting assertions in tests that examine
+    // command output (e.g. `fc_reexec_mode` counts occurrences of
+    // "first"). Tests that specifically exercise startup-file
+    // sourcing (`interactive_shell_sources_home_profile`, ...) set
+    // `HOME` and `ENV` themselves and use `Command::new(meiksh())`
+    // directly rather than this helper, so they are unaffected.
+    let home = TempDir::new("meiksh-itest-home");
     let mut child = Command::new(meiksh())
         .arg("-i")
+        .env("HOME", home.path())
+        .env_remove("ENV")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
