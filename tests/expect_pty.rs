@@ -2130,7 +2130,15 @@ fn strip_inline_comment(line: &str) -> &str {
 
 fn baseline_env(tmpdir: &str, shell_str: &str) -> HashMap<String, String> {
     let mut env = HashMap::new();
-    env.insert("PATH".into(), "/usr/bin:/bin".into());
+    // Include `/sbin` and `/usr/sbin` because some POSIX-required
+    // utilities live there on OpenBSD (notably `mkfifo` at
+    // `/sbin/mkfifo`); on Linux/macOS/FreeBSD they typically also
+    // live at `/usr/bin/mkfifo`, so the extra prefixes are harmless
+    // there and just give the test scripts a more portable command-
+    // search path. Without this, FIFO-related tests fail with
+    // `mkfifo: not found` even though the kernel and `mkfifo(2)`
+    // are perfectly available.
+    env.insert("PATH".into(), "/usr/bin:/bin:/sbin:/usr/sbin".into());
     env.insert("HOME".into(), tmpdir.into());
     env.insert("TMPDIR".into(), tmpdir.into());
     env.insert("TERM".into(), "xterm".into());

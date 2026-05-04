@@ -93,19 +93,34 @@ impl Shell {
     }
 
     pub(crate) fn restore_signals_for_child(&self) {
-        let user_ignored = |sig: i32| -> bool {
-            matches!(
-                self.trap_actions.get(&TrapCondition::Signal(sig)),
-                Some(TrapAction::Ignore)
-            )
+        // A signal is "user-trapped to ignore" only if `trap '' SIG`
+        // was executed *after* shell startup. The `Shell::new`
+        // constructor seeds `trap_actions` from `ignored_on_entry`,
+        // so a `trap_actions[SIG] == Ignore` entry is "user-trapped"
+        // iff the signal is NOT in `ignored_on_entry`. We use this
+        // distinction to honour POSIX § 2.14 trap semantics
+        // (inherited-ignored signals stay ignored across `fork+exec`)
+        // while still resetting *only-inherited* job-control signals
+        // to the default disposition for foreground children spawned
+        // under `set -m` — the practical bash/ksh behaviour that
+        // makes `Ctrl-Z`/`SIGTSTP` actually stop the foreground job
+        // even when the shell was launched from a parent that had
+        // those signals already set to `SIG_IGN` (e.g. an
+        // interactive ksh on OpenBSD propagates `SIG_IGN` for
+        // SIGTSTP/SIGTTIN/SIGTTOU through every child it spawns,
+        // including `cargo` -> `expect_pty` -> `meiksh`).
+        let user_trap_ignored = |sig: i32| -> bool {
+            let cond = TrapCondition::Signal(sig);
+            matches!(self.trap_actions.get(&cond), Some(TrapAction::Ignore))
+                && !self.ignored_on_entry.contains(&cond)
         };
         if self.interactive {
             for sig in [sys::constants::SIGTERM, sys::constants::SIGQUIT] {
-                if !user_ignored(sig) {
+                if !user_trap_ignored(sig) {
                     let _ = sys::process::default_signal_action(sig);
                 }
             }
-            if !user_ignored(sys::constants::SIGINT) {
+            if !user_trap_ignored(sys::constants::SIGINT) {
                 let _ = sys::process::default_signal_action(sys::constants::SIGINT);
             }
         }
@@ -115,7 +130,7 @@ impl Shell {
                 sys::constants::SIGTTIN,
                 sys::constants::SIGTTOU,
             ] {
-                if !user_ignored(sig) {
+                if !user_trap_ignored(sig) {
                     let _ = sys::process::default_signal_action(sig);
                 }
             }

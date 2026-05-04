@@ -1252,7 +1252,7 @@ begin test "PATH affects command interpretation"
     mkdir "$bindir"
     cat > "$bindir/path_cmd" <<'EOF'
     #!/bin/sh
-    printf '%s\n' path-hit
+    echo path-hit
     EOF
     chmod +x "$bindir/path_cmd"
     PATH="$bindir" $SHELL -c 'path_cmd'

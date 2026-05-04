@@ -300,8 +300,13 @@ begin test "time utility operand with slash bypasses PATH search"
   script
     tmpdir=$(mktemp -d)
     mkdir "$tmpdir/pathbin" "$tmpdir/directbin"
-    printf '#!/bin/sh\nprintf '\''from-path\\n'\''\n' >"$tmpdir/pathbin/probe"
-    printf '#!/bin/sh\nprintf '\''from-direct\\n'\''\n' >"$tmpdir/directbin/probe"
+    # Use `echo` (a universal POSIX builtin in `/bin/sh` everywhere)
+    # rather than `printf`: when PATH is restricted to a single
+    # private directory the spawned `/bin/sh` may not find an
+    # external `printf` (OpenBSD's `/bin/sh` is `ksh`, which lacks
+    # `printf` as a builtin and falls back to PATH lookup).
+    printf '#!/bin/sh\necho from-path\n' >"$tmpdir/pathbin/probe"
+    printf '#!/bin/sh\necho from-direct\n' >"$tmpdir/directbin/probe"
     chmod +x "$tmpdir/pathbin/probe" "$tmpdir/directbin/probe"
     old_path=$PATH
     PATH="$tmpdir/pathbin"

@@ -275,7 +275,7 @@ end test "kill with default signal sends SIGTERM"
 ```
 begin test "kill -l lists standard POSIX signals"
   script
-    kill -l | tr ' ' '\n' | grep -c "HUP\|INT\|QUIT\|KILL\|TERM"
+    kill -l | tr ' ' '\n' | grep -cE 'HUP|INT|QUIT|KILL|TERM'
   expect
     stdout "[5-9].*"
     stderr ""
