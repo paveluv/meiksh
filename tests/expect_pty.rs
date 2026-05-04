@@ -172,27 +172,35 @@ fn kill_session(sid: libc::pid_t) {
     };
 
     #[cfg(target_os = "freebsd")]
-    let killed = kill_session_sysctl(sid);
+    let killed = kill_session_sysctl_freebsd(sid);
+
+    #[cfg(target_os = "openbsd")]
+    let killed = kill_session_sysctl_openbsd(sid);
 
     #[cfg(target_os = "macos")]
     let killed = kill_session_listpids(sid);
 
     // Platforms without one of the dedicated enumeration paths above
-    // (currently OpenBSD and NetBSD) fall back to the process-group
+    // (currently NetBSD only) fall back to the process-group
     // `kill(-sid, SIGKILL)` performed at the top of this function.
     // That already reaches every descendant still sharing the
     // session leader's pgrp; processes that have escaped into their
-    // own session via `setsid` leak through, which is acceptable for
-    // a best-effort matrix-runner cleanup on platforms where the
-    // matrix suite is not wired up yet.
-    #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "macos")))]
+    // own pgrp via `set -m` job control or `setpgid` leak through,
+    // which is acceptable for a best-effort matrix-runner cleanup on
+    // platforms where the matrix suite is not wired up yet.
+    #[cfg(not(any(
+        target_os = "linux",
+        target_os = "freebsd",
+        target_os = "macos",
+        target_os = "openbsd"
+    )))]
     let killed: usize = 0;
 
     vlog!("kill_session: killed {killed} session members");
 }
 
 #[cfg(target_os = "freebsd")]
-fn kill_session_sysctl(sid: libc::pid_t) -> usize {
+fn kill_session_sysctl_freebsd(sid: libc::pid_t) -> usize {
     use std::mem;
 
     let mib: [libc::c_int; 4] = [
@@ -215,7 +223,7 @@ fn kill_session_sysctl(sid: libc::pid_t) -> usize {
     };
     if ret != 0 || buf_len == 0 {
         vlog!(
-            "kill_session_sysctl: sysctl size query failed (ret={ret}, errno={})",
+            "kill_session_sysctl_freebsd: sysctl size query failed (ret={ret}, errno={})",
             io::Error::last_os_error()
         );
         return 0;
@@ -238,7 +246,7 @@ fn kill_session_sysctl(sid: libc::pid_t) -> usize {
     };
     if ret != 0 {
         vlog!(
-            "kill_session_sysctl: sysctl data query failed (errno={})",
+            "kill_session_sysctl_freebsd: sysctl data query failed (errno={})",
             io::Error::last_os_error()
         );
         return 0;
@@ -253,7 +261,106 @@ fn kill_session_sysctl(sid: libc::pid_t) -> usize {
         if pid <= 1 {
             continue;
         }
-        vlog!("kill_session_sysctl: killing pid={pid}");
+        vlog!("kill_session_sysctl_freebsd: killing pid={pid}");
+        unsafe {
+            libc::kill(pid, libc::SIGKILL);
+        }
+        killed += 1;
+    }
+    killed
+}
+
+/// OpenBSD session enumerator. Distinct from FreeBSD's:
+/// - The mib has SIX elements, not four; the trailing two slots are
+///   `sizeof(struct kinfo_proc)` and an `nelem` counter (the size
+///   query must specify `kinfo_size` so the kernel can return a
+///   matching-layout struct).
+/// - The struct is `kinfo_proc` with `p_pid`/`p__pgid`/`p_sid`
+///   (double underscore on `_pgid`), not the FreeBSD `ki_pid` family.
+///
+/// Needed because matrix tests that exercise `set -m` create
+/// background subshells in their own process group; `kill(-sid,
+/// SIGKILL)` reaches only the leader's pgrp, leaving those subshells
+/// (and any external commands they have forked, e.g. `sleep 1` in a
+/// `while :; do sleep 1; done` loop) running. Without this enumerator
+/// the matrix runner stalls in the parent's blocking `waitpid` after
+/// a job-control test fails.
+#[cfg(target_os = "openbsd")]
+fn kill_session_sysctl_openbsd(sid: libc::pid_t) -> usize {
+    use std::mem;
+
+    let kinfo_size = mem::size_of::<libc::kinfo_proc>();
+    let mut mib: [libc::c_int; 6] = [
+        libc::CTL_KERN,
+        libc::KERN_PROC,
+        libc::KERN_PROC_SESSION,
+        sid as libc::c_int,
+        kinfo_size as libc::c_int,
+        0,
+    ];
+
+    let mut buf_len: libc::size_t = 0;
+    // OpenBSD's `libc::sysctl` declares `newp` as `*mut c_void`
+    // (FreeBSD's takes `*const c_void`). Pass `null_mut()` to feed
+    // the same "no new value" intent through the right type.
+    let ret = unsafe {
+        libc::sysctl(
+            mib.as_ptr(),
+            mib.len() as libc::c_uint,
+            std::ptr::null_mut(),
+            &mut buf_len,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if ret != 0 || buf_len == 0 {
+        vlog!(
+            "kill_session_sysctl_openbsd: sysctl size query failed (ret={ret}, errno={})",
+            io::Error::last_os_error()
+        );
+        return 0;
+    }
+
+    // Allow some slack for processes spawned between the size query
+    // and the data query (a `while :; do sleep 1; done` loop forks
+    // ~once per second).
+    buf_len = buf_len * 5 / 4 + kinfo_size;
+    let count = buf_len / kinfo_size;
+    let mut buf: Vec<libc::kinfo_proc> = Vec::with_capacity(count);
+    mib[5] = count as libc::c_int;
+
+    let ret = unsafe {
+        libc::sysctl(
+            mib.as_ptr(),
+            mib.len() as libc::c_uint,
+            buf.as_mut_ptr() as *mut libc::c_void,
+            &mut buf_len,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if ret != 0 {
+        vlog!(
+            "kill_session_sysctl_openbsd: sysctl data query failed (errno={})",
+            io::Error::last_os_error()
+        );
+        return 0;
+    }
+
+    let actual_count = buf_len / kinfo_size;
+    unsafe { buf.set_len(actual_count) };
+
+    let mut killed = 0;
+    for kp in &buf {
+        let pid = kp.p_pid;
+        if pid <= 1 {
+            continue;
+        }
+        vlog!(
+            "kill_session_sysctl_openbsd: killing pid={pid} (pgid={} sid={})",
+            kp.p__pgid,
+            kp.p_sid
+        );
         unsafe {
             libc::kill(pid, libc::SIGKILL);
         }
@@ -2521,6 +2628,30 @@ fn run_test_isolated(
     }
     let pipe_r = pipe_fds[0];
     let pipe_w = pipe_fds[1];
+    // Mark both ends `FD_CLOEXEC` so they don't leak into anything
+    // the test's interactive shell `exec`s. Without this, a
+    // backgrounded external command (e.g. `sleep 30 &` in the job-
+    // control matrix tests) inherits `pipe_w`, and even if the test
+    // later runs `kill %1; wait` the kernel can leave a *grandchild*
+    // (the actual `sleep` binary) alive briefly on OpenBSD; that
+    // grandchild keeps `pipe_w` open and the parent's
+    // `pipe_read.read_to_string(...)` after the isolation child
+    // exits hangs forever waiting for EOF. The shell itself and any
+    // pure-meiksh subshells (no `exec` boundary) still inherit the
+    // fd via plain `fork`, but those die together with the suite
+    // child or are reaped via `kill_session` — only the post-exec
+    // descendants are problematic, and `FD_CLOEXEC` cuts them off
+    // at the `execve(2)` boundary.
+    unsafe {
+        let flags = libc::fcntl(pipe_r, libc::F_GETFD);
+        if flags >= 0 {
+            libc::fcntl(pipe_r, libc::F_SETFD, flags | libc::FD_CLOEXEC);
+        }
+        let flags = libc::fcntl(pipe_w, libc::F_GETFD);
+        if flags >= 0 {
+            libc::fcntl(pipe_w, libc::F_SETFD, flags | libc::FD_CLOEXEC);
+        }
+    }
 
     vlog!("run_test_isolated: starting test {:?}", test.name);
     let child_pid = unsafe { libc::fork() };

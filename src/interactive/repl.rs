@@ -59,21 +59,26 @@ pub(super) fn run_loop(shell: &mut Shell) -> Result<i32, ShellError> {
         // "before the next prompt" without dictating whether the
         // shell may briefly poll for late-arriving SIGCHLDs in that
         // pre-prompt window.
+        //
+        // The loop is bounded by *wall-clock time*, not iteration
+        // count, because `thread::sleep` granularity varies by
+        // platform: Linux honors 1 ms sleeps, but OpenBSD's default
+        // kernel HZ rounds each `sleep(1ms)` up to ≈20 ms — a 25-
+        // iteration count loop there would block for 500 ms after
+        // every `sleep N &` (matching exactly the duration of
+        // `sleep`'s own argument when it's short, since the kernel
+        // delivers SIGCHLD precisely as the sleep finishes), which
+        // makes interactive `meiksh -i` and the matrix runner's
+        // `expect "$ "` time out. Using a deadline keeps the
+        // cap honest at ~25 ms regardless of sleep granularity.
         let reaped = if shell.jobs.is_empty() {
             shell.reap_jobs()
         } else {
-            // Poll up to ~25 times (1 ms apart) for at least one
-            // reapable child. Break out the moment something is
-            // reaped so the common case (a fast-finishing fg
-            // command, or no recent signal traffic) pays only the
-            // cost of a single `reap_jobs()`.
-            let mut got = Vec::new();
-            for _ in 0..25 {
-                got = shell.reap_jobs();
-                if !got.is_empty() {
-                    break;
-                }
+            let deadline = std::time::Instant::now() + std::time::Duration::from_millis(25);
+            let mut got = shell.reap_jobs();
+            while got.is_empty() && std::time::Instant::now() < deadline {
                 std::thread::sleep(std::time::Duration::from_millis(1));
+                got = shell.reap_jobs();
             }
             got
         };
