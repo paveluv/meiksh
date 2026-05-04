@@ -88,14 +88,17 @@ pub fn spawn_meiksh_pty(extra_env: &[(&str, &str)]) -> Option<PtyChild> {
     };
     let (primary, secondary) = sys::open_pty_pair()?;
     // Mark the master fd close-on-exec so the spawned `meiksh -i`
-    // child does NOT inherit a copy of it. A child holding both ends
-    // of its own pty hangs the tty driver on OpenBSD: master writes
-    // complete (no `EAGAIN`, no `EPIPE`) but never wake the slave's
-    // `read()`, and the test harness then panics with a 5s timeout in
-    // `exit_and_wait`. Linux's tty subsystem happens to tolerate the
-    // leak, so this was latent until the suite was first run on
-    // OpenBSD. Equivalent to the explicit `close(primary)` that the
-    // C reference reproducer does between `fork` and `execvp`.
+    // child does NOT inherit a copy of it as a stray fd. The child
+    // never has any business reading or writing the master end —
+    // its only pty connection is the slave side wired up as
+    // stdin/stdout/stderr — and leaking the master into `meiksh`
+    // would (a) keep the pty alive past the parent's `close(primary)`
+    // on the final `Drop`, and (b) be a latent footgun if anything
+    // in the shell ever started enumerating open fds. Equivalent to
+    // the explicit `close(primary)` that the C reference reproducer
+    // does between `fork` and `execvp`. Note this is *not* the fix
+    // for the OpenBSD `try_wait`-blindness reported above; that one
+    // is addressed by `poll_until_exit`'s drain loop.
     let _ = sys::set_cloexec(primary, true);
     let secondary_fd = secondary;
     let stdout_fd = sys::dup_fd(secondary_fd).ok()?;
@@ -264,17 +267,61 @@ impl PtyChild {
         self.child.wait().expect("wait for meiksh -i")
     }
 
+    /// Poll `try_wait` until the child exits or `deadline` is reached,
+    /// **continuously draining the primary fd while we poll**. The
+    /// drain is essential on OpenBSD: when the child writes to its
+    /// slave end of the pty and exits without the master ever reading
+    /// those bytes, the kernel keeps the child in a state where
+    /// `waitpid(pid, …, WNOHANG)` returns 0 forever. Linux's tty
+    /// subsystem happens not to couple zombie visibility to slave
+    /// drain state, so the missing drain went unnoticed until the
+    /// suite first ran on OpenBSD.
+    ///
+    /// Bytes read here are intentionally discarded — callers that
+    /// need them must call `drain_until` / `drain_for` *before* the
+    /// final wait. We just need the bytes to leave the kernel's pty
+    /// buffer.
+    fn poll_until_exit(&mut self, deadline: Instant) -> Option<ExitStatus> {
+        let fd = self.primary_fd();
+        let _ = sys::set_nonblocking(fd, true);
+        let mut chunk = [0u8; 4096];
+        loop {
+            match self.child.try_wait() {
+                Ok(Some(status)) => return Some(status),
+                Ok(None) => {}
+                Err(e) => {
+                    if pty_trace_enabled() {
+                        eprintln!("[pty-trace] poll_until_exit: try_wait err: {e}");
+                    }
+                    return None;
+                }
+            }
+            // Drain whatever is currently buffered. WouldBlock is the
+            // common case once the slave goes idle; EOF (`Ok(0)`)
+            // means the child closed its slave fds, after which
+            // `try_wait` will report the exit on the next iteration.
+            loop {
+                match self.primary.read(&mut chunk) {
+                    Ok(0) => break,
+                    Ok(_) => continue,
+                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
+                    Err(_) => break,
+                }
+            }
+            if Instant::now() >= deadline {
+                return None;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+
     /// Wait for the child to exit, or kill it after `timeout`. Returns
     /// `Some(status)` if the child exited on its own, `None` on
     /// timeout (after the child has been killed and reaped).
     pub fn wait_with_timeout(mut self, timeout: Duration) -> Option<ExitStatus> {
         let deadline = Instant::now() + timeout;
-        while Instant::now() < deadline {
-            match self.child.try_wait() {
-                Ok(Some(status)) => return Some(status),
-                Ok(None) => thread::sleep(Duration::from_millis(25)),
-                Err(_) => return None,
-            }
+        if let Some(status) = self.poll_until_exit(deadline) {
+            return Some(status);
         }
         let _ = self.child.kill();
         let _ = self.child.wait();
@@ -307,40 +354,14 @@ impl PtyChild {
         }
         let _ = flush_result;
         let deadline = Instant::now() + timeout;
-        while Instant::now() < deadline {
-            match self.child.try_wait() {
-                Ok(Some(status)) => {
-                    if pty_trace_enabled() {
-                        eprintln!("[pty-trace] exit_and_wait: child exited {status:?}");
-                    }
-                    return Some(status);
-                }
-                Ok(None) => thread::sleep(Duration::from_millis(10)),
-                Err(e) => {
-                    if pty_trace_enabled() {
-                        eprintln!("[pty-trace] exit_and_wait: try_wait err: {e}");
-                    }
-                    return None;
-                }
+        if let Some(status) = self.poll_until_exit(deadline) {
+            if pty_trace_enabled() {
+                eprintln!("[pty-trace] exit_and_wait: child exited {status:?}");
             }
+            return Some(status);
         }
         if pty_trace_enabled() {
             eprintln!("[pty-trace] exit_and_wait: TIMEOUT, killing child");
-            // Drain any final bytes that arrived during the wait, so
-            // we can see what the shell wrote (or didn't) before being
-            // killed. This is best-effort.
-            let fd = self.primary_fd();
-            let _ = sys::set_nonblocking(fd, true);
-            let mut buf = Vec::new();
-            let mut chunk = [0u8; 4096];
-            for _ in 0..20 {
-                match self.primary.read(&mut chunk) {
-                    Ok(0) => break,
-                    Ok(n) => buf.extend_from_slice(&chunk[..n]),
-                    Err(_) => break,
-                }
-            }
-            pty_dump("post-timeout drain", &buf);
         }
         let _ = self.child.kill();
         let _ = self.child.wait();
