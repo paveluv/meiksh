@@ -2416,7 +2416,18 @@ fn glob_invalid_bracket_treated_literally() {
 fn prefix_assignment_restores_path() {
     let dir = TempDir::new("meiksh-path-restore");
     let script = dir.path().join("helper");
-    fs::write(&script, "#!/bin/sh\nprintf helper_ran\n").unwrap();
+    // The helper runs under `/bin/sh`, whose identity (and therefore
+    // builtin set) varies across hosts: `dash`/`bash` on Linux,
+    // `ksh` on OpenBSD, etc. Crucially, the prefix assignment
+    // `PATH={dir} helper` puts ONLY `{dir}` on the script's `PATH`,
+    // so the helper cannot rely on any `PATH`-resolved external
+    // command — and `printf` is *not* a builtin in OpenBSD's
+    // `/bin/sh`, only an external at `/usr/bin/printf`. We therefore
+    // restrict the helper to `echo`, which POSIX 2.9 and every
+    // mainstream `sh` implementation provide as a builtin. The
+    // trailing newline `echo` adds is harmless here because the
+    // assertions are `contains(...)`.
+    fs::write(&script, "#!/bin/sh\necho helper_ran\n").unwrap();
     fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
     let out = Command::new(meiksh())
         .args([
@@ -2514,7 +2525,13 @@ fn fc_s_substitution_no_match() {
 fn restore_vars_path_clears_cache() {
     let dir = TempDir::new("meiksh-restore");
     let script = dir.path().join("test_cmd");
-    fs::write(&script, "#!/bin/sh\nprintf found\n").unwrap();
+    // Same `/bin/sh` cross-host portability concern as
+    // `prefix_assignment_restores_path` above: the helper runs with
+    // PATH overridden to just `{dir}`, so it must use only
+    // POSIX-mandated builtins. `printf` is a builtin in `dash`/`bash`
+    // but not in OpenBSD's `/bin/sh` (which is `ksh`); `echo` works
+    // everywhere.
+    fs::write(&script, "#!/bin/sh\necho found\n").unwrap();
     fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
     let out = Command::new(meiksh())
         .args([
