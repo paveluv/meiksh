@@ -5,7 +5,7 @@ use crate::sys;
 use super::editor::input::{bell, read_byte_with_signal_handler, write_bytes};
 use super::editor::raw_mode::RawMode;
 use super::editor::redraw::{
-    char_len_at, display_width_range, last_char_start, prev_char_start, redraw,
+    DrawAnchor, char_len_at, display_width_range, last_char_start, prev_char_start, redraw,
 };
 use super::editor::words::{
     WordClass, is_word_char_at, is_ws_at, is_ws_before, next_word_boundary, prev_word_boundary,
@@ -158,6 +158,10 @@ struct ViState {
     pub pending: PendingInput,
     erase_char: u8,
     hist_len: usize,
+    /// Cursor row offset from the prompt's first row left by the
+    /// previous [`super::editor::redraw::redraw`] call — see the
+    /// module-level note in `editor/redraw.rs`.
+    pub draw_anchor: DrawAnchor,
 }
 
 impl ViState {
@@ -176,6 +180,7 @@ impl ViState {
             pending: PendingInput::None,
             erase_char,
             hist_len,
+            draw_anchor: DrawAnchor::new(),
         }
     }
 
@@ -1166,9 +1171,17 @@ pub(super) fn read_line(
         // notification even if no keystroke ever arrives. With the
         // default `set +b` the notification is stashed for the
         // next prompt and the closure is not invoked.
+        // Mirror the emacs editor's anchor-reset pattern: `\r\n`
+        // parks the cursor on a fresh row below the editor, so the
+        // tracked wrap row must be cleared before the next redraw —
+        // otherwise the helper would move *up* into output above.
+        let line_ref = &state.line;
+        let cursor_now = state.cursor;
+        let anchor = &mut state.draw_anchor;
         let (maybe_byte, _intr) = read_byte_with_signal_handler(shell, || {
             write_bytes(b"\r\n");
-            redraw(&state.line, state.cursor, prompt);
+            anchor.reset();
+            redraw(anchor, line_ref, cursor_now, prompt);
         })?;
         let byte = match maybe_byte {
             Some(b) => b,
@@ -1185,7 +1198,7 @@ pub(super) fn read_line(
         for action in actions {
             match action {
                 ViAction::Redraw => {
-                    redraw(&state.line, state.cursor, prompt);
+                    redraw(&mut state.draw_anchor, &state.line, state.cursor, prompt);
                 }
                 ViAction::Bell => {
                     bell();
@@ -1196,6 +1209,15 @@ pub(super) fn read_line(
                 ViAction::ReadByte => {}
                 ViAction::WriteBytes(data) => {
                     write_bytes(&data);
+                    // The raw write may have moved the cursor outside
+                    // the buffer area (e.g. a `\r\n` from `q!`-style
+                    // command-line mode, an echo during the `/pattern`
+                    // search prompt, or a literal-char echo). The
+                    // incremental-redraw snapshot can no longer be
+                    // trusted to know where the cursor is, so drop it
+                    // and force the next [`ViAction::Redraw`] to
+                    // repaint from scratch.
+                    state.draw_anchor.reset();
                 }
                 ViAction::RunEditor { tmp_path, .. } => {
                     let editor = shell
@@ -1237,7 +1259,10 @@ pub(super) fn read_line(
                         }
                     }
                     super::remove_file_bytes(&tmp_path);
-                    redraw(&state.line, state.cursor, prompt);
+                    // External editor scrolled the screen; throw
+                    // away the wrap anchor before repainting.
+                    state.draw_anchor.reset();
+                    redraw(&mut state.draw_anchor, &state.line, state.cursor, prompt);
                 }
                 ViAction::NeedSearchByte
                 | ViAction::NeedFindTarget
@@ -4582,7 +4607,11 @@ mod tests {
                 read(fd(STDIN_FILENO), _) -> bytes([0x1b]),
                 write(fd(STDOUT_FILENO), bytes(b"\x1b[D")) -> auto,
                 read(fd(STDIN_FILENO), _) -> bytes([b'b']),
-                write(fd(STDOUT_FILENO), bytes(b"\r\x1b[K")) -> auto,
+                // The wrap-aware redraw clears with `\x1b[J` (end of
+                // screen) instead of `\x1b[K` (end of line) so that
+                // stale wrapped tails get wiped along with the
+                // current row — see editor/redraw.rs.
+                write(fd(STDOUT_FILENO), bytes(b"\r\x1b[J")) -> auto,
                 write(fd(STDOUT_FILENO), bytes(b"ab\x1b[2D")) -> auto,
                 read(fd(STDIN_FILENO), _) -> bytes([b'\r']),
                 write(fd(STDOUT_FILENO), bytes(b"\r\n")) -> auto,
@@ -4675,7 +4704,7 @@ mod tests {
                 read(fd(STDIN_FILENO), _) -> bytes([b'f']),
                 read(fd(STDIN_FILENO), _) -> bytes([b'z']),
                 write(fd(STDOUT_FILENO), bytes(b"\x07")) -> auto,
-                write(fd(STDOUT_FILENO), bytes(b"\r\x1b[K")) -> auto,
+                write(fd(STDOUT_FILENO), bytes(b"\r\x1b[J")) -> auto,
                 write(fd(STDOUT_FILENO), bytes(b"a\x1b[1D")) -> auto,
                 read(fd(STDIN_FILENO), _) -> bytes([b'\r']),
                 write(fd(STDOUT_FILENO), bytes(b"\r\n")) -> auto,
@@ -4707,7 +4736,7 @@ mod tests {
                 tcsetattr(fd(STDIN_FILENO), int(0)) -> 0,
                 open(_, _, _) -> err(sys::constants::ENOENT),
                 unlink(_) -> 0,
-                write(fd(STDOUT_FILENO), bytes(b"\r\x1b[K")) -> auto,
+                write(fd(STDOUT_FILENO), bytes(b"\r\x1b[J")) -> auto,
                 read(fd(STDIN_FILENO), _) -> bytes([b'\r']),
                 write(fd(STDOUT_FILENO), bytes(b"\r\n")) -> auto,
                 tcsetattr(fd(STDIN_FILENO), int(0)) -> 0,
@@ -4742,7 +4771,7 @@ mod tests {
                 read(fd(11), _) -> 0,
                 close(fd(11)) -> 0,
                 unlink(_) -> 0,
-                write(fd(STDOUT_FILENO), bytes(b"\r\x1b[K")) -> auto,
+                write(fd(STDOUT_FILENO), bytes(b"\r\x1b[J")) -> auto,
                 read(fd(STDIN_FILENO), _) -> bytes([b'\r']),
                 write(fd(STDOUT_FILENO), bytes(b"\r\n")) -> auto,
                 tcsetattr(fd(STDIN_FILENO), int(0)) -> 0,

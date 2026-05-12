@@ -65,7 +65,11 @@ pub(super) fn read_line(
     let mut paste = FrameDetector::new();
 
     enter_paste_mode();
-    redraw(&state.buf, state.cursor, prompt);
+    // The prompt was already written to stderr by the REPL before
+    // calling us; immediately repaint it through the wrap-aware
+    // redraw path so the per-edit `draw_anchor` starts tracking
+    // cursor row from a known position.
+    redraw(&mut state.draw_anchor, &state.buf, state.cursor, prompt);
 
     let result = dispatch_loop(shell, prompt, &keymap, &mut state, &mut paste, &raw);
 
@@ -105,9 +109,19 @@ fn dispatch_loop(
         // keystroke ever arrives. With the default `set +b` the
         // notification is stashed for the next prompt and the
         // closure is not invoked.
+        // The closure must reset `draw_anchor` before re-drawing
+        // because the `\r\n` has just placed the cursor on a fresh
+        // row below whatever the editor had on screen — moving
+        // *up* from the new row would land in unrelated terminal
+        // output above. After the redraw, the anchor accurately
+        // tracks the new prompt's row again.
+        let buf_ref = &state.buf;
+        let cursor_now = state.cursor;
+        let anchor = &mut state.draw_anchor;
         let (maybe_byte, _intr) = read_byte_with_signal_handler(shell, || {
             write_bytes(b"\r\n");
-            redraw(&state.buf, state.cursor, prompt);
+            anchor.reset();
+            redraw(anchor, buf_ref, cursor_now, prompt);
         })?;
         let byte = match maybe_byte {
             Some(b) => b,
@@ -130,7 +144,7 @@ fn dispatch_loop(
             FrameEvent::End => {
                 in_paste = false;
                 state.end_paste_group();
-                redraw(&state.buf, state.cursor, prompt);
+                redraw(&mut state.draw_anchor, &state.buf, state.cursor, prompt);
                 continue;
             }
             FrameEvent::EmitLiteral(bytes) => {
@@ -147,7 +161,7 @@ fn dispatch_loop(
                         return Ok(res);
                     }
                 }
-                redraw(&state.buf, state.cursor, prompt);
+                redraw(&mut state.draw_anchor, &state.buf, state.cursor, prompt);
             }
         }
     }
@@ -246,9 +260,13 @@ fn dispatch_function(
         // between `C-q` and the user's next keystroke, we re-emit
         // the prompt + buffer so the literal byte they're about to
         // type still lands on a clean line.
+        let buf_ref = &state.buf;
+        let cursor_now = state.cursor;
+        let anchor = &mut state.draw_anchor;
         let (maybe_byte, _intr) = read_byte_with_signal_handler(shell, || {
             write_bytes(b"\r\n");
-            redraw(&state.buf, state.cursor, prompt);
+            anchor.reset();
+            redraw(anchor, buf_ref, cursor_now, prompt);
         })?;
         if let Some(b) = maybe_byte {
             state.insert_bytes_at_cursor(&[b]);
@@ -317,8 +335,13 @@ fn run_incremental_search(
                 // line sitting on the regular prompt (rather than in
                 // the `(reverse-i-search...)` mini-buffer), then
                 // terminate the read loop as if `accept-line` had
-                // fired — per spec § 7.2.
-                redraw(&state.buf, state.cursor, prompt);
+                // fired — per spec § 7.2. The search mini-buffer
+                // overwrote the regular edit row with `\r\x1b[K(…)`,
+                // so the incremental-redraw snapshot no longer
+                // reflects what is on screen — drop it to force a
+                // full repaint of the prompt + buffer.
+                state.draw_anchor.reset();
+                redraw(&mut state.draw_anchor, &state.buf, state.cursor, prompt);
                 let mut line = std::mem::take(&mut state.buf);
                 line.push(b'\n');
                 return Ok(Some(Some(line)));
@@ -326,7 +349,8 @@ fn run_incremental_search(
             SearchOutcome::Abort => {
                 state.buf = saved_buf;
                 state.cursor = saved_cursor;
-                redraw(&state.buf, state.cursor, prompt);
+                state.draw_anchor.reset();
+                redraw(&mut state.draw_anchor, &state.buf, state.cursor, prompt);
                 return Ok(None);
             }
             SearchOutcome::Exit { byte: redispatch } => {
@@ -335,14 +359,15 @@ fn run_incremental_search(
                     state.cursor = state.buf.len();
                 }
                 state.undo.clear();
-                redraw(&state.buf, state.cursor, prompt);
+                state.draw_anchor.reset();
+                redraw(&mut state.draw_anchor, &state.buf, state.cursor, prompt);
                 let mut pending = Vec::new();
                 if let Some(res) =
                     handle_byte(shell, prompt, keymap, state, &mut pending, redispatch, raw)?
                 {
                     return Ok(Some(res));
                 }
-                redraw(&state.buf, state.cursor, prompt);
+                redraw(&mut state.draw_anchor, &state.buf, state.cursor, prompt);
                 return Ok(None);
             }
         }
@@ -409,7 +434,11 @@ fn run_external_editor(
     super::remove_file_bytes(tmp_path);
     state.buf.clear();
     state.cursor = 0;
-    redraw(&state.buf, state.cursor, prompt);
+    // The external editor scribbled all over the terminal — there's
+    // no reliable way to know which row we are on, so drop the
+    // wrap-tracking anchor before painting the fresh prompt.
+    state.draw_anchor.reset();
+    redraw(&mut state.draw_anchor, &state.buf, state.cursor, prompt);
     Ok(None)
 }
 
@@ -431,7 +460,13 @@ mod tests {
 
     const PASTE_ON: &[u8] = b"\x1b[?2004h";
     const PASTE_OFF: &[u8] = b"\x1b[?2004l";
-    const CLEAR_LINE: &[u8] = b"\r\x1b[K";
+    // The wrap-aware redraw clears from the cursor to end-of-screen
+    // (`\x1b[J`) rather than just the current row (`\x1b[K`), so
+    // stale wrapped tails above the cursor get wiped instead of
+    // becoming ghost lines. Tests that go through the test-mode
+    // tty (which reports no terminal width) still see exactly this
+    // prefix once per redraw.
+    const CLEAR_LINE: &[u8] = b"\r\x1b[J";
 
     /// Snapshot the global emacs context (via the shared inputrc test
     /// helper), install a caller-supplied keymap customization with

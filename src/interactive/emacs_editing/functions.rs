@@ -90,7 +90,14 @@ pub(crate) fn apply(
         EmacsFn::BackwardWord => {
             state.cursor = prev_word_boundary(&state.buf, state.cursor, WordClass::AlnumUnderscore)
         }
-        EmacsFn::ClearScreen => write_bytes(b"\x1b[H\x1b[2J"),
+        EmacsFn::ClearScreen => {
+            // Home + erase-display clears the entire screen and parks
+            // the cursor at row 0 col 0; the wrap-tracking anchor must
+            // also reset so the post-clear redraw doesn't emit a
+            // bogus up-move into rows that no longer exist.
+            write_bytes(b"\x1b[H\x1b[2J");
+            state.draw_anchor.reset();
+        }
         EmacsFn::BackwardDeleteChar => do_backward_delete_char(state, &mut out),
         EmacsFn::DeleteChar => do_delete_char(state, &mut out),
         EmacsFn::KillLine => do_kill_line(state),
@@ -127,11 +134,15 @@ pub(crate) fn apply(
             // C-c: emulate the "discard current line, prompt again"
             // behavior without actually raising SIGINT. The shell is
             // already handling SIGINT via its sigaction; raising it
-            // here would kill the interactive session.
+            // here would kill the interactive session. The `^C\r\n`
+            // moves the cursor to a fresh row, invalidating the
+            // incremental-redraw snapshot — drop it so the follow-up
+            // redraw paints the prompt + empty buffer from scratch.
             state.buf.clear();
             state.cursor = 0;
             state.undo.clear();
             write_bytes(b"^C\r\n");
+            state.draw_anchor.reset();
         }
         EmacsFn::PreviousHistory => do_history_step(shell, state, -1, &mut out),
         EmacsFn::NextHistory => do_history_step(shell, state, 1, &mut out),
@@ -841,6 +852,12 @@ fn do_complete(shell: &mut Shell, state: &mut EmacsState, out: &mut Outcome) {
 
     if state.last_fn == Some(EmacsFn::Complete) {
         list_candidates(&candidates);
+        // The candidate grid scrolled the screen and parked the
+        // cursor on a fresh row below it. The incremental-redraw
+        // snapshot no longer reflects what is on screen, so drop it
+        // and force the dispatch loop's follow-up redraw to repaint
+        // the prompt + buffer below the listing.
+        state.draw_anchor.reset();
     } else {
         out.bell = true;
     }

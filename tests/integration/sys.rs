@@ -43,6 +43,32 @@ pub fn open_pty_pair() -> Option<(RawFd, RawFd)> {
     Some((primary, secondary))
 }
 
+/// Set the window size on a pty fd. `TIOCSWINSZ` propagates to both
+/// ends of the pair, so passing either the primary or the secondary
+/// fd is fine. Used by tests that need to exercise meiksh's
+/// wrap-aware redraw paths, which key off `TIOCGWINSZ` reporting a
+/// non-zero column count.
+pub fn set_winsize(fd: RawFd, rows: u16, cols: u16) -> io::Result<()> {
+    #[repr(C)]
+    struct Winsize {
+        ws_row: libc::c_ushort,
+        ws_col: libc::c_ushort,
+        ws_xpixel: libc::c_ushort,
+        ws_ypixel: libc::c_ushort,
+    }
+    let ws = Winsize {
+        ws_row: rows,
+        ws_col: cols,
+        ws_xpixel: 0,
+        ws_ypixel: 0,
+    };
+    let rc = unsafe { libc::ioctl(fd, libc::TIOCSWINSZ, &ws as *const _) };
+    if rc < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
 /// Duplicate an open file descriptor (unspecified target). Returns the
 /// new fd on success; the caller owns it and is responsible for closing
 /// it (typically via `Stdio::from_raw_fd` transferring ownership to a

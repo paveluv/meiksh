@@ -13,6 +13,7 @@
 use super::keymap::EmacsFn;
 use super::kill_buffer::KillBuffer;
 use super::undo::UndoStack;
+use crate::interactive::editor::redraw::DrawAnchor;
 
 /// Tracks whether `yank-last-arg` is walking through prior commands
 /// (spec 5.3). Any non-`yank_last_arg` dispatch clears it.
@@ -43,6 +44,10 @@ pub(crate) struct EmacsState {
     pub(super) paste_group: Option<Vec<u8>>,
     pub(super) accepted: bool,
     pub(super) eof: bool,
+    /// Tracks the cursor's row offset from the prompt's first row
+    /// across redraws so wrap-aware repaint can wipe stale lines
+    /// above; see [`crate::interactive::editor::redraw`].
+    pub(super) draw_anchor: DrawAnchor,
 }
 
 impl EmacsState {
@@ -60,6 +65,7 @@ impl EmacsState {
             paste_group: None,
             accepted: false,
             eof: false,
+            draw_anchor: DrawAnchor::new(),
         }
     }
 

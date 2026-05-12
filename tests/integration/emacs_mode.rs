@@ -26,6 +26,7 @@
 //!   input, avoiding the classic PTY echo race.
 
 use super::interactive_common::{PtyChild, spawn_meiksh_pty};
+use super::sys as test_sys;
 use std::time::Duration;
 
 fn spawn_or_skip() -> Option<PtyChild> {
@@ -270,6 +271,79 @@ fn no_terminal_falls_back_silently() {
 // =====================================================================
 // § 3.2 Terminal / escape-sequence plumbing — observable redraws.
 // =====================================================================
+
+/// Incremental redraw smoke check: after the initial prompt is on
+/// screen, typing additional characters one at a time MUST NOT cause
+/// the prompt to be repainted on every keystroke. The pre-incremental
+/// editor emitted `\r\x1b[J` + prompt + buffer + cursor-positioning
+/// for every byte, which flickered visibly. The incremental path
+/// writes only the new character (plus a cursor reposition) per
+/// keystroke and never re-emits the prompt.
+///
+/// We assert two things about the bytes emitted *while* typing four
+/// characters (excluding the burst that precedes the typing):
+///
+/// 1. The screen-erase sequence `\x1b[J` appears at most once across
+///    the entire post-typing transcript. (Zero would be ideal, but a
+///    single trailing repaint can happen e.g. if the harness's drain
+///    races a leftover idle redraw — the key signal is that we DON'T
+///    see one erase per keystroke.)
+/// 2. The literal sentinel string used as the prompt suffix (the
+///    final `"$ "` that `meiksh`'s default `PS1` ends with) appears
+///    at most once across the same transcript — i.e. no prompt
+///    repaint per keystroke.
+#[test]
+fn typing_uses_incremental_redraw() {
+    let Some(mut pty) = spawn_or_skip() else {
+        return;
+    };
+    // The incremental redraw path keys off `TIOCGWINSZ`; if it
+    // returns 0 cols (the default for an `openpty`-created pair) the
+    // editor falls back to the legacy full-repaint behaviour. Set a
+    // realistic window size so the path under test is reachable.
+    let _ = test_sys::set_winsize(pty.primary_fd(), 24, 80);
+    enable_emacs(&mut pty);
+    // Drain any stray idle bytes from `enable_emacs` so the
+    // typing-only transcript below isn't polluted by the redraw that
+    // followed `set -o emacs` accept-line.
+    let _settle = pty.drain_for(Duration::from_millis(50));
+
+    // Type four ASCII chars one at a time, draining between each so
+    // we get one redraw burst per keystroke. We then concatenate the
+    // bursts and look at the aggregate.
+    let mut transcript = Vec::new();
+    for byte in b"abcd" {
+        pty.send(std::slice::from_ref(byte));
+        let burst = pty.drain_for(Duration::from_millis(80));
+        transcript.extend_from_slice(&burst);
+    }
+
+    // We send a final newline + sentinel printf so the shell returns
+    // to a known state before we tear down.
+    pty.send(b"\n");
+    pty.send(END_SENTINEL_INPUT);
+    let _ = drain_until_contains(&mut pty, b"END\r\n");
+    let _ = pty.exit_and_wait();
+
+    let clear_count = transcript.windows(3).filter(|w| *w == b"\x1b[J").count();
+    assert!(
+        clear_count <= 1,
+        "expected at most one CSI J during 4-char typing burst, \
+         got {clear_count}; transcript was {:?}",
+        String::from_utf8_lossy(&transcript)
+    );
+
+    // Default meiksh PS1 ends with "$ " in non-root shells. If the
+    // pre-incremental redraw were still in effect we'd see this
+    // suffix repeated once per keystroke.
+    let prompt_suffix_count = transcript.windows(2).filter(|w| *w == b"$ ").count();
+    assert!(
+        prompt_suffix_count <= 1,
+        "expected at most one `$ ` prompt suffix during 4-char typing burst, \
+         got {prompt_suffix_count}; transcript was {:?}",
+        String::from_utf8_lossy(&transcript)
+    );
+}
 
 /// § 5.1 `clear-screen` (`C-l`): the editor emits the ANSI sequence
 /// `\x1b[H\x1b[2J` when redrawing the cleared screen, which must
