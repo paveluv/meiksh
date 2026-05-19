@@ -280,9 +280,35 @@ impl<'a> Parser<'a> {
     }
 
     pub(super) fn error(&self, message: &[u8]) -> ParseError {
+        // `at_eof` is true iff the parser is genuinely out of input
+        // at the point the error is raised. We infer this from
+        // either a cached `Token::Eof` (parser-context errors, where
+        // `peek_token()` was just called and returned EOF) or
+        // `peek_byte() == None` (tokenizer-internal errors that
+        // didn't go through `peek_token`, e.g. ran off the end of
+        // the buffer mid-token while looking for a closing quote).
+        // The interactive editor's smart-accept-line uses this to
+        // decide whether more input could possibly make the parse
+        // succeed.
+        let at_eof = matches!(self.cached_token, Some(Token::Eof)) || self.peek_byte().is_none();
         ParseError {
             message: message.to_vec().into_boxed_slice(),
             line: Some(self.line),
+            at_eof,
+        }
+    }
+
+    /// Constructor for parse errors that are definitionally at
+    /// end-of-input regardless of what `cached_token` / `peek_byte`
+    /// happen to report — e.g. unterminated quote tokenizer errors,
+    /// which fire from byte-level helpers that may have already
+    /// advanced past the failing byte. Callers that already have an
+    /// EOF-aware lexer state should prefer [`Self::error`].
+    pub(super) fn error_at_eof(&self, message: &[u8]) -> ParseError {
+        ParseError {
+            message: message.to_vec().into_boxed_slice(),
+            line: Some(self.line),
+            at_eof: true,
         }
     }
 
@@ -409,11 +435,11 @@ impl<'a> Parser<'a> {
             }
             layer.pos = pos;
             self.cached_byte = None;
-            return Err(self.error(b"unterminated single quote"));
+            return Err(self.error_at_eof(b"unterminated single quote"));
         }
         loop {
             match self.peek_byte() {
-                None => return Err(self.error(b"unterminated single quote")),
+                None => return Err(self.error_at_eof(b"unterminated single quote")),
                 Some(b'\'') => {
                     raw.push(b'\'');
                     self.advance_byte();
@@ -430,7 +456,7 @@ impl<'a> Parser<'a> {
     fn consume_double_quote(&mut self, raw: &mut Vec<u8>) -> Result<(), ParseError> {
         loop {
             match self.peek_byte() {
-                None => return Err(self.error(b"unterminated double quote")),
+                None => return Err(self.error_at_eof(b"unterminated double quote")),
                 Some(b'"') => {
                     raw.push(b'"');
                     self.advance_byte();
@@ -734,10 +760,7 @@ impl<'a> Parser<'a> {
 
             if !has_newline {
                 body.extend_from_slice(stripped);
-                return Err(ParseError {
-                    message: b"unterminated here-document".to_vec().into_boxed_slice(),
-                    line: Some(self.line),
-                });
+                return Err(self.error_at_eof(b"unterminated here-document"));
             }
 
             body.extend_from_slice(stripped);
@@ -1024,6 +1047,7 @@ impl<'a> Parser<'a> {
                 .to_vec()
                 .into_boxed_slice(),
             line: Some(opener_line),
+            at_eof: true,
         })
     }
 

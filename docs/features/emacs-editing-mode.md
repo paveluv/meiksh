@@ -255,20 +255,71 @@ This specification matches bash 5.x's `default_filename_quote_characters` set in
 
 | Key | Function | Behavior |
 |---|---|---|
-| `RET` / `LF` | `accept-line` | Return the current buffer as the input line. |
+| `RET` / `LF` | `accept-line` | See Section 5.11 (parser-driven smart accept-line). For a syntactically complete buffer, return it as the input line; for an incomplete buffer, append `\n`, advance the cursor, and keep editing inside the same `read_line` session. |
 | `C-_` | `undo` | Undo the most recent editing group (see Section 9). |
 | `C-g` | `abort` | Abort the current composite action (incremental search, `quoted-insert`). If nothing composite is in progress, ring the bell. |
 | `C-c` | `send-sigint` | Raise SIGINT for the shell process. The editor shall abort the current line, emit a newline, restore the terminal, and the shell shall redisplay the next prompt. |
 | `C-x C-e` | `edit-and-execute-command` | Save the current buffer to a temporary file, invoke `$VISUAL` (or `$EDITOR`, or `vi`) on the file, and after the editor exits return the file contents as the input line. This shall reuse the implementation already used by vi mode. |
+
+`BeginningOfLine` (`C-a`) and `EndOfLine` (`C-e`) shall walk to the start / end of the *current logical line* — i.e. the byte just past the closest preceding `\n` (or 0) and the byte at the next `\n` (or `buf.len()`) respectively. `EndOfLine` parks the cursor on top of the `\n`, not past it, so a follow-up `KillLine` can consume that `\n` and a repeated `EndOfLine` is idempotent. The `\n` characters delimit the logical lines created by the multi-line editor (Section 5.11); see Section 5.12 for the corresponding line-aware kill and navigation behaviour.
 
 ### 5.10 Bracketed Paste
 
 When `enable-bracketed-paste` is on (the default, Section 3.2 of [inputrc.md](inputrc.md)):
 
 - The shell shall emit the sequence `\e[?2004h` when entering the editor for each input line, and `\e[?2004l` when leaving.
-- Between `\e[200~` and `\e[201~` the editor shall insert all bytes literally into the buffer, bypassing keymap dispatch.
+- Between `\e[200~` and `\e[201~` the editor shall insert all bytes literally into the buffer, bypassing keymap dispatch — including any `\n` characters present in the pasted text, which become explicit logical line separators in the editor buffer (Section 5.11).
 - The pasted run shall be a single undo group (Section 9).
 - A pasted run shall not alter the "consecutive kill" tracking used by the kill buffer (Section 6).
+
+### 5.11 Multi-line Editing and Smart Accept-Line
+
+Meiksh's emacs editor edits a *multi-line* buffer. A logical line is a maximal run of bytes in the buffer not containing `\n`; the buffer becomes multi-line either through bracketed paste (Section 5.10), through an explicit `insert-newline` keypress (this section), or implicitly through smart `accept-line` (below).
+
+This is a deliberate deviation from the bash readline model, where editing is single-line and the PS2 continuation prompt is driven by a cross-`read_line` loop in the REPL. We chose this design because:
+
+1. The user can navigate to and edit any earlier row of an in-progress multi-line command, including pressing `Up` to fix a typo on the loop header after typing the body — readline's PS2 model requires retyping the whole command.
+2. The same rules apply whether newlines arrived from a paste, from `insert-newline`, or from smart `accept-line`. The visual rendering (Section 5.10's PS2 gutter) and editing operations (`KillLine`, `BeginningOfLine`, vertical navigation) all treat `\n` identically.
+3. POSIX compliance is preserved by delegating *all* "is this command complete?" decisions to the shell's existing parser — the same predicate (`Shell::input_is_incomplete`) that the REPL uses to drive its cross-call PS2 loop. The editor itself contains no syntax heuristics.
+
+| Key | Function | Behavior |
+|---|---|---|
+| `RET` / `LF` | `accept-line` | Parse `buf + "\n"` via `parse_with_aliases`. If the parser reports an "incomplete input" error (the same classifier that drives the REPL's PS2 loop), append `\n` at the *end* of the buffer (not at the cursor), park the cursor at the new tail, and stay in the dispatch loop — the next redraw paints the freshly-revealed continuation row with the PS2 gutter. Otherwise (parser succeeded, or it failed with a non-incomplete error) accept the buffer and let the executor surface any diagnostic. Cursor position is irrelevant for the completeness probe. |
+| `Alt-RET` (`\e\r` or `\e\n`) | `insert-newline` | Insert a literal `\n` at the cursor regardless of parser state. This is the "I really want a newline here" escape hatch that lets the user compose multi-line commands even when an already-typed prefix happens to parse to a complete command. |
+| `Shift-RET` (`\e[13;2u`) | `insert-newline` | Same as `Alt-RET`. Bound for terminals that have enabled the CSI u protocol (`enable-extended-keys` in xterm and friends). |
+
+Each continuation row in the editor (every row after an embedded `\n`) shall be prefixed by the expanded `PS2` string, evaluated once at the start of `read_line` and rendered verbatim at the left margin of every continuation row. This matches the visual appearance of the REPL's cross-call PS2 loop, so the user sees the same gutter whether the multi-line command came from paste, from explicit `insert-newline`, or from smart `accept-line`. PS2 is rendered to *stderr* on each `\n` boundary so its bytes do not commingle with the `READLINE_LINE` payload on stdout.
+
+The line `accept-line` accepts always ends with a trailing `\n`, just as it did in the single-line model; multi-line buffers therefore appear to the executor as a normal multi-line script.
+
+### 5.12 Line-Aware Navigation and Kill
+
+The following functions operate at logical-line granularity inside a multi-line buffer. In a single-line buffer their behaviour is indistinguishable from the corresponding readline functions.
+
+| Key | Function | Behavior |
+|---|---|---|
+| `C-a` | `beginning-of-line` | Walk to the start of the current logical line (the byte just past the closest preceding `\n`, or 0). |
+| `C-e` | `end-of-line` | Walk to the end of the current logical line (the position of the next `\n`, or `buf.len()`). Parks the cursor on top of the `\n`, not past it. |
+| `Up arrow` (`\e[A` / `\eOA`) | `up-line-or-history` | If the cursor is on a logical row above the first, run `previous-line`. Otherwise run `previous-history`. The smart wrapper lets the same key serve in-buffer navigation in a multi-line buffer and history recall when the user is on the only / first row. |
+| `Down arrow` (`\e[B` / `\eOB`) | `down-line-or-history` | Mirror of `up-line-or-history`. |
+| (unbound by default) | `previous-line` / `next-line` | Move the cursor up / down one logical row, preserving the goal column. The goal column is the *byte* column inside the source logical line, captured the first time a vertical step is dispatched in a streak; any non-line-nav function clears it. Rings the bell when there is no row above / below. These are exposed for users who want to bind them explicitly via inputrc; the default arrow-key bindings use the smart wrappers above. |
+| `C-k` | `kill-line` | Kill from the cursor to the end of the *current logical line*. If the cursor is already parked on a `\n` (i.e. at `end-of-line`), consume the `\n` itself and join the next row onto the current one. This is the only emacs primitive that removes the newline forward; without it the user would have to drop to `delete-char`. |
+| `C-u` | `unix-line-discard` | Symmetric kill from the cursor back to the start of the *current logical line*. From column 0 of a non-first row, consume the `\n` above and join the current row onto the previous one. |
+
+`KillWord` (`M-d`) and `BackwardKillWord` (`M-DEL` / `M-BS`) are *not* line-scoped — they walk by emacs word boundaries (Section 5.6), which already include `\n` as a word delimiter, so a multi-line kill-word run still produces sensible results without special-casing.
+
+The goal-column protocol matches GNU Emacs's behaviour for vertical motion through ragged rows: a `previous-line` from column N into a row that has fewer than N bytes parks on top of that row's `\n`, but a subsequent `next-line` back into a long row restores the original column. The goal column is reset by any function that is not itself one of `previous-line`, `next-line`, `up-line-or-history`, `down-line-or-history`.
+
+#### 5.12.1 Vi-mode parity (future work)
+
+Vi mode (`src/interactive/vi_editing.rs`) does **not** yet implement the multi-line editor described in Sections 5.10–5.12. Today the vi editor calls `redraw` with an empty `PS2` slice and treats the buffer as single-line; multi-line input in vi mode falls back to the REPL's cross-`read_line` PS2 loop (so `for i in 1 2 3` followed by `Enter` ends the editor session and the REPL re-enters with `PS2`, just like bash readline). The vi follow-up shall:
+
+1. Adopt the same parser-delegated smart-accept-line model: on `Enter` (and the vi-mode equivalents), call `shell.input_is_incomplete` on `buf + "\n"` and either append `\n` and stay in the editor, or accept.
+2. Render the expanded `PS2` on every continuation row inside the editor, using the same `redraw` plumbing.
+3. Scope `dd`, `cc`, `D`, `C`, `0`, `^`, `$` and the line-motion family to the *current logical line* once the buffer becomes multi-line.
+4. Bind a vi-mode equivalent of `insert-newline` (likely `Esc Return` in command mode, plus `Alt-Enter` in insert mode for parity with emacs).
+
+Vi mode shall remain POSIX-compliant by routing all completeness probes through the same `shell.input_is_incomplete` predicate; no shell-side syntax heuristics live in the editor.
 
 ## 6. Kill-Buffer Semantics
 

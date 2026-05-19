@@ -51,6 +51,27 @@ pub(crate) enum EmacsFn {
     QuotedInsert,
     Complete,
     AcceptLine,
+    /// Meiksh extension: insert a literal `\n` at the cursor,
+    /// regardless of whether the buffer parses to a complete command.
+    /// Bound to Alt-Enter (`\e\r`) and Shift-Enter (`\e[13;2u`) by
+    /// default. See `docs/features/emacs-editing-mode.md` § 5.11.
+    InsertNewline,
+    /// Meiksh extension: move the cursor up one logical line within
+    /// the buffer, preserving the goal column when possible. Pure
+    /// no-op on the first logical line — callers wire arrow keys to
+    /// [`UpLineOrHistory`] instead so that the editor falls through
+    /// to history recall when there is no row above.
+    PreviousLine,
+    /// Meiksh extension: move the cursor down one logical line; see
+    /// [`PreviousLine`].
+    NextLine,
+    /// Meiksh extension: line-aware Up arrow. Moves to the previous
+    /// logical row inside the buffer, but if the cursor is already
+    /// on the first logical row, behaves as [`PreviousHistory`].
+    UpLineOrHistory,
+    /// Meiksh extension: line-aware Down arrow. Mirror of
+    /// [`UpLineOrHistory`].
+    DownLineOrHistory,
     Undo,
     Abort,
     SendSigint,
@@ -94,6 +115,11 @@ impl EmacsFn {
             Self::QuotedInsert => b"quoted-insert",
             Self::Complete => b"complete",
             Self::AcceptLine => b"accept-line",
+            Self::InsertNewline => b"insert-newline",
+            Self::PreviousLine => b"previous-line",
+            Self::NextLine => b"next-line",
+            Self::UpLineOrHistory => b"up-line-or-history",
+            Self::DownLineOrHistory => b"down-line-or-history",
             Self::Undo => b"undo",
             Self::Abort => b"abort",
             Self::SendSigint => b"send-sigint",
@@ -124,6 +150,7 @@ pub(crate) const ALL_FUNCTIONS: &[EmacsFn] = &[
     EmacsFn::Complete,
     EmacsFn::DeleteChar,
     EmacsFn::DowncaseWord,
+    EmacsFn::DownLineOrHistory,
     EmacsFn::EditAndExecuteCommand,
     EmacsFn::EndOfHistory,
     EmacsFn::EndOfLine,
@@ -132,10 +159,13 @@ pub(crate) const ALL_FUNCTIONS: &[EmacsFn] = &[
     EmacsFn::ForwardWord,
     EmacsFn::HistorySearchBackward,
     EmacsFn::HistorySearchForward,
+    EmacsFn::InsertNewline,
     EmacsFn::KillLine,
     EmacsFn::KillWord,
     EmacsFn::NextHistory,
+    EmacsFn::NextLine,
     EmacsFn::PreviousHistory,
+    EmacsFn::PreviousLine,
     EmacsFn::QuotedInsert,
     EmacsFn::ReverseSearchHistory,
     EmacsFn::Abort,
@@ -147,6 +177,7 @@ pub(crate) const ALL_FUNCTIONS: &[EmacsFn] = &[
     EmacsFn::UnixLineDiscard,
     EmacsFn::UnixWordRubout,
     EmacsFn::UpcaseWord,
+    EmacsFn::UpLineOrHistory,
     EmacsFn::Yank,
     EmacsFn::YankLastArg,
 ];
@@ -376,14 +407,35 @@ pub(crate) const DEFAULT_BINDINGS: &[(&[u8], EmacsFn)] = &[
     (b"\x1bn", EmacsFn::HistorySearchForward),  // M-n
     (b"\x1br", EmacsFn::Abort),                 // M-r
     // --- Arrow keys: both CSI and SS3 forms (section 5.9) ---
-    (b"\x1b[A", EmacsFn::PreviousHistory),
-    (b"\x1b[B", EmacsFn::NextHistory),
+    //
+    // Up / Down are bound to the smart wrappers so they navigate
+    // logical rows inside a multi-line buffer first and only fall
+    // through to history recall when there is no row above / below.
+    // See `docs/features/emacs-editing-mode.md` § 5.12.
+    (b"\x1b[A", EmacsFn::UpLineOrHistory),
+    (b"\x1b[B", EmacsFn::DownLineOrHistory),
     (b"\x1b[C", EmacsFn::ForwardChar),
     (b"\x1b[D", EmacsFn::BackwardChar),
-    (b"\x1bOA", EmacsFn::PreviousHistory),
-    (b"\x1bOB", EmacsFn::NextHistory),
+    (b"\x1bOA", EmacsFn::UpLineOrHistory),
+    (b"\x1bOB", EmacsFn::DownLineOrHistory),
     (b"\x1bOC", EmacsFn::ForwardChar),
     (b"\x1bOD", EmacsFn::BackwardChar),
+    // --- Multi-line newline insertion (meiksh extension) ---
+    //
+    // Alt-Enter (`\e\r`) is the most portable way to ask a terminal
+    // for "the Enter key with the Meta modifier"; modern terminals
+    // also emit `\e[13;2u` (CSI u) for Shift-Enter when the
+    // application has enabled the protocol. Both insert a literal
+    // `\n` at the cursor regardless of parser state.
+    //
+    // We bind both the raw CR (`\r`) and the post-ICRNL LF (`\n`)
+    // forms so the binding fires whether or not the kernel line
+    // discipline is translating CR to LF on input — our raw mode
+    // does not clear ICRNL, mirroring the convention `accept-line`
+    // already uses (it's bound to both `\x0a` and `\x0d`).
+    (b"\x1b\r", EmacsFn::InsertNewline),
+    (b"\x1b\n", EmacsFn::InsertNewline),
+    (b"\x1b[13;2u", EmacsFn::InsertNewline),
     (b"\x1b[H", EmacsFn::BeginningOfLine),
     (b"\x1b[F", EmacsFn::EndOfLine),
     (b"\x1bOH", EmacsFn::BeginningOfLine),
@@ -419,13 +471,18 @@ mod tests {
 
     #[test]
     fn arrow_sequence_needs_more_then_function() {
+        // The Up arrow now resolves to the line-aware wrapper that
+        // tries in-buffer navigation first and falls through to
+        // `previous-history` only when the cursor is on the first
+        // logical row. See `docs/features/emacs-editing-mode.md` §
+        // 5.12 for the rationale.
         assert_no_syscalls(|| {
             let k = Keymap::default_emacs();
             assert_eq!(k.resolve(b"\x1b"), Resolved::NeedsMore);
             assert_eq!(k.resolve(b"\x1b["), Resolved::NeedsMore);
             assert_eq!(
                 k.resolve(b"\x1b[A"),
-                Resolved::Function(EmacsFn::PreviousHistory)
+                Resolved::Function(EmacsFn::UpLineOrHistory)
             );
         });
     }
@@ -494,7 +551,18 @@ mod tests {
                 // Skip self-insert — it's not assigned a dedicated
                 // keyseq in the default table (self-insert is the
                 // fallback for unbound printable bytes).
-                if *f == EmacsFn::SelfInsert {
+                //
+                // `previous-line` / `next-line` are also unbound in
+                // the default table: the smart wrappers
+                // `up-line-or-history` / `down-line-or-history` own
+                // the arrow keys, and the bare line-step functions
+                // are exposed only for users who want to bind them
+                // explicitly via inputrc (e.g. to a non-fallback
+                // key sequence). See § 5.12.
+                if matches!(
+                    *f,
+                    EmacsFn::SelfInsert | EmacsFn::PreviousLine | EmacsFn::NextLine
+                ) {
                     continue;
                 }
                 assert!(

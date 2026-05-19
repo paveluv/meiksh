@@ -15,6 +15,15 @@ use crate::hash::ShellMap;
 pub(crate) struct ParseError {
     pub(crate) message: Box<[u8]>,
     pub(crate) line: Option<usize>,
+    /// `true` iff the error fired at end-of-input — i.e. the parser
+    /// or lexer ran out of bytes/tokens while trying to recognise a
+    /// construct. The interactive editor uses this together with the
+    /// error message to decide whether to keep prompting (the user
+    /// could still type more bytes to produce a valid parse) or to
+    /// surface the error as a syntax-error diagnostic (the parser
+    /// has more tokens to work with and what it sees is already
+    /// wrong). See [`crate::shell::run::stdin_parse_error_requires_more_input`].
+    pub(crate) at_eof: bool,
 }
 
 /// Parse-time options sampled by the lexer. Currently a single

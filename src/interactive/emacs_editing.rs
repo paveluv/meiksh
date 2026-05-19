@@ -63,15 +63,31 @@ pub(super) fn read_line(
     };
     let mut state = EmacsState::new(erase_char);
     let mut paste = FrameDetector::new();
+    // Expand PS2 once per editor entry so continuation rows
+    // introduced by an embedded `\n` (paste, `insert-newline`, or
+    // the parser-driven auto-continuation that `accept-line`
+    // performs when the buffer is syntactically incomplete) render
+    // with the same gutter the cross-call PS2 reprompt in
+    // `repl.rs` would use. Re-expanding mid-edit would chase a
+    // moving target (PS2 may interpolate `\#`, `\!`, etc. via
+    // `prompt_expand`); a single expansion here mirrors how PS1 is
+    // captured exactly once per call.
+    let ps2 = super::prompt::expand_prompt(shell, b"PS2", b"> ");
 
     enter_paste_mode();
     // The prompt was already written to stderr by the REPL before
     // calling us; immediately repaint it through the wrap-aware
     // redraw path so the per-edit `draw_anchor` starts tracking
     // cursor row from a known position.
-    redraw(&mut state.draw_anchor, &state.buf, state.cursor, prompt);
+    redraw(
+        &mut state.draw_anchor,
+        &state.buf,
+        state.cursor,
+        prompt,
+        &ps2,
+    );
 
-    let result = dispatch_loop(shell, prompt, &keymap, &mut state, &mut paste, &raw);
+    let result = dispatch_loop(shell, prompt, &ps2, &keymap, &mut state, &mut paste, &raw);
 
     leave_paste_mode();
     write_bytes(b"\r\n");
@@ -81,6 +97,7 @@ pub(super) fn read_line(
 fn dispatch_loop(
     shell: &mut Shell,
     prompt: &[u8],
+    ps2: &[u8],
     keymap: &Keymap,
     state: &mut EmacsState,
     paste: &mut FrameDetector,
@@ -121,7 +138,7 @@ fn dispatch_loop(
         let (maybe_byte, _intr) = read_byte_with_signal_handler(shell, || {
             write_bytes(b"\r\n");
             anchor.reset();
-            redraw(anchor, buf_ref, cursor_now, prompt);
+            redraw(anchor, buf_ref, cursor_now, prompt, ps2);
         })?;
         let byte = match maybe_byte {
             Some(b) => b,
@@ -144,7 +161,13 @@ fn dispatch_loop(
             FrameEvent::End => {
                 in_paste = false;
                 state.end_paste_group();
-                redraw(&mut state.draw_anchor, &state.buf, state.cursor, prompt);
+                redraw(
+                    &mut state.draw_anchor,
+                    &state.buf,
+                    state.cursor,
+                    prompt,
+                    ps2,
+                );
                 continue;
             }
             FrameEvent::EmitLiteral(bytes) => {
@@ -156,12 +179,18 @@ fn dispatch_loop(
                 }
                 for b in bytes {
                     if let Some(res) =
-                        handle_byte(shell, prompt, keymap, state, &mut pending, b, raw)?
+                        handle_byte(shell, prompt, ps2, keymap, state, &mut pending, b, raw)?
                     {
                         return Ok(res);
                     }
                 }
-                redraw(&mut state.draw_anchor, &state.buf, state.cursor, prompt);
+                redraw(
+                    &mut state.draw_anchor,
+                    &state.buf,
+                    state.cursor,
+                    prompt,
+                    ps2,
+                );
             }
         }
     }
@@ -169,9 +198,11 @@ fn dispatch_loop(
 
 /// Feed a single user byte into dispatch. Returns `Ok(Some(_))` when
 /// the loop should return that value, `Ok(None)` to keep reading.
+#[allow(clippy::too_many_arguments)]
 fn handle_byte(
     shell: &mut Shell,
     prompt: &[u8],
+    ps2: &[u8],
     keymap: &Keymap,
     state: &mut EmacsState,
     pending: &mut Vec<u8>,
@@ -188,7 +219,16 @@ fn handle_byte(
             if pending.len() == 1 && is_printable(pending[0]) {
                 let byte = pending[0];
                 pending.clear();
-                dispatch_function(shell, prompt, keymap, state, EmacsFn::SelfInsert, byte, raw)
+                dispatch_function(
+                    shell,
+                    prompt,
+                    ps2,
+                    keymap,
+                    state,
+                    EmacsFn::SelfInsert,
+                    byte,
+                    raw,
+                )
             } else {
                 pending.clear();
                 bell();
@@ -197,22 +237,23 @@ fn handle_byte(
         }
         Resolved::Function(EmacsFn::ReverseSearchHistory) => {
             pending.clear();
-            run_incremental_search(shell, prompt, keymap, state, Direction::Backward, raw)
+            run_incremental_search(shell, prompt, ps2, keymap, state, Direction::Backward, raw)
         }
         Resolved::Function(EmacsFn::ForwardSearchHistory) => {
             pending.clear();
-            run_incremental_search(shell, prompt, keymap, state, Direction::Forward, raw)
+            run_incremental_search(shell, prompt, ps2, keymap, state, Direction::Forward, raw)
         }
         Resolved::Function(f) => {
             let trigger = *pending.last().unwrap_or(&0);
             pending.clear();
-            dispatch_function(shell, prompt, keymap, state, f, trigger, raw)
+            dispatch_function(shell, prompt, ps2, keymap, state, f, trigger, raw)
         }
         Resolved::Macro(bytes) => {
             pending.clear();
             // Feed macro bytes back through dispatch as if typed.
             for mb in bytes {
-                if let Some(res) = handle_byte(shell, prompt, keymap, state, pending, mb, raw)? {
+                if let Some(res) = handle_byte(shell, prompt, ps2, keymap, state, pending, mb, raw)?
+                {
                     return Ok(Some(res));
                 }
             }
@@ -226,9 +267,11 @@ fn handle_byte(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn dispatch_function(
     shell: &mut Shell,
     prompt: &[u8],
+    ps2: &[u8],
     keymap: &Keymap,
     state: &mut EmacsState,
     f: EmacsFn,
@@ -243,6 +286,31 @@ fn dispatch_function(
         return Ok(Some(None));
     }
     if outcome.accepted {
+        // Park the terminal cursor on the *visual end* of the
+        // buffer before the caller emits `\r\n` and hands the line
+        // to the executor. Without this, a multi-line buffer that
+        // the user accepted from the middle of (cursor on row 1 of
+        // 3, say) would let the executor's output overwrite rows
+        // 1..N of the freshly-rendered command. We use the
+        // snapshot's `(cursor_row, end_row)` to emit a single
+        // `\x1b[<N>B` to step down to the last row of the buffer;
+        // `read_line`'s post-loop `\r\n` then lands on a clean
+        // fresh row below the entire command.
+        //
+        // We rely on the snapshot because the editor never queries
+        // the terminal for absolute row positions — only relative
+        // motion is safe. When no snapshot exists (cols unknown /
+        // not a tty, first draw, just-reset anchor), there is no
+        // multi-line render to step past in the first place, so
+        // skipping the move is correct.
+        let down = state.draw_anchor.rows_below_cursor();
+        if down > 0 {
+            let mut buf = Vec::with_capacity(8);
+            buf.extend_from_slice(b"\x1b[");
+            crate::bstr::push_u64(&mut buf, down as u64);
+            buf.push(b'B');
+            write_bytes(&buf);
+        }
         let mut line = std::mem::take(&mut state.buf);
         line.push(b'\n');
         return Ok(Some(Some(line)));
@@ -266,7 +334,7 @@ fn dispatch_function(
         let (maybe_byte, _intr) = read_byte_with_signal_handler(shell, || {
             write_bytes(b"\r\n");
             anchor.reset();
-            redraw(anchor, buf_ref, cursor_now, prompt);
+            redraw(anchor, buf_ref, cursor_now, prompt, ps2);
         })?;
         if let Some(b) = maybe_byte {
             state.insert_bytes_at_cursor(&[b]);
@@ -274,14 +342,16 @@ fn dispatch_function(
     }
     if let Some(tmp_path) = outcome.edit_and_execute {
         let _ = keymap; // keymap borrowed just to keep the signature stable.
-        return run_external_editor(shell, prompt, state, &tmp_path, raw);
+        return run_external_editor(shell, prompt, ps2, state, &tmp_path, raw);
     }
     Ok(None)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_incremental_search(
     shell: &mut Shell,
     prompt: &[u8],
+    ps2: &[u8],
     keymap: &Keymap,
     state: &mut EmacsState,
     direction: Direction,
@@ -341,7 +411,13 @@ fn run_incremental_search(
                 // reflects what is on screen — drop it to force a
                 // full repaint of the prompt + buffer.
                 state.draw_anchor.reset();
-                redraw(&mut state.draw_anchor, &state.buf, state.cursor, prompt);
+                redraw(
+                    &mut state.draw_anchor,
+                    &state.buf,
+                    state.cursor,
+                    prompt,
+                    ps2,
+                );
                 let mut line = std::mem::take(&mut state.buf);
                 line.push(b'\n');
                 return Ok(Some(Some(line)));
@@ -350,7 +426,13 @@ fn run_incremental_search(
                 state.buf = saved_buf;
                 state.cursor = saved_cursor;
                 state.draw_anchor.reset();
-                redraw(&mut state.draw_anchor, &state.buf, state.cursor, prompt);
+                redraw(
+                    &mut state.draw_anchor,
+                    &state.buf,
+                    state.cursor,
+                    prompt,
+                    ps2,
+                );
                 return Ok(None);
             }
             SearchOutcome::Exit { byte: redispatch } => {
@@ -360,14 +442,33 @@ fn run_incremental_search(
                 }
                 state.undo.clear();
                 state.draw_anchor.reset();
-                redraw(&mut state.draw_anchor, &state.buf, state.cursor, prompt);
+                redraw(
+                    &mut state.draw_anchor,
+                    &state.buf,
+                    state.cursor,
+                    prompt,
+                    ps2,
+                );
                 let mut pending = Vec::new();
-                if let Some(res) =
-                    handle_byte(shell, prompt, keymap, state, &mut pending, redispatch, raw)?
-                {
+                if let Some(res) = handle_byte(
+                    shell,
+                    prompt,
+                    ps2,
+                    keymap,
+                    state,
+                    &mut pending,
+                    redispatch,
+                    raw,
+                )? {
                     return Ok(Some(res));
                 }
-                redraw(&mut state.draw_anchor, &state.buf, state.cursor, prompt);
+                redraw(
+                    &mut state.draw_anchor,
+                    &state.buf,
+                    state.cursor,
+                    prompt,
+                    ps2,
+                );
                 return Ok(None);
             }
         }
@@ -398,6 +499,7 @@ fn draw_search_prompt(search: &IncrementalSearch<'_>) {
 fn run_external_editor(
     shell: &mut Shell,
     prompt: &[u8],
+    ps2: &[u8],
     state: &mut EmacsState,
     tmp_path: &[u8],
     raw: &RawMode,
@@ -438,7 +540,13 @@ fn run_external_editor(
     // no reliable way to know which row we are on, so drop the
     // wrap-tracking anchor before painting the fresh prompt.
     state.draw_anchor.reset();
-    redraw(&mut state.draw_anchor, &state.buf, state.cursor, prompt);
+    redraw(
+        &mut state.draw_anchor,
+        &state.buf,
+        state.cursor,
+        prompt,
+        ps2,
+    );
     Ok(None)
 }
 

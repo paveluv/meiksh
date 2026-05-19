@@ -65,10 +65,18 @@ pub(crate) fn apply(
         state.kill.mark_non_kill();
     }
 
+    // Goal-column: only line-nav functions consume the previous
+    // streak's column. Any other function (`self-insert`,
+    // `forward-char`, etc.) drops the goal so the next vertical
+    // step starts fresh from the current cursor position.
+    if !is_line_nav_function(func) {
+        state.goal_column = None;
+    }
+
     match func {
         EmacsFn::SelfInsert => do_self_insert(state, trigger_byte),
-        EmacsFn::BeginningOfLine => state.cursor = 0,
-        EmacsFn::EndOfLine => state.cursor = state.buf.len(),
+        EmacsFn::BeginningOfLine => state.cursor = logical_line_start(&state.buf, state.cursor),
+        EmacsFn::EndOfLine => state.cursor = logical_line_end(&state.buf, state.cursor),
         EmacsFn::ForwardChar => {
             if state.cursor >= state.buf.len() {
                 out.bell = true;
@@ -113,10 +121,12 @@ pub(crate) fn apply(
         EmacsFn::CapitalizeWord => do_case_word(state, CaseOp::Capitalize),
         EmacsFn::QuotedInsert => out.quoted_insert = true,
         EmacsFn::Complete => do_complete(shell, state, &mut out),
-        EmacsFn::AcceptLine => {
-            state.undo.clear();
-            out.accepted = true;
-        }
+        EmacsFn::AcceptLine => do_accept_line(shell, state, &mut out),
+        EmacsFn::InsertNewline => do_insert_newline(state),
+        EmacsFn::PreviousLine => do_vertical_step(state, -1, &mut out),
+        EmacsFn::NextLine => do_vertical_step(state, 1, &mut out),
+        EmacsFn::UpLineOrHistory => do_up_line_or_history(shell, state, &mut out),
+        EmacsFn::DownLineOrHistory => do_down_line_or_history(shell, state, &mut out),
         EmacsFn::Undo => {
             if !state.undo.undo(&mut state.buf, &mut state.cursor) {
                 out.bell = true;
@@ -237,8 +247,161 @@ fn is_kill_function(f: EmacsFn) -> bool {
     )
 }
 
+fn is_line_nav_function(f: EmacsFn) -> bool {
+    matches!(
+        f,
+        EmacsFn::PreviousLine
+            | EmacsFn::NextLine
+            | EmacsFn::UpLineOrHistory
+            | EmacsFn::DownLineOrHistory
+    )
+}
+
 fn do_self_insert(state: &mut EmacsState, byte: u8) {
     state.insert_bytes_at_cursor(&[byte]);
+}
+
+/// Index of the start of the logical line containing `cursor`, i.e.
+/// the byte just past the closest preceding `\n` (or 0 if the cursor
+/// is on the first logical line). Used by line-aware `BeginningOfLine`
+/// and by the line-aware kill operations.
+pub(super) fn logical_line_start(buf: &[u8], cursor: usize) -> usize {
+    let limit = cursor.min(buf.len());
+    let mut i = limit;
+    while i > 0 && buf[i - 1] != b'\n' {
+        i -= 1;
+    }
+    i
+}
+
+/// Index of the end of the logical line containing `cursor`, i.e. the
+/// position of the next `\n` (or `buf.len()` if the cursor is on the
+/// last logical line). `EndOfLine` parks the cursor on top of the
+/// newline so that one more `EndOfLine` press does nothing and so
+/// that `KillLine` at the same position can consume the `\n` itself.
+pub(super) fn logical_line_end(buf: &[u8], cursor: usize) -> usize {
+    let mut i = cursor.min(buf.len());
+    while i < buf.len() && buf[i] != b'\n' {
+        i += 1;
+    }
+    i
+}
+
+/// Explicit newline insertion: regardless of parser state, splice a
+/// `\n` at the cursor and advance past it. This is the "I really
+/// want a newline here" escape hatch — bound to Alt-Enter / Shift-Enter
+/// — so the user can compose a multi-line command even when the
+/// already-typed prefix happens to parse to a complete command.
+fn do_insert_newline(state: &mut EmacsState) {
+    state.insert_bytes_at_cursor(b"\n");
+}
+
+/// Move the cursor vertically by `delta` logical rows (`-1` for up,
+/// `+1` for down), preserving the goal column. Rings the bell when
+/// there is no row above / below — callers that want to fall through
+/// to history recall (the arrow-key bindings) should use
+/// [`do_up_line_or_history`] / [`do_down_line_or_history`] instead.
+///
+/// The goal column is the *byte* column inside the source logical
+/// line, captured the first time a vertical step is dispatched and
+/// preserved across consecutive steps. This matches the way emacs
+/// (and most line editors) lets the user walk a column straight down
+/// through ragged rows: a short row leaves the cursor parked on the
+/// trailing `\n`, but a subsequent step back into a long row restores
+/// the original column.
+fn do_vertical_step(state: &mut EmacsState, delta: i32, out: &mut Outcome) {
+    let line_start = logical_line_start(&state.buf, state.cursor);
+    let goal = *state.goal_column.get_or_insert(state.cursor - line_start);
+
+    if delta < 0 {
+        if line_start == 0 {
+            out.bell = true;
+            return;
+        }
+        // `line_start - 1` is the `\n` separating the current row
+        // from the previous one; the previous row starts at the
+        // byte after the `\n` that precedes *that* `\n`.
+        let prev_nl = line_start - 1;
+        let prev_start = logical_line_start(&state.buf, prev_nl);
+        let row_end = prev_nl;
+        let row_len = row_end - prev_start;
+        state.cursor = prev_start + goal.min(row_len);
+    } else {
+        let row_end = logical_line_end(&state.buf, state.cursor);
+        if row_end == state.buf.len() {
+            out.bell = true;
+            return;
+        }
+        let next_start = row_end + 1;
+        let next_end = logical_line_end(&state.buf, next_start);
+        let row_len = next_end - next_start;
+        state.cursor = next_start + goal.min(row_len);
+    }
+}
+
+/// Line-aware Up-arrow: prefer in-buffer vertical navigation; only
+/// fall through to `PreviousHistory` when the cursor is already on
+/// the first logical row. The history-fallback path is the same
+/// helper used by the bare `previous-history` binding so behaviour
+/// is identical once the editor decides the arrow should mean
+/// "history".
+fn do_up_line_or_history(shell: &mut Shell, state: &mut EmacsState, out: &mut Outcome) {
+    let line_start = logical_line_start(&state.buf, state.cursor);
+    if line_start > 0 {
+        do_vertical_step(state, -1, out);
+    } else {
+        // History recall walks a separate axis; the in-row goal
+        // column would only confuse the user when they later step
+        // back inside a recalled multi-line command. Drop it.
+        state.goal_column = None;
+        do_history_step(shell, state, -1, out);
+    }
+}
+
+/// Line-aware Down-arrow; mirror of [`do_up_line_or_history`].
+fn do_down_line_or_history(shell: &mut Shell, state: &mut EmacsState, out: &mut Outcome) {
+    let row_end = logical_line_end(&state.buf, state.cursor);
+    if row_end < state.buf.len() {
+        do_vertical_step(state, 1, out);
+    } else {
+        state.goal_column = None;
+        do_history_step(shell, state, 1, out);
+    }
+}
+
+/// Smart `accept-line`: delegate the "is this command complete?"
+/// decision to the parser, the same one `repl.rs` uses to drive the
+/// PS2 continuation loop across `read_line` calls. This is what makes
+/// the editor stay POSIX-conformant — no shell-side syntax heuristics
+/// here, just `parse_with_aliases` plus the existing
+/// `Shell::input_is_incomplete` classifier.
+///
+/// When the buffer parses (or fails with a non-incomplete error, in
+/// which case it would have failed at `repl.rs` too), accept the line
+/// and let the executor surface any diagnostic. When the parser
+/// reports "incomplete input", do **not** accept: append a `\n` at the
+/// end of the buffer (the canonical end-of-logical-line sentinel
+/// inside the editor), park the cursor at the new tail, and stay in
+/// the dispatch loop — the next redraw paints the freshly-revealed
+/// continuation row with the PS2 gutter and the user can keep typing
+/// (or use line-aware navigation to edit any earlier row of the same
+/// command).
+fn do_accept_line(shell: &mut Shell, state: &mut EmacsState, out: &mut Outcome) {
+    // Probe with `buf + "\n"` so a freshly-typed Enter at the bottom
+    // of the buffer looks identical to what `repl.rs` would have
+    // submitted between read_line calls. Cursor position is
+    // irrelevant for parser completeness, so we do not branch on it.
+    let mut candidate = state.buf.clone();
+    candidate.push(b'\n');
+    if let Err(ref e) = crate::syntax::parse_with_aliases(&candidate, shell.aliases())
+        && shell.input_is_incomplete(e)
+    {
+        state.buf.push(b'\n');
+        state.cursor = state.buf.len();
+        return;
+    }
+    state.undo.clear();
+    out.accepted = true;
 }
 
 fn do_backward_delete_char(state: &mut EmacsState, out: &mut Outcome) {
@@ -275,30 +438,72 @@ fn do_delete_char(state: &mut EmacsState, out: &mut Outcome) {
     });
 }
 
+/// Kill from the cursor to the end of the *current logical line*.
+///
+/// In a single-line buffer this matches the readline behaviour. In a
+/// multi-line buffer the kill stops at the next `\n` so the user can
+/// surgically remove the tail of a single row without disturbing the
+/// rest of the command. A second `kill-line` press from the same
+/// position consumes the trailing `\n` itself, joining the next row
+/// onto the current one — this is the only way to undo an
+/// accidentally-inserted newline without resorting to backward-char +
+/// delete-char.
 fn do_kill_line(state: &mut EmacsState) {
     let at = state.cursor;
-    let killed: Vec<u8> = state.buf.drain(at..).collect();
-    if killed.is_empty() {
+    let row_end = logical_line_end(&state.buf, at);
+    if at < row_end {
+        let killed: Vec<u8> = state.buf.drain(at..row_end).collect();
+        state.undo.push(UndoEntry::Killed {
+            at,
+            bytes: killed.clone(),
+        });
+        state.kill.kill(killed, KillDirection::Forward);
         return;
     }
-    state.undo.push(UndoEntry::Killed {
-        at,
-        bytes: killed.clone(),
-    });
-    state.kill.kill(killed, KillDirection::Forward);
+    // Already parked on a `\n` (or end-of-buffer). Consume the `\n`
+    // itself if there is one; otherwise it's a true no-op and we
+    // leave the kill ring untouched.
+    if at < state.buf.len() && state.buf[at] == b'\n' {
+        let killed: Vec<u8> = state.buf.drain(at..at + 1).collect();
+        state.undo.push(UndoEntry::Killed {
+            at,
+            bytes: killed.clone(),
+        });
+        state.kill.kill(killed, KillDirection::Forward);
+    }
 }
 
+/// Kill from the cursor backward to the start of the *current logical
+/// line*. Symmetrical sibling of [`do_kill_line`]: by default it
+/// stops at the preceding `\n` instead of jumping to the very start
+/// of the buffer, and a second `unix-line-discard` press from
+/// column 0 consumes that `\n` and joins the current row onto the
+/// previous one.
 fn do_unix_line_discard(state: &mut EmacsState) {
-    if state.cursor == 0 {
+    let at = state.cursor;
+    let row_start = logical_line_start(&state.buf, at);
+    if row_start < at {
+        let killed: Vec<u8> = state.buf.drain(row_start..at).collect();
+        state.undo.push(UndoEntry::Killed {
+            at: row_start,
+            bytes: killed.clone(),
+        });
+        state.cursor = row_start;
+        state.kill.kill(killed, KillDirection::Backward);
         return;
     }
-    let killed: Vec<u8> = state.buf.drain(0..state.cursor).collect();
-    state.undo.push(UndoEntry::Killed {
-        at: 0,
-        bytes: killed.clone(),
-    });
-    state.cursor = 0;
-    state.kill.kill(killed, KillDirection::Backward);
+    if row_start > 0 {
+        // Cursor is at column 0 of a non-first row: consume the
+        // `\n` that anchors this row to the previous one.
+        let from = row_start - 1;
+        let killed: Vec<u8> = state.buf.drain(from..row_start).collect();
+        state.undo.push(UndoEntry::Killed {
+            at: from,
+            bytes: killed.clone(),
+        });
+        state.cursor = from;
+        state.kill.kill(killed, KillDirection::Backward);
+    }
 }
 
 fn do_unix_word_rubout(state: &mut EmacsState) {
@@ -1390,6 +1595,257 @@ mod tests {
     }
 
     #[test]
+    fn accept_line_on_incomplete_input_appends_newline_and_stays_in_loop() {
+        // `for i in 1 2 3` is a syntactically incomplete command —
+        // `repl.rs` would show PS2 and read the next line. In the
+        // editor we deviate from the cross-call PS2 loop: the editor
+        // appends `\n`, parks the cursor at the new tail, and stays
+        // in the dispatch loop so the user can keep typing (and
+        // navigate to any earlier row to edit). The parser is the
+        // single source of truth — no syntax heuristics in the
+        // editor itself.
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let mut state = EmacsState::new(0x7f);
+            state.buf = b"for i in 1 2 3".to_vec();
+            state.cursor = state.buf.len();
+            let out = apply(&mut shell, &mut state, EmacsFn::AcceptLine, 0x0d);
+            assert!(!out.accepted);
+            assert_eq!(state.buf, b"for i in 1 2 3\n");
+            assert_eq!(state.cursor, state.buf.len());
+        });
+    }
+
+    #[test]
+    fn accept_line_on_complete_multiline_input_accepts() {
+        // Once the user types `done` to complete the `for` loop, the
+        // whole buffer parses cleanly and `accept-line` should hand
+        // it off to the executor exactly the way a one-liner would.
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let mut state = EmacsState::new(0x7f);
+            state.buf = b"for i in 1 2 3\ndo echo $i\ndone".to_vec();
+            state.cursor = state.buf.len();
+            let out = apply(&mut shell, &mut state, EmacsFn::AcceptLine, 0x0d);
+            assert!(out.accepted);
+        });
+    }
+
+    #[test]
+    fn beginning_of_line_walks_to_preceding_newline() {
+        // In a multi-line buffer, C-a should park on the start of
+        // the *current* logical line, not the start of the entire
+        // buffer.
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let mut state = EmacsState::new(0x7f);
+            state.buf = b"foo\nbar baz\nqux".to_vec();
+            state.cursor = 9;
+            apply(&mut shell, &mut state, EmacsFn::BeginningOfLine, 0x01);
+            assert_eq!(state.cursor, 4);
+        });
+    }
+
+    #[test]
+    fn beginning_of_line_on_first_line_returns_zero() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let mut state = EmacsState::new(0x7f);
+            state.buf = b"hello\nworld".to_vec();
+            state.cursor = 3;
+            apply(&mut shell, &mut state, EmacsFn::BeginningOfLine, 0x01);
+            assert_eq!(state.cursor, 0);
+        });
+    }
+
+    #[test]
+    fn beginning_of_line_idempotent_at_start_of_logical_line() {
+        // Pressing C-a twice on a row that already starts at a `\n+1`
+        // boundary should park on that boundary, not jump further
+        // back to row 0.
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let mut state = EmacsState::new(0x7f);
+            state.buf = b"foo\nbar\nqux".to_vec();
+            state.cursor = 4;
+            apply(&mut shell, &mut state, EmacsFn::BeginningOfLine, 0x01);
+            assert_eq!(state.cursor, 4);
+        });
+    }
+
+    #[test]
+    fn end_of_line_walks_to_next_newline() {
+        // C-e parks the cursor on top of the next `\n`, not on the
+        // very end of the buffer. The position lets a follow-up
+        // KillLine consume the `\n` itself.
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let mut state = EmacsState::new(0x7f);
+            state.buf = b"foo\nbar baz\nqux".to_vec();
+            state.cursor = 5;
+            apply(&mut shell, &mut state, EmacsFn::EndOfLine, 0x05);
+            assert_eq!(state.cursor, 11);
+        });
+    }
+
+    #[test]
+    fn end_of_line_on_last_line_goes_to_buffer_end() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let mut state = EmacsState::new(0x7f);
+            state.buf = b"foo\nbar".to_vec();
+            state.cursor = 4;
+            apply(&mut shell, &mut state, EmacsFn::EndOfLine, 0x05);
+            assert_eq!(state.cursor, state.buf.len());
+        });
+    }
+
+    #[test]
+    fn end_of_line_at_newline_position_is_idempotent() {
+        // The "park on the `\n`" convention means a second C-e is a
+        // no-op rather than skipping over the newline into the next
+        // logical line.
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let mut state = EmacsState::new(0x7f);
+            state.buf = b"foo\nbar".to_vec();
+            state.cursor = 3;
+            apply(&mut shell, &mut state, EmacsFn::EndOfLine, 0x05);
+            assert_eq!(state.cursor, 3);
+        });
+    }
+
+    #[test]
+    fn insert_newline_splices_byte_at_cursor() {
+        // Alt-Enter / Shift-Enter always insert a literal `\n` at
+        // the cursor, regardless of where it is in the buffer.
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let mut state = EmacsState::new(0x7f);
+            state.buf = b"echo foo bar".to_vec();
+            state.cursor = 8;
+            apply(&mut shell, &mut state, EmacsFn::InsertNewline, 0x0d);
+            assert_eq!(state.buf, b"echo foo\n bar");
+            assert_eq!(state.cursor, 9);
+        });
+    }
+
+    #[test]
+    fn previous_line_walks_up_with_goal_column() {
+        // Goal column is captured on the first vertical step and
+        // preserved across consecutive steps. Walking from row 2 col
+        // 4 up to row 1 (which is 4 bytes long) lands at col 4 of
+        // row 1, i.e. on top of the `\n` separating rows 1 and 2.
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let mut state = EmacsState::new(0x7f);
+            state.buf = b"first\nabcd\nthird row".to_vec();
+            // cursor on "third row" at byte 14 → col 3.
+            state.cursor = 14;
+            apply(&mut shell, &mut state, EmacsFn::PreviousLine, 0);
+            assert_eq!(state.cursor, 9);
+        });
+    }
+
+    #[test]
+    fn previous_line_on_top_row_rings_bell_and_keeps_cursor() {
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let mut state = EmacsState::new(0x7f);
+            state.buf = b"only row".to_vec();
+            state.cursor = 3;
+            let out = apply(&mut shell, &mut state, EmacsFn::PreviousLine, 0);
+            assert!(out.bell);
+            assert_eq!(state.cursor, 3);
+        });
+    }
+
+    #[test]
+    fn previous_line_then_next_line_returns_to_goal_column() {
+        // Walking up across a ragged row and back down should land
+        // on the original column, not on the trailing `\n` we passed
+        // through when the goal exceeded the middle row's length.
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let mut state = EmacsState::new(0x7f);
+            state.buf = b"longest row\nshort\nthird row".to_vec();
+            // Start on the third row at col 8.
+            state.cursor = 18 + 8;
+            apply(&mut shell, &mut state, EmacsFn::PreviousLine, 0);
+            // Short row has 5 chars; cursor parks on the `\n`.
+            assert_eq!(state.cursor, 17);
+            apply(&mut shell, &mut state, EmacsFn::NextLine, 0);
+            // Back to col 8 on the third row.
+            assert_eq!(state.cursor, 18 + 8);
+        });
+    }
+
+    #[test]
+    fn non_line_nav_function_resets_goal_column() {
+        // Any function that isn't itself a line-nav clears the goal
+        // column so the next vertical step starts a fresh streak.
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let mut state = EmacsState::new(0x7f);
+            state.buf = b"row one\nrow two".to_vec();
+            state.cursor = 11;
+            apply(&mut shell, &mut state, EmacsFn::PreviousLine, 0);
+            assert!(state.goal_column.is_some());
+            apply(&mut shell, &mut state, EmacsFn::ForwardChar, 0);
+            assert!(state.goal_column.is_none());
+        });
+    }
+
+    #[test]
+    fn up_line_or_history_falls_through_to_history_on_first_row() {
+        // On the first logical row, Up should walk history. With an
+        // empty history this should ring the bell and leave the
+        // buffer alone — verifying we *did* delegate to the history
+        // step rather than silently no-op.
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let mut state = EmacsState::new(0x7f);
+            state.buf = b"hello".to_vec();
+            state.cursor = 3;
+            let out = apply(&mut shell, &mut state, EmacsFn::UpLineOrHistory, 0);
+            assert!(out.bell);
+            assert_eq!(state.buf, b"hello");
+            assert_eq!(state.cursor, 3);
+        });
+    }
+
+    #[test]
+    fn down_line_or_history_steps_through_buffer_then_history() {
+        // On a multi-row buffer, Down should move in-buffer first.
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let mut state = EmacsState::new(0x7f);
+            state.buf = b"first\nsecond".to_vec();
+            state.cursor = 2;
+            apply(&mut shell, &mut state, EmacsFn::DownLineOrHistory, 0);
+            assert_eq!(state.cursor, 6 + 2);
+        });
+    }
+
+    #[test]
+    fn accept_line_on_genuine_parse_error_still_accepts() {
+        // `echo (broken` is a genuine syntax error, not an incomplete
+        // input. We accept and let the executor surface the
+        // diagnostic — consistent with `repl.rs`, which submits any
+        // non-incomplete error case to the executor and lets it
+        // print the parse error. The alternative (silently inserting
+        // a newline forever on a doomed parse) would trap the user.
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let mut state = EmacsState::new(0x7f);
+            state.buf = b"echo (broken".to_vec();
+            state.cursor = state.buf.len();
+            let out = apply(&mut shell, &mut state, EmacsFn::AcceptLine, 0x0d);
+            assert!(out.accepted);
+        });
+    }
+
+    #[test]
     fn abort_without_composite_rings_bell() {
         // Per spec § 5.9, C-g (`abort`) outside of a composite action
         // (incremental search, `quoted-insert`) rings the bell and
@@ -1481,6 +1937,73 @@ mod tests {
     }
 
     // --- empty-buffer bell / no-op early returns ---------------------
+
+    #[test]
+    fn kill_line_in_multiline_buffer_stops_at_next_newline() {
+        // C-k on a middle row should only erase the tail of the
+        // current logical line — the `\n` and everything after stay
+        // intact so the user can recover the kill with a single yank.
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let mut state = EmacsState::new(0x7f);
+            state.buf = b"foo\nbar baz\nqux".to_vec();
+            state.cursor = 4;
+            apply(&mut shell, &mut state, EmacsFn::KillLine, 0x0b);
+            assert_eq!(state.buf, b"foo\n\nqux");
+            assert_eq!(state.kill.as_slice(), b"bar baz");
+        });
+    }
+
+    #[test]
+    fn kill_line_at_newline_consumes_the_newline_and_joins_rows() {
+        // A second C-k from the same column — now parked on a `\n` —
+        // eats the newline so the next row folds onto the current
+        // one. This is the only emacs primitive that removes the
+        // newline forward; without it the user would have to switch
+        // to delete-char.
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let mut state = EmacsState::new(0x7f);
+            state.buf = b"foo\nbar".to_vec();
+            state.cursor = 3;
+            apply(&mut shell, &mut state, EmacsFn::KillLine, 0x0b);
+            assert_eq!(state.buf, b"foobar");
+            assert_eq!(state.cursor, 3);
+            assert_eq!(state.kill.as_slice(), b"\n");
+        });
+    }
+
+    #[test]
+    fn unix_line_discard_in_multiline_buffer_stops_at_preceding_newline() {
+        // C-u on a middle row only chews back to the start of the
+        // current logical line. The preceding row is left alone.
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let mut state = EmacsState::new(0x7f);
+            state.buf = b"foo\nbar baz\nqux".to_vec();
+            state.cursor = 8;
+            apply(&mut shell, &mut state, EmacsFn::UnixLineDiscard, 0x15);
+            assert_eq!(state.buf, b"foo\nbaz\nqux");
+            assert_eq!(state.cursor, 4);
+            assert_eq!(state.kill.as_slice(), b"bar ");
+        });
+    }
+
+    #[test]
+    fn unix_line_discard_at_column_zero_consumes_newline_above() {
+        // From column 0 of a non-first row, C-u joins the current
+        // row onto the previous one by killing just the `\n` above.
+        assert_no_syscalls(|| {
+            let mut shell = test_shell();
+            let mut state = EmacsState::new(0x7f);
+            state.buf = b"foo\nbar".to_vec();
+            state.cursor = 4;
+            apply(&mut shell, &mut state, EmacsFn::UnixLineDiscard, 0x15);
+            assert_eq!(state.buf, b"foobar");
+            assert_eq!(state.cursor, 3);
+            assert_eq!(state.kill.as_slice(), b"\n");
+        });
+    }
 
     #[test]
     fn kill_line_at_eol_is_noop_without_undo_entry() {

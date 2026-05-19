@@ -512,11 +512,16 @@ impl<'a> Parser<'a> {
                 self.set_command_position();
                 self.skip_separators_t()?;
                 let body = self.parse_program_until(|_| false, true, false)?;
-                if body.items.is_empty() {
-                    return Err(self.error(b"expected command list in brace group"));
-                }
+                // Check the closer *before* the empty-body check so
+                // that an in-flight typing scenario (`{<RET>`) hits
+                // the `expected '}'` classifier (incomplete input)
+                // and only a literally-empty body (`{ }`) trips the
+                // genuine syntax error.
                 if !matches!(self.peek_token()?, Token::RBrace) {
                     return Err(self.error(b"expected '}'"));
+                }
+                if body.items.is_empty() {
+                    return Err(self.error(b"expected command list in brace group"));
                 }
                 self.advance_token();
                 self.set_command_position();
@@ -526,11 +531,11 @@ impl<'a> Parser<'a> {
             Token::LParen => {
                 self.advance_token();
                 let body = self.parse_program_until(|_| false, true, false)?;
-                if body.items.is_empty() {
-                    return Err(self.error(b"expected command list in subshell"));
-                }
                 if !matches!(self.peek_token()?, Token::RParen) {
                     return Err(self.error(b"expected ')' to close subshell"));
+                }
+                if body.items.is_empty() {
+                    return Err(self.error(b"expected command list in subshell"));
                 }
                 self.advance_token();
                 Ok(Command::Subshell(body))
@@ -827,6 +832,18 @@ impl<'a> Parser<'a> {
     fn parse_if_command(&mut self) -> Result<Command, ParseError> {
         let condition = self.parse_program_until(|tok| matches!(tok, Token::Then), false, false)?;
         if condition.items.is_empty() {
+            // Disambiguate "ran out of input mid-construct" from
+            // "saw the closer with an empty body". The former is an
+            // *incomplete*-input signal that the interactive editor
+            // / REPL turns into a PS2 continuation; the latter is a
+            // genuine POSIX § 2.10 grammar violation that must
+            // surface as a syntax error. We use the closing-keyword
+            // error message ("expected 'then'") for the former so
+            // `stdin_parse_error_requires_more_input` can pick it
+            // up via the keyword family it already handles.
+            if !matches!(self.peek_token()?, Token::Then) {
+                return Err(self.error(b"expected 'then'"));
+            }
             return Err(self.error(b"expected command list after 'if'"));
         }
         self.eat_keyword(Token::Then, b"then")?;
@@ -836,6 +853,9 @@ impl<'a> Parser<'a> {
         }
         let then_branch = self.parse_program_until(at_elif_else_fi, false, false)?;
         if then_branch.items.is_empty() {
+            if !at_elif_else_fi(self.peek_token()?) {
+                return Err(self.error(b"expected 'fi'"));
+            }
             return Err(self.error(b"expected command list after 'then'"));
         }
         let mut elif_branches = Vec::new();
@@ -847,11 +867,17 @@ impl<'a> Parser<'a> {
             self.skip_separators_t()?;
             let cond = self.parse_program_until(|tok| matches!(tok, Token::Then), false, false)?;
             if cond.items.is_empty() {
+                if !matches!(self.peek_token()?, Token::Then) {
+                    return Err(self.error(b"expected 'then'"));
+                }
                 return Err(self.error(b"expected command list after 'elif'"));
             }
             self.eat_keyword(Token::Then, b"then")?;
             let body = self.parse_program_until(at_elif_else_fi, false, false)?;
             if body.items.is_empty() {
+                if !at_elif_else_fi(self.peek_token()?) {
+                    return Err(self.error(b"expected 'fi'"));
+                }
                 return Err(self.error(b"expected command list after 'then'"));
             }
             elif_branches.push(ElifBranch {
@@ -867,6 +893,9 @@ impl<'a> Parser<'a> {
             self.skip_separators_t()?;
             let body = self.parse_program_until(|tok| matches!(tok, Token::Fi), false, false)?;
             if body.items.is_empty() {
+                if !matches!(self.peek_token()?, Token::Fi) {
+                    return Err(self.error(b"expected 'fi'"));
+                }
                 return Err(self.error(b"expected command list after 'else'"));
             }
             Some(body)
@@ -890,6 +919,9 @@ impl<'a> Parser<'a> {
         };
         let condition = self.parse_program_until(|tok| matches!(tok, Token::Do), false, false)?;
         if condition.items.is_empty() {
+            if !matches!(self.peek_token()?, Token::Do) {
+                return Err(self.error(b"expected 'do'"));
+            }
             let mut msg = Vec::with_capacity(30 + keyword.len());
             msg.extend_from_slice(b"expected command list after '");
             msg.extend_from_slice(keyword);
@@ -899,6 +931,9 @@ impl<'a> Parser<'a> {
         self.eat_keyword(Token::Do, b"do")?;
         let body = self.parse_program_until(|tok| matches!(tok, Token::Done), false, false)?;
         if body.items.is_empty() {
+            if !matches!(self.peek_token()?, Token::Done) {
+                return Err(self.error(b"expected 'done'"));
+            }
             return Err(self.error(b"expected command list in do group"));
         }
         self.eat_keyword(Token::Done, b"done")?;
@@ -944,6 +979,13 @@ impl<'a> Parser<'a> {
         self.eat_keyword(Token::Do, b"do")?;
         let body = self.parse_program_until(|tok| matches!(tok, Token::Done), false, false)?;
         if body.items.is_empty() {
+            // EOF before `done` → incomplete (let the interactive
+            // editor keep prompting via the existing `expected
+            // 'done'` classifier). Body empty with `done` actually
+            // present → genuine empty-do-group syntax error.
+            if !matches!(self.peek_token()?, Token::Done) {
+                return Err(self.error(b"expected 'done'"));
+            }
             return Err(self.error(b"expected command list in do group"));
         }
         self.eat_keyword(Token::Done, b"done")?;
@@ -1462,6 +1504,7 @@ mod tests {
             &*super::super::ParseError {
                 message: Box::from(&b"x"[..]),
                 line: None,
+                at_eof: false,
             }
             .message,
             b"x"

@@ -48,6 +48,14 @@ pub(crate) struct EmacsState {
     /// across redraws so wrap-aware repaint can wipe stale lines
     /// above; see [`crate::interactive::editor::redraw`].
     pub(super) draw_anchor: DrawAnchor,
+    /// Goal column for vertical line navigation. Set by the first
+    /// `previous-line` / `next-line` (or `up-line-or-history` /
+    /// `down-line-or-history`) in a streak, cleared by any other
+    /// function. This is the byte column relative to the start of
+    /// the current logical line, so multi-byte characters move the
+    /// cursor by the right number of bytes when the target row is
+    /// shorter.
+    pub(super) goal_column: Option<usize>,
 }
 
 impl EmacsState {
@@ -66,6 +74,7 @@ impl EmacsState {
             accepted: false,
             eof: false,
             draw_anchor: DrawAnchor::new(),
+            goal_column: None,
         }
     }
 

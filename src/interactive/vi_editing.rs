@@ -1,3 +1,24 @@
+//! Vi editing mode.
+//!
+//! Multi-line caveat: vi mode is single-line today. Every `redraw`
+//! call below passes `b""` as the `ps2` argument, which collapses
+//! the multi-line walker in `editor::redraw` into its single-line
+//! degenerate form. Multi-line input in vi mode still works via the
+//! REPL's cross-`read_line` PS2 loop (`src/interactive/repl.rs`),
+//! identical to how bash readline handles continuation prompts.
+//!
+//! Bringing vi mode to parity with emacs (Sections 5.10–5.12 of
+//! `docs/features/emacs-editing-mode.md`) is explicit future work,
+//! tracked by § 5.12.1 of that document. The work shall:
+//!
+//! 1. Adopt the parser-delegated smart-accept-line model
+//!    (`shell.input_is_incomplete(parse_with_aliases(buf + "\n",
+//!    aliases))`).
+//! 2. Plumb a real PS2 byte slice into every `redraw` call below.
+//! 3. Scope `dd` / `cc` / `D` / `C` / `0` / `^` / `$` / line motions
+//!    to the current logical line.
+//! 4. Bind a vi-mode equivalent of `insert-newline`.
+
 use crate::bstr::{self, ByteWriter};
 use crate::shell::state::Shell;
 use crate::sys;
@@ -1181,7 +1202,7 @@ pub(super) fn read_line(
         let (maybe_byte, _intr) = read_byte_with_signal_handler(shell, || {
             write_bytes(b"\r\n");
             anchor.reset();
-            redraw(anchor, line_ref, cursor_now, prompt);
+            redraw(anchor, line_ref, cursor_now, prompt, b"");
         })?;
         let byte = match maybe_byte {
             Some(b) => b,
@@ -1198,7 +1219,13 @@ pub(super) fn read_line(
         for action in actions {
             match action {
                 ViAction::Redraw => {
-                    redraw(&mut state.draw_anchor, &state.line, state.cursor, prompt);
+                    redraw(
+                        &mut state.draw_anchor,
+                        &state.line,
+                        state.cursor,
+                        prompt,
+                        b"",
+                    );
                 }
                 ViAction::Bell => {
                     bell();
@@ -1262,7 +1289,13 @@ pub(super) fn read_line(
                     // External editor scrolled the screen; throw
                     // away the wrap anchor before repainting.
                     state.draw_anchor.reset();
-                    redraw(&mut state.draw_anchor, &state.line, state.cursor, prompt);
+                    redraw(
+                        &mut state.draw_anchor,
+                        &state.line,
+                        state.cursor,
+                        prompt,
+                        b"",
+                    );
                 }
                 ViAction::NeedSearchByte
                 | ViAction::NeedFindTarget

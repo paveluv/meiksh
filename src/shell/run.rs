@@ -866,6 +866,35 @@ pub(super) fn executable_regular_file(path: &[u8]) -> bool {
 }
 
 pub(super) fn stdin_parse_error_requires_more_input(error: &syntax::ParseError) -> bool {
+    // Classification is two-stage:
+    //
+    //   1. The error must have fired at end-of-input (`at_eof`).
+    //      The parser sets this when `peek_token()` returns
+    //      `Token::Eof` or when the tokenizer ran off the end of
+    //      the buffer mid-token. Errors emitted with more tokens
+    //      still available cannot become valid by typing more
+    //      bytes — the parser already has something concrete it
+    //      objects to. Example: `for do i in 1 2 3` reports
+    //      `expected 'do'` while still pointing at the `i` Word,
+    //      so `at_eof` is false and the editor surfaces the
+    //      diagnostic rather than prompting for continuation.
+    //
+    //   2. The message must come from the set the parser emits
+    //      in EOF-recoverable positions. We deliberately exclude
+    //      messages like `expected command list in do group`,
+    //      which the parser only emits once `done` is actually
+    //      seen with an empty body — those are real syntax
+    //      errors regardless of input position.
+    //
+    // See `parse_if_command`, `parse_loop_command`,
+    // `parse_for_command`, and the `LBrace` / `LParen` arms in
+    // `parse_simple_or_compound` for how the parser cooperates by
+    // emitting the closer-missing form (`expected 'done'` /
+    // `expected '}'` / ...) when EOF was reached *before* the
+    // construct's terminating keyword/token.
+    if !error.at_eof {
+        return false;
+    }
     matches!(
         &*error.message,
         b"unterminated single quote"
@@ -873,14 +902,11 @@ pub(super) fn stdin_parse_error_requires_more_input(error: &syntax::ParseError) 
             | b"unterminated here-document"
             | b"expected command"
             | b"expected for loop variable name"
-            | b"expected for loop word list"
             | b"expected case word"
             | b"expected 'in'"
             | b"expected case pattern"
             | b"expected ';;' or 'esac'"
             | b"expected redirection target"
-            | b"missing here-document body"
-            | b"unexpected end of tokens"
             | b"expected 'then'"
             | b"expected 'fi'"
             | b"expected 'do'"
@@ -1170,18 +1196,80 @@ mod tests {
     #[test]
     fn stdin_parse_error_requires_more_input_for_open_constructs() {
         assert_no_syscalls(|| {
+            // Inputs that *could* become valid POSIX § 2.10 commands
+            // if the user types more bytes — the interactive editor
+            // and the REPL must treat these as "needs more input".
             for source in [
                 &b"if true\n"[..],
                 b"for item in a b\n",
                 b"cat <<EOF\nhello\n",
                 b"echo \"unterminated",
                 b"printf ok |\n",
+                // Compound constructs whose body the user hasn't
+                // typed yet. The parser reports the closer-missing
+                // form ("expected 'done'", "expected 'fi'",
+                // "expected '}'", ...) for these — which is already
+                // in the more-input set. Regression test for the
+                // user-reported `for i in 1 2 3<RET>do<RET>` bug.
+                b"if true; then a; elif true\n",
+                b"if true; then a; else\n",
+                b"if true; then\n",
+                b"while true\n",
+                b"until true\n",
+                b"while true; do\n",
+                b"until true; do\n",
+                b"for i in 1 2 3; do\n",
+                b"{\n",
+                b"(\n",
             ] {
                 let error = syntax::parse(source).expect_err("incomplete parse");
                 assert!(
                     stdin_parse_error_requires_more_input(&error),
-                    "expected more input for: {:?}",
+                    "expected more input for: {:?} (got error: {:?})",
                     source,
+                    std::str::from_utf8(&error.message).unwrap_or("<non-utf8>"),
+                );
+            }
+
+            // Inputs that are *genuinely* invalid per POSIX § 2.10
+            // — the closer was seen with an empty body, which can
+            // never become valid no matter what is typed next.
+            // These must NOT be classified as "needs more input";
+            // the executor surfaces a syntax-error diagnostic and
+            // the prompt returns. Matches bash interactive
+            // behaviour for the same constructs.
+            //
+            // The `for do i in 1 2 3\n` case (and similar
+            // mid-token-stream `expected 'X'` reports) is
+            // specifically guarded against: the parser reports
+            // `expected 'do'` while still pointing at the word
+            // `i`, so `at_eof` is false and the message-based
+            // classifier alone — which would otherwise flag this
+            // as incomplete — does the right thing only because
+            // the EOF check rejects it first. Regression test for
+            // the user-reported "`for do i in 1 2 3` triggers
+            // continuation" bug.
+            for source in [
+                &b"if then a; fi\n"[..],
+                b"if true; then fi\n",
+                b"if true; then a; elif then b; fi\n",
+                b"if true; then a; elif true; then fi\n",
+                b"if true; then a; else fi\n",
+                b"while do a; done\n",
+                b"until do a; done\n",
+                b"while true; do done\n",
+                b"until true; do done\n",
+                b"for i in 1 2 3; do done\n",
+                b"{ }\n",
+                b"( )\n",
+                b"for do i in 1 2 3\n",
+            ] {
+                let error = syntax::parse(source).expect_err("empty-body genuine error");
+                assert!(
+                    !stdin_parse_error_requires_more_input(&error),
+                    "expected GENUINE error for: {:?} (got error: {:?})",
+                    source,
+                    std::str::from_utf8(&error.message).unwrap_or("<non-utf8>"),
                 );
             }
 

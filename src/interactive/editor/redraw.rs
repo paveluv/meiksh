@@ -5,36 +5,67 @@
 //! correct column widths in the prompt.
 //!
 //! The [`redraw`] helper intentionally writes to `stdout` (buffer
-//! bytes) and `stderr` (prompt). Keeping the prompt on `stderr`
-//! matches the legacy vi-editor contract so pipelines that capture
-//! `stdout` don't end up with the prompt interleaved.
+//! bytes plus literal `\n`) and `stderr` (prompts: PS1 once at the
+//! top, PS2 on every continuation row introduced by an embedded
+//! `\n`). Keeping prompts on `stderr` matches the legacy vi-editor
+//! contract so pipelines that capture `stdout` don't end up with the
+//! prompt interleaved.
+//!
+//! # Multi-line buffers
+//!
+//! The buffer is a flat `Vec<u8>` that may contain embedded `\n`
+//! bytes — they arrive via bracketed paste, via `insert-newline`
+//! (`Alt-Enter` / `Shift-Enter`), or via the parser-driven
+//! auto-continuation that `accept-line` performs when the buffer is
+//! syntactically incomplete. The walker treats `\n` as a hard row
+//! break: it advances the cursor to column `ps2_w` of the next row,
+//! and the renderer correspondingly writes the literal `\n` to
+//! stdout (the tty's OPOST + ONLCR turns it into `\r\n`) followed by
+//! the expanded PS2 bytes to stderr. The end effect is that a
+//! buffer like `b"for i in 1 2 3\n  echo $i\ndone"` renders as
+//!
+//! ```text
+//! $ for i in 1 2 3
+//! >   echo $i
+//! > done
+//! ```
+//!
+//! identical to the cross-call PS2 continuation that
+//! [`crate::interactive::repl::run_loop`] performs when the parser
+//! reports incomplete input across `read_line` invocations.
 //!
 //! # Incremental redraw model
 //!
 //! Each in-progress edit owns a [`DrawAnchor`] that, after the first
 //! draw, stores a [`Snapshot`] of the previously-rendered buffer:
-//! the bytes painted, the prompt that was used, the terminal width
-//! at the time, and the visual `(row, col)` the cursor was left on.
+//! the bytes painted, the prompts (PS1 and PS2) that were used, the
+//! terminal width at the time, and the visual `(row, col)` the
+//! cursor was left on plus the `(end_row, end_col)` the buffer
+//! occupied.
 //!
 //! The next call to [`redraw`] / [`redraw_sequence`] takes one of two
 //! paths:
 //!
-//! - **Full repaint** (the legacy wrap-aware path). Used on the first
-//!   draw, after an explicit [`DrawAnchor::reset`], when the prompt or
-//!   terminal width have changed, or when the terminal width is
-//!   unknown (e.g. stdout is not a tty — this is what tests exercise).
-//!   Emits `\x1b[<N>A` to climb to the prompt's first row (if needed),
-//!   `\r\x1b[J` to wipe everything from there down, writes the prompt
-//!   to stderr, writes the buffer to stdout, and positions the cursor
-//!   on the logical cursor cell with relative motion.
-//! - **Incremental** (readline-style). Used when a snapshot exists and
-//!   nothing structural has changed. Computes the first byte where
-//!   the new buffer diverges from the snapshot, moves the cursor from
-//!   the previous position to the visual position of that byte, writes
-//!   only the new tail, clears any leftover bytes from the shrunken
-//!   old tail with `\x1b[K` / `\x1b[J`, and re-positions the cursor on
-//!   the logical cursor cell. The prompt is *never* repainted on this
-//!   path, which is what makes single-keystroke edits flicker-free.
+//! - **Full repaint** (the wrap-aware path). Used on the first draw,
+//!   after an explicit [`DrawAnchor::reset`], when the PS1 or PS2
+//!   bytes or terminal width have changed, or when the terminal
+//!   width is unknown (e.g. stdout is not a tty — this is what
+//!   tests exercise). Emits `\x1b[<N>A` to climb to the prompt's
+//!   first row (if needed), `\r\x1b[J` to wipe everything from there
+//!   down, writes the prompt to stderr, then walks the buffer
+//!   emitting bytes to stdout and PS2 to stderr at every embedded
+//!   `\n`, and finally positions the cursor on the logical cursor
+//!   cell with relative motion.
+//! - **Incremental** (readline-style). Used when a snapshot exists
+//!   and nothing structural has changed. Computes the first byte
+//!   where the new buffer diverges from the snapshot, moves the
+//!   cursor from the previous position to the visual position of
+//!   that byte, writes only the new tail (with PS2 emissions at
+//!   each embedded `\n`), clears any leftover bytes from the
+//!   shrunken old tail with `\x1b[K` / `\x1b[J`, and re-positions
+//!   the cursor on the logical cursor cell. PS1 is *never*
+//!   repainted on this path, which is what makes single-keystroke
+//!   edits flicker-free.
 //!
 //! The implementation deliberately uses *relative* moves
 //! (`\x1b[<N>A`/`B`/`C`/`D` plus `\r` for the final col-0 normalize)
@@ -52,6 +83,10 @@ use super::input::write_bytes;
 /// locale's `wcwidth` mapping. Invalid sequences count one column each,
 /// matching POSIX terminal behavior where stray bytes render as a
 /// single cell.
+///
+/// This is a *per-character width* helper. It is **not** a screen
+/// position — `\n` is reported as zero width here. Callers that need
+/// the on-screen `(row, col)` of a buffer prefix must use [`walk`].
 pub(crate) fn display_width(line: &[u8]) -> usize {
     let mut w = 0;
     let mut i = 0;
@@ -204,6 +239,84 @@ pub(crate) fn prompt_visible_width(prompt: &[u8]) -> usize {
     w
 }
 
+/// A position on the rendered screen, expressed as `(row, col)` where
+/// `row = 0` is the row that received PS1.
+///
+/// `col` is in `0..=cols`. The boundary value `col == cols` represents
+/// the **pending-wrap** state: the previous character filled the
+/// rightmost cell of `row`, the terminal cursor visually sits at
+/// `(row, cols - 1)`, and the very next emitted byte will commit the
+/// wrap and land at `(row + 1, 0)`. See [`normalize`] for converting
+/// a pending-wrap position to the row/col where the *next* byte will
+/// land.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct ScreenPos {
+    pub(crate) row: usize,
+    pub(crate) col: usize,
+}
+
+/// Walk `line[..up_to]` and return the screen position after rendering
+/// it, assuming PS1 occupies `ps1_w` cells on row 0 and PS2 occupies
+/// `ps2_w` cells at the start of every row introduced by an embedded
+/// `\n`. Terminal-width wraps (chars overflowing `cols`) restart at
+/// column 0 — terminals don't reserve a per-row gutter for wrap, only
+/// for our explicit `\n + PS2` emissions.
+///
+/// `cols == 0` disables wrap entirely (used by the test-mode path
+/// that doesn't know the terminal width).
+pub(crate) fn walk(
+    line: &[u8],
+    up_to: usize,
+    ps1_w: usize,
+    ps2_w: usize,
+    cols: usize,
+) -> ScreenPos {
+    let mut row = 0usize;
+    let mut col = ps1_w;
+    let limit = up_to.min(line.len());
+    let mut i = 0usize;
+    while i < limit {
+        // Commit a pending wrap from the previous iteration before
+        // we read the next byte, so a pending wrap directly followed
+        // by `\n` still lands the `\n` cleanly on the next row.
+        if cols > 0 && col >= cols {
+            row += 1;
+            col = 0;
+        }
+        if line[i] == b'\n' {
+            row += 1;
+            col = ps2_w;
+            i += 1;
+            continue;
+        }
+        let (wc, len) = sys::locale::decode_char(&line[i..]);
+        let step = if len == 0 { 1 } else { len };
+        let w = sys::locale::char_width(wc);
+        if cols > 0 && col + w > cols {
+            row += 1;
+            col = 0;
+        }
+        col += w;
+        i += step;
+    }
+    ScreenPos { row, col }
+}
+
+/// Convert a [`ScreenPos`] returned by [`walk`] from its raw form
+/// (`col` may equal `cols` to indicate pending-wrap) to the logical
+/// "where will the next byte land?" form (`col < cols`, always).
+/// Used when computing the *target* cursor cell.
+fn normalize(pos: ScreenPos, cols: usize) -> ScreenPos {
+    if cols > 0 && pos.col >= cols {
+        ScreenPos {
+            row: pos.row + 1,
+            col: 0,
+        }
+    } else {
+        pos
+    }
+}
+
 /// Memo of the previous redraw's state. Kept inside [`DrawAnchor`] so
 /// the next call can decide between a full repaint and an
 /// incremental update.
@@ -211,27 +324,32 @@ pub(crate) fn prompt_visible_width(prompt: &[u8]) -> usize {
 struct Snapshot {
     /// Buffer bytes painted by the previous redraw.
     line: Vec<u8>,
-    /// Prompt bytes painted by the previous redraw. A prompt change
-    /// between calls forces a full repaint (the visible width may
-    /// differ even when the trailing characters look identical).
+    /// PS1 bytes painted by the previous redraw. A change between
+    /// calls forces a full repaint (the visible width may differ
+    /// even when the trailing characters look identical).
     prompt: Vec<u8>,
+    /// PS2 bytes used as the continuation gutter by the previous
+    /// redraw. A change forces a full repaint for the same reason.
+    ps2: Vec<u8>,
     /// Terminal width in cells at the time of the previous redraw.
     /// A `cols` change between calls (SIGWINCH, or a transition into
     /// or out of test mode where `cols` is unknown) forces a full
     /// repaint.
     cols: usize,
-    /// Row offset (from the prompt's first row) where the cursor was
-    /// left after the previous redraw's final repositioning. Always
-    /// normalized via `\r` + relative moves, so this is a reliable
-    /// origin for the next incremental update.
+    /// Logical row offset (from the prompt's first row) where the
+    /// cursor was left after the previous redraw's final
+    /// repositioning. Always normalized via `\r` + relative moves
+    /// plus an explicit commit of any pending wrap, so this is a
+    /// reliable origin for the next incremental update.
     cursor_row: usize,
     /// Column where the cursor was left after the previous redraw.
     cursor_col: usize,
-    /// `prompt_visible_width + display_width(line)` at the time of
-    /// the previous redraw. Used to detect shrinkage on the next
-    /// call (so we can wipe the leftover old tail with `\x1b[K` /
-    /// `\x1b[J`).
-    end_global: usize,
+    /// Position of the *end* of the previously-rendered content
+    /// (i.e. what [`walk`] returns for `up_to = line.len()`). Stored
+    /// in raw form so a `col == cols` pending-wrap end is
+    /// distinguishable from a real `(end_row + 1, 0)` end.
+    end_row: usize,
+    end_col: usize,
 }
 
 /// Per-edit-session redraw state. Carries the snapshot used by
@@ -248,6 +366,26 @@ pub(crate) struct DrawAnchor {
     /// the terminal width is unknown — the incremental path requires
     /// a known `cols` to compute visual positions.
     prev: Option<Snapshot>,
+}
+
+impl DrawAnchor {
+    /// Number of terminal rows between where the cursor was left
+    /// after the previous redraw and the visual end of the buffer
+    /// painted by that same redraw. Returns 0 when there is no prior
+    /// snapshot (cols unknown, first draw, just-reset anchor) or when
+    /// the cursor was already on the final row, so callers can
+    /// unconditionally do `if rows > 0 { emit ESC[<rows>B }`.
+    ///
+    /// Used by the accept-line path to step the terminal cursor past
+    /// any rows of an accepted multi-line buffer before handing the
+    /// line to the executor, so command output appears below the
+    /// entire input rather than overwriting trailing rows.
+    pub(crate) fn rows_below_cursor(&self) -> usize {
+        self.prev
+            .as_ref()
+            .map(|s| s.end_row.saturating_sub(s.cursor_row))
+            .unwrap_or(0)
+    }
 }
 
 impl DrawAnchor {
@@ -292,43 +430,6 @@ fn first_diff_byte(old: &[u8], new: &[u8]) -> usize {
     i
 }
 
-/// Visual position of the byte at `byte_idx` inside `line`, assuming
-/// the prompt occupies `prompt_w` cells on row 0. Returns
-/// `(row, col, global)` where `global = row * cols + col`.
-///
-/// Note: this is the **logical** position. If `global` is a non-zero
-/// multiple of `cols`, the corresponding character lives on the
-/// *next* row at column 0 — which is what we want when positioning
-/// the terminal cursor before writing the new tail.
-fn position_for_byte(
-    line: &[u8],
-    byte_idx: usize,
-    prompt_w: usize,
-    cols: usize,
-) -> (usize, usize, usize) {
-    debug_assert!(cols > 0);
-    let visual_w = display_width(&line[..byte_idx.min(line.len())]);
-    let global = prompt_w + visual_w;
-    (global / cols, global % cols, global)
-}
-
-/// Row the cursor sits on right after writing content totalling
-/// `end_global` cells. Honours the "pending wrap" convention used by
-/// the full-repaint path: when content ends *exactly* at a column
-/// boundary, the cursor visually stays at the right edge of the
-/// previous row until the next byte arrives, and a subsequent `\r`
-/// commits to column 0 of that same row.
-fn end_row_for_global(end_global: usize, cols: usize) -> usize {
-    debug_assert!(cols > 0);
-    if end_global == 0 {
-        0
-    } else if end_global.is_multiple_of(cols) {
-        end_global / cols - 1
-    } else {
-        end_global / cols
-    }
-}
-
 fn push_csi_num(out: &mut Vec<u8>, n: u64, final_byte: u8) {
     out.extend_from_slice(b"\x1b[");
     bstr::push_u64(out, n);
@@ -355,50 +456,159 @@ fn move_cursor_relative_into(out: &mut Vec<u8>, from: (usize, usize), to: (usize
     }
 }
 
-/// Build the byte stream for an incremental redraw. Returns the new
-/// snapshot to store on the anchor.
+/// Write the bytes of `tail` to `emit_stdout`, interleaving an
+/// `emit_stderr(ps2)` call at every embedded `\n` so each continuation
+/// row gets its left-margin gutter. Returns the screen position the
+/// terminal cursor would occupy after the write.
+///
+/// `start_row` / `start_col` is the (raw) walker position the cursor
+/// occupied before the write began — usually obtained from
+/// [`walk`] of the buffer prefix up to the diff byte. Returning a raw
+/// walker-style `ScreenPos` (col in `0..=cols`) keeps pending-wrap
+/// distinguishable from "after a `\n` + PS2".
+fn write_tail_emitting_ps2(
+    emit_stdout: &mut dyn FnMut(&[u8]),
+    emit_stderr: &mut dyn FnMut(&[u8]),
+    tail: &[u8],
+    ps2: &[u8],
+    ps2_w: usize,
+    start_row: usize,
+    start_col: usize,
+    cols: usize,
+) -> ScreenPos {
+    let mut row = start_row;
+    let mut col = start_col;
+    let mut chunk_start = 0;
+    let mut i = 0;
+    while i < tail.len() {
+        if tail[i] == b'\n' {
+            if i > chunk_start {
+                emit_stdout(&tail[chunk_start..i]);
+            }
+            emit_stdout(b"\n");
+            emit_stderr(ps2);
+            row += 1;
+            col = ps2_w;
+            i += 1;
+            chunk_start = i;
+            continue;
+        }
+        let (wc, len) = sys::locale::decode_char(&tail[i..]);
+        let step = if len == 0 { 1 } else { len };
+        let w = sys::locale::char_width(wc);
+        // Commit any pending wrap from the previous byte before
+        // updating col.
+        if cols > 0 && col >= cols {
+            row += 1;
+            col = 0;
+        }
+        if cols > 0 && col + w > cols {
+            row += 1;
+            col = 0;
+        }
+        col += w;
+        i += step;
+    }
+    if chunk_start < tail.len() {
+        emit_stdout(&tail[chunk_start..]);
+    }
+    ScreenPos { row, col }
+}
+
+/// Build the byte stream for an incremental redraw and emit it
+/// through the caller-provided closures. Returns the new snapshot to
+/// store on the anchor.
+#[allow(clippy::too_many_arguments)]
 fn incremental_into(
-    stdout: &mut Vec<u8>,
+    emit_stdout: &mut dyn FnMut(&[u8]),
+    emit_stderr: &mut dyn FnMut(&[u8]),
     prev: &Snapshot,
     line: &[u8],
     cursor: usize,
     prompt: &[u8],
-    prompt_w: usize,
+    ps2: &[u8],
+    ps1_w: usize,
+    ps2_w: usize,
     cols: usize,
 ) -> Snapshot {
     let diff = first_diff_byte(&prev.line, line);
-    let (diff_row, diff_col, _) = position_for_byte(line, diff, prompt_w, cols);
+    let diff_pos = walk(line, diff, ps1_w, ps2_w, cols);
+    let diff_target = normalize(diff_pos, cols);
 
     // 1. Move from the snapshot's cursor to the diff position.
+    let mut buf = Vec::with_capacity(line.len() + 16);
     move_cursor_relative_into(
-        stdout,
+        &mut buf,
         (prev.cursor_row, prev.cursor_col),
-        (diff_row, diff_col),
+        (diff_target.row, diff_target.col),
     );
-
-    // 2. Write the new tail. The terminal auto-wraps if it crosses
-    //    column `cols`; we account for that below when computing the
-    //    "after write" position.
-    let tail = &line[diff..];
-    if !tail.is_empty() {
-        stdout.extend_from_slice(tail);
+    if !buf.is_empty() {
+        emit_stdout(&buf);
     }
 
-    let new_end_global = prompt_w + display_width(line);
-    let new_end_row = end_row_for_global(new_end_global, cols);
+    // 1a. If the new tail contains a `\n`, the very first byte we
+    //     write will move the cursor off the diff row before
+    //     overwriting whatever the old draw had past the diff column
+    //     on that row. The post-write shrinkage check below compares
+    //     end positions only, and `(new_end_row+1, _)` is
+    //     lexicographically *greater* than the old end on the diff
+    //     row — so it never fires for newline insertion. Wipe the
+    //     stale screen tail with `\x1b[J` (clear-to-end-of-screen)
+    //     up front in that case; the new tail then rewrites the
+    //     diff row and everything below it from scratch. The cost
+    //     is one extra 3-byte escape on operations that already
+    //     involve newlines (Alt-Enter, multi-line paste, smart
+    //     accept-line auto-continuation); pure single-line edits
+    //     skip this branch and stay flicker-free.
+    if line[diff..].contains(&b'\n') {
+        emit_stdout(b"\x1b[J");
+    }
 
-    // 3. If the new buffer is shorter than the old, wipe the leftover
-    //    bytes from the previous draw. `\x1b[K` clears to end of the
-    //    current row (sufficient when both ends sit on the same row);
-    //    `\x1b[J` clears to end of screen (needed when the old draw
-    //    occupied additional rows below).
-    if new_end_global < prev.end_global {
-        let old_end_row = end_row_for_global(prev.end_global, cols);
-        if new_end_row == old_end_row {
-            stdout.extend_from_slice(b"\x1b[K");
-        } else {
-            stdout.extend_from_slice(b"\x1b[J");
+    // 2. Write the new tail, emitting PS2 to stderr at every
+    //    embedded `\n` so continuation rows get their gutter. The
+    //    `\n` itself goes to stdout — the tty's OPOST + ONLCR turns
+    //    it into `\r\n`.
+    let end_pos = if diff < line.len() {
+        write_tail_emitting_ps2(
+            emit_stdout,
+            emit_stderr,
+            &line[diff..],
+            ps2,
+            ps2_w,
+            diff_target.row,
+            diff_target.col,
+            cols,
+        )
+    } else {
+        diff_pos
+    };
+
+    // 3. If the new buffer ends earlier than the old, wipe the
+    //    leftover bytes from the previous draw. Use `\x1b[K`
+    //    (clear-to-end-of-row) when both ends sit on the same row,
+    //    `\x1b[J` (clear-to-end-of-screen) when the old draw
+    //    occupied additional rows below.
+    let shrink_buf = {
+        let mut b = Vec::new();
+        let new_end_norm = normalize(end_pos, cols);
+        let prev_end_norm = normalize(
+            ScreenPos {
+                row: prev.end_row,
+                col: prev.end_col,
+            },
+            cols,
+        );
+        if (new_end_norm.row, new_end_norm.col) < (prev_end_norm.row, prev_end_norm.col) {
+            if new_end_norm.row == prev_end_norm.row {
+                b.extend_from_slice(b"\x1b[K");
+            } else {
+                b.extend_from_slice(b"\x1b[J");
+            }
         }
+        b
+    };
+    if !shrink_buf.is_empty() {
+        emit_stdout(&shrink_buf);
     }
 
     // 4. Normalize via `\r` so we have a known origin (column 0 of
@@ -406,88 +616,116 @@ fn incremental_into(
     //    pending-wrap state) and emit relative moves to the logical
     //    cursor position. The `\r` is a single byte and is not by
     //    itself visible to the user.
-    let (target_row, target_col, _) = position_for_byte(line, cursor, prompt_w, cols);
-    stdout.push(b'\r');
-    if target_row > new_end_row {
-        push_csi_num(stdout, (target_row - new_end_row) as u64, b'B');
-    } else if target_row < new_end_row {
-        push_csi_num(stdout, (new_end_row - target_row) as u64, b'A');
+    let cursor_target = normalize(walk(line, cursor, ps1_w, ps2_w, cols), cols);
+    let mut tail_buf = Vec::with_capacity(8);
+    tail_buf.push(b'\r');
+    // After `\r`, the cursor sits at `(end_pos.row, 0)`. Move to the
+    // cursor target from there.
+    if cursor_target.row > end_pos.row {
+        push_csi_num(
+            &mut tail_buf,
+            (cursor_target.row - end_pos.row) as u64,
+            b'B',
+        );
+    } else if cursor_target.row < end_pos.row {
+        push_csi_num(
+            &mut tail_buf,
+            (end_pos.row - cursor_target.row) as u64,
+            b'A',
+        );
     }
-    if target_col > 0 {
-        push_csi_num(stdout, target_col as u64, b'C');
+    if cursor_target.col > 0 {
+        push_csi_num(&mut tail_buf, cursor_target.col as u64, b'C');
     }
+    emit_stdout(&tail_buf);
 
     Snapshot {
         line: line.to_vec(),
         prompt: prompt.to_vec(),
+        ps2: ps2.to_vec(),
         cols,
-        cursor_row: target_row,
-        cursor_col: target_col,
-        end_global: new_end_global,
+        cursor_row: cursor_target.row,
+        cursor_col: cursor_target.col,
+        end_row: end_pos.row,
+        end_col: end_pos.col,
     }
 }
 
-/// Build the byte stream for a full repaint, splitting the writes
-/// between stdout (prefix + buffer body + positioning) and stderr
-/// (prompt). Returns the new snapshot if `cols` is known, otherwise
-/// `None` — the next call will then also take this branch.
+/// Build the byte stream for a full repaint. Emits through the
+/// caller-provided closures so production code can write straight
+/// to file descriptors while tests accumulate the bytes into
+/// `Vec<u8>`s for assertion. Returns the new snapshot if `cols` is
+/// known, otherwise `None` — the next call will then also take
+/// this branch.
+#[allow(clippy::too_many_arguments)]
 fn full_repaint_into(
-    stdout_prefix: &mut Vec<u8>,
-    stdout_body: &mut Vec<u8>,
+    emit_stdout: &mut dyn FnMut(&[u8]),
+    emit_stderr: &mut dyn FnMut(&[u8]),
     prev_cursor_row: usize,
     line: &[u8],
     cursor: usize,
     prompt: &[u8],
+    ps2: &[u8],
+    ps1_w: usize,
+    ps2_w: usize,
     cols_opt: Option<usize>,
 ) -> Option<Snapshot> {
     // 1. Move up to col 0 of the prompt's row (if we know the
     //    previous cursor row), then clear from there to end of screen.
+    let mut prefix = Vec::with_capacity(16);
     if prev_cursor_row > 0 {
-        push_csi_num(stdout_prefix, prev_cursor_row as u64, b'A');
+        push_csi_num(&mut prefix, prev_cursor_row as u64, b'A');
     }
-    stdout_prefix.extend_from_slice(b"\r\x1b[J");
+    prefix.extend_from_slice(b"\r\x1b[J");
+    emit_stdout(&prefix);
 
-    // 2. Write the buffer bytes (caller writes the prompt to stderr
-    //    between these two halves).
-    stdout_body.extend_from_slice(line);
+    // 2. Write PS1 to stderr; the caller's chosen closure honours the
+    //    "prompts on stderr" contract.
+    emit_stderr(prompt);
 
     let Some(cols) = cols_opt.filter(|c| *c > 0) else {
         // Unknown terminal width: legacy single-row backwards-only
-        // positioning. Don't build a snapshot — the next call will
-        // also take the full-repaint branch.
+        // positioning, with no PS2 interleaving (we can't honour
+        // multi-line layout without column math). Don't build a
+        // snapshot — the next call will also take this branch.
+        let mut body = Vec::with_capacity(line.len() + 8);
+        body.extend_from_slice(line);
         let cursor_back = display_width_range(line, cursor, line.len());
         if cursor_back > 0 {
-            push_csi_num(stdout_body, cursor_back as u64, b'D');
+            push_csi_num(&mut body, cursor_back as u64, b'D');
         }
+        emit_stdout(&body);
         return None;
     };
 
-    let prompt_w = prompt_visible_width(prompt);
-    let cursor_w = display_width_range(line, 0, cursor);
-    let end_global = prompt_w + display_width(line);
-    let cursor_global = prompt_w + cursor_w;
-    let end_row = end_row_for_global(end_global, cols);
+    // 3. Walk the buffer, writing chunks of bytes to stdout and the
+    //    PS2 bytes to stderr at each embedded `\n`.
+    let end_pos =
+        write_tail_emitting_ps2(emit_stdout, emit_stderr, line, ps2, ps2_w, 0, ps1_w, cols);
 
-    let target_row = cursor_global / cols;
-    let target_col = cursor_global % cols;
-
-    stdout_body.push(b'\r');
-    if target_row > end_row {
-        push_csi_num(stdout_body, (target_row - end_row) as u64, b'B');
-    } else if target_row < end_row {
-        push_csi_num(stdout_body, (end_row - target_row) as u64, b'A');
+    // 4. Position the cursor on the target cell.
+    let cursor_target = normalize(walk(line, cursor, ps1_w, ps2_w, cols), cols);
+    let mut tail = Vec::with_capacity(8);
+    tail.push(b'\r');
+    if cursor_target.row > end_pos.row {
+        push_csi_num(&mut tail, (cursor_target.row - end_pos.row) as u64, b'B');
+    } else if cursor_target.row < end_pos.row {
+        push_csi_num(&mut tail, (end_pos.row - cursor_target.row) as u64, b'A');
     }
-    if target_col > 0 {
-        push_csi_num(stdout_body, target_col as u64, b'C');
+    if cursor_target.col > 0 {
+        push_csi_num(&mut tail, cursor_target.col as u64, b'C');
     }
+    emit_stdout(&tail);
 
     Some(Snapshot {
         line: line.to_vec(),
         prompt: prompt.to_vec(),
+        ps2: ps2.to_vec(),
         cols,
-        cursor_row: target_row,
-        cursor_col: target_col,
-        end_global,
+        cursor_row: cursor_target.row,
+        cursor_col: cursor_target.col,
+        end_row: end_pos.row,
+        end_col: end_pos.col,
     })
 }
 
@@ -500,24 +738,37 @@ fn redraw_internal(
     line: &[u8],
     cursor: usize,
     prompt: &[u8],
+    ps2: &[u8],
     mut emit_stdout: impl FnMut(&[u8]),
     mut emit_stderr: impl FnMut(&[u8]),
 ) {
     let cols_opt = sys::tty::terminal_columns_from_stdio();
     let cols = cols_opt.unwrap_or(0);
-    let prompt_w = prompt_visible_width(prompt);
+    let ps1_w = prompt_visible_width(prompt);
+    let ps2_w = prompt_visible_width(ps2);
 
     let take_incremental = cols > 0
         && match &anchor.prev {
-            Some(p) => p.cols == cols && p.prompt == prompt,
+            Some(p) => p.cols == cols && p.prompt == prompt && p.ps2 == ps2,
             None => false,
         };
 
     if take_incremental {
         let prev = anchor.prev.as_ref().unwrap();
-        let mut out = Vec::with_capacity(line.len() + 16);
-        let new_snapshot = incremental_into(&mut out, prev, line, cursor, prompt, prompt_w, cols);
-        emit_stdout(&out);
+        let mut stdout = |b: &[u8]| emit_stdout(b);
+        let mut stderr = |b: &[u8]| emit_stderr(b);
+        let new_snapshot = incremental_into(
+            &mut stdout,
+            &mut stderr,
+            prev,
+            line,
+            cursor,
+            prompt,
+            ps2,
+            ps1_w,
+            ps2_w,
+            cols,
+        );
         anchor.prev = Some(new_snapshot);
     } else {
         let prev_cursor_row = anchor.prev.as_ref().map_or(0, |p| {
@@ -533,20 +784,20 @@ fn redraw_internal(
                 0
             }
         });
-        let mut prefix = Vec::with_capacity(16);
-        let mut body = Vec::with_capacity(line.len() + 16);
+        let mut stdout = |b: &[u8]| emit_stdout(b);
+        let mut stderr = |b: &[u8]| emit_stderr(b);
         let new_snapshot = full_repaint_into(
-            &mut prefix,
-            &mut body,
+            &mut stdout,
+            &mut stderr,
             prev_cursor_row,
             line,
             cursor,
             prompt,
+            ps2,
+            ps1_w,
+            ps2_w,
             cols_opt,
         );
-        emit_stdout(&prefix);
-        emit_stderr(prompt);
-        emit_stdout(&body);
         anchor.prev = new_snapshot;
     }
 }
@@ -556,12 +807,15 @@ fn redraw_internal(
 /// control sequences directly.
 ///
 /// Returns `(to_stdout, to_stderr)`. On the incremental path
-/// `to_stderr` is empty — the prompt is never repainted.
+/// `to_stderr` is empty unless the new tail crosses an embedded
+/// `\n` — in which case it contains one copy of `ps2` per such
+/// crossing.
 pub(crate) fn redraw_sequence(
     anchor: &mut DrawAnchor,
     line: &[u8],
     cursor: usize,
     prompt: &[u8],
+    ps2: &[u8],
 ) -> (Vec<u8>, Vec<u8>) {
     let mut stdout = Vec::with_capacity(line.len() + 32);
     let mut stderr = Vec::new();
@@ -570,6 +824,7 @@ pub(crate) fn redraw_sequence(
         line,
         cursor,
         prompt,
+        ps2,
         |b| stdout.extend_from_slice(b),
         |b| stderr.extend_from_slice(b),
     );
@@ -577,17 +832,21 @@ pub(crate) fn redraw_sequence(
 }
 
 /// Emit the redraw sequence to `stdout` (buffer + positioning) and
-/// `stderr` (prompt, only on the full-repaint path). Splits the
-/// stdout stream into prefix and body so that, when a full repaint
-/// is required, the stderr prompt write happens between them — that
-/// ordering is what downstream consumers (tmux, bash transcripts)
-/// expect.
-pub(crate) fn redraw(anchor: &mut DrawAnchor, line: &[u8], cursor: usize, prompt: &[u8]) {
+/// `stderr` (PS1 on the full-repaint path, plus one PS2 per
+/// embedded `\n` in the new tail on both paths).
+pub(crate) fn redraw(
+    anchor: &mut DrawAnchor,
+    line: &[u8],
+    cursor: usize,
+    prompt: &[u8],
+    ps2: &[u8],
+) {
     redraw_internal(
         anchor,
         line,
         cursor,
         prompt,
+        ps2,
         |b| write_bytes(b),
         |b| {
             let _ = sys::fd_io::write_all_fd(sys::constants::STDERR_FILENO, b);
@@ -608,21 +867,31 @@ mod tests {
         set_test_terminal_columns(None);
     }
 
-    fn snapshot_at(line: &[u8], prompt: &[u8], cols: usize, cursor: usize) -> DrawAnchor {
-        let prompt_w = prompt_visible_width(prompt);
-        let cursor_w = display_width_range(line, 0, cursor);
-        let end_global = prompt_w + display_width(line);
-        let cursor_global = prompt_w + cursor_w;
-        let cursor_row = cursor_global / cols;
-        let cursor_col = cursor_global % cols;
+    /// Build a `DrawAnchor` describing the post-redraw state of
+    /// `line` rendered under `prompt` (PS1) and `ps2` with cursor at
+    /// byte `cursor`. Mirrors what the renderer would have left on
+    /// the snapshot after a real redraw.
+    fn snapshot_at(
+        line: &[u8],
+        prompt: &[u8],
+        ps2: &[u8],
+        cols: usize,
+        cursor: usize,
+    ) -> DrawAnchor {
+        let ps1_w = prompt_visible_width(prompt);
+        let ps2_w = prompt_visible_width(ps2);
+        let end_pos = walk(line, line.len(), ps1_w, ps2_w, cols);
+        let cursor_target = normalize(walk(line, cursor, ps1_w, ps2_w, cols), cols);
         DrawAnchor {
             prev: Some(Snapshot {
                 line: line.to_vec(),
                 prompt: prompt.to_vec(),
+                ps2: ps2.to_vec(),
                 cols,
-                cursor_row,
-                cursor_col,
-                end_global,
+                cursor_row: cursor_target.row,
+                cursor_col: cursor_target.col,
+                end_row: end_pos.row,
+                end_col: end_pos.col,
             }),
         }
     }
@@ -667,6 +936,95 @@ mod tests {
         });
     }
 
+    // ---------- walk (the new screen-position walker) ----------
+
+    #[test]
+    fn walk_single_line_no_wrap() {
+        assert_no_syscalls(|| {
+            set_test_locale_c();
+            // ps1_w=2, ps2_w=2, cols=80
+            assert_eq!(walk(b"abc", 0, 2, 2, 80), ScreenPos { row: 0, col: 2 });
+            assert_eq!(walk(b"abc", 3, 2, 2, 80), ScreenPos { row: 0, col: 5 });
+        });
+    }
+
+    #[test]
+    fn walk_newline_advances_to_ps2_column() {
+        assert_no_syscalls(|| {
+            set_test_locale_c();
+            // b"foo\nbar" with ps1_w=2, ps2_w=2, cols=80:
+            //   row 0: "$ foo"  end col 5
+            //   row 1: "> bar"  end col 5
+            assert_eq!(walk(b"foo\nbar", 7, 2, 2, 80), ScreenPos { row: 1, col: 5 });
+            assert_eq!(walk(b"foo\nbar", 4, 2, 2, 80), ScreenPos { row: 1, col: 2 });
+            assert_eq!(walk(b"foo\nbar", 3, 2, 2, 80), ScreenPos { row: 0, col: 5 });
+        });
+    }
+
+    #[test]
+    fn walk_multiple_newlines() {
+        assert_no_syscalls(|| {
+            set_test_locale_c();
+            // b"a\nbcd\nefg" with ps1_w=2, ps2_w=2, cols=80:
+            //   row 0: "$ a"     end col 3
+            //   row 1: "> bcd"   end col 5
+            //   row 2: "> efg"   end col 5
+            assert_eq!(
+                walk(b"a\nbcd\nefg", 9, 2, 2, 80),
+                ScreenPos { row: 2, col: 5 }
+            );
+        });
+    }
+
+    #[test]
+    fn walk_pending_wrap_at_exact_column_boundary() {
+        assert_no_syscalls(|| {
+            set_test_locale_c();
+            // b"abcdefgh" with ps1_w=2, cols=10: 8 chars + 2 = 10 cells,
+            // hitting the right edge exactly. Raw walker reports
+            // col == cols (pending-wrap); normalize() promotes to
+            // (1, 0).
+            assert_eq!(
+                walk(b"abcdefgh", 8, 2, 2, 10),
+                ScreenPos { row: 0, col: 10 }
+            );
+            assert_eq!(
+                normalize(walk(b"abcdefgh", 8, 2, 2, 10), 10),
+                ScreenPos { row: 1, col: 0 }
+            );
+        });
+    }
+
+    #[test]
+    fn walk_wraps_continuation_to_col_zero_not_ps2_width() {
+        assert_no_syscalls(|| {
+            set_test_locale_c();
+            // Terminal-width wraps don't carry the PS2 gutter (we only
+            // emit PS2 for explicit \n in the buffer). cols=5, ps1_w=2,
+            // ps2_w=2, b"abcdef" (6 chars): row 0 "$ abc" col=5
+            // (pending-wrap normalized), 'd' commits wrap and lands at
+            // (1, 1) — NOT (1, 3) which it would be if wraps inherited
+            // the gutter.
+            assert_eq!(walk(b"abcdef", 6, 2, 2, 5), ScreenPos { row: 1, col: 3 });
+        });
+    }
+
+    #[test]
+    fn walk_newline_after_pending_wrap_lands_on_continuation_row() {
+        assert_no_syscalls(|| {
+            set_test_locale_c();
+            // cols=5, ps1_w=2, ps2_w=2, b"abc\nx": "$ abc" fills the
+            // row exactly (pending-wrap), then \n commits + advances
+            // one row (so we end on row 1 not row 2), then PS2 lands
+            // us at col 2, then 'x' → col 3.
+            //
+            // Walker commits the pending wrap from the previous
+            // iteration before processing the \n. End position:
+            // (2, 3).
+            assert_eq!(walk(b"abc\nx", 5, 2, 2, 5), ScreenPos { row: 2, col: 3 });
+        });
+    }
+
     // ---------- first_diff_byte ----------
 
     #[test]
@@ -704,13 +1062,14 @@ mod tests {
             set_test_locale_c();
             with_cols(Some(80), || {
                 let mut anchor = DrawAnchor::new();
-                let (out, err) = redraw_sequence(&mut anchor, b"abc", 3, b"$ ");
+                let (out, err) = redraw_sequence(&mut anchor, b"abc", 3, b"$ ", b"> ");
                 assert_eq!(out, b"\r\x1b[Jabc\r\x1b[5C");
                 assert_eq!(err, b"$ ");
                 let prev = anchor.prev.as_ref().unwrap();
                 assert_eq!(prev.cursor_row, 0);
                 assert_eq!(prev.cursor_col, 5);
-                assert_eq!(prev.end_global, 5);
+                assert_eq!(prev.end_row, 0);
+                assert_eq!(prev.end_col, 5);
             });
         });
     }
@@ -721,7 +1080,7 @@ mod tests {
             set_test_locale_c();
             with_cols(Some(80), || {
                 let mut anchor = DrawAnchor::new();
-                let (out, _) = redraw_sequence(&mut anchor, b"abc", 1, b"$ ");
+                let (out, _) = redraw_sequence(&mut anchor, b"abc", 1, b"$ ", b"> ");
                 assert_eq!(out, b"\r\x1b[Jabc\r\x1b[3C");
                 let prev = anchor.prev.as_ref().unwrap();
                 assert_eq!(prev.cursor_row, 0);
@@ -737,7 +1096,7 @@ mod tests {
             with_cols(Some(10), || {
                 let mut anchor = DrawAnchor::new();
                 let line = b"abcdefghi"; // 9 chars + prompt 2 = 11 cells
-                let (out, _) = redraw_sequence(&mut anchor, line, line.len(), b"$ ");
+                let (out, _) = redraw_sequence(&mut anchor, line, line.len(), b"$ ", b"> ");
                 assert_eq!(out, b"\r\x1b[Jabcdefghi\r\x1b[1C");
                 let prev = anchor.prev.as_ref().unwrap();
                 assert_eq!(prev.cursor_row, 1);
@@ -753,7 +1112,7 @@ mod tests {
             with_cols(Some(10), || {
                 let mut anchor = DrawAnchor::new();
                 let line = b"abcdefghijkl"; // 12 chars + prompt 2 = 14 cells
-                let (out, _) = redraw_sequence(&mut anchor, line, 0, b"$ ");
+                let (out, _) = redraw_sequence(&mut anchor, line, 0, b"$ ", b"> ");
                 assert_eq!(out, b"\r\x1b[Jabcdefghijkl\r\x1b[1A\x1b[2C");
                 let prev = anchor.prev.as_ref().unwrap();
                 assert_eq!(prev.cursor_row, 0);
@@ -769,7 +1128,7 @@ mod tests {
             with_cols(Some(10), || {
                 let mut anchor = DrawAnchor::new();
                 let line = b"abcdefgh"; // 8 + 2 = 10 cells, exact
-                let (out, _) = redraw_sequence(&mut anchor, line, line.len(), b"$ ");
+                let (out, _) = redraw_sequence(&mut anchor, line, line.len(), b"$ ", b"> ");
                 assert_eq!(out, b"\r\x1b[Jabcdefgh\r\x1b[1B");
                 let prev = anchor.prev.as_ref().unwrap();
                 assert_eq!(prev.cursor_row, 1);
@@ -784,7 +1143,7 @@ mod tests {
             set_test_locale_c();
             with_cols(None, || {
                 let mut anchor = DrawAnchor::new();
-                let (out, _) = redraw_sequence(&mut anchor, b"abc", 1, b"$ ");
+                let (out, _) = redraw_sequence(&mut anchor, b"abc", 1, b"$ ", b"> ");
                 assert_eq!(out, b"\r\x1b[Jabc\x1b[2D");
                 // No snapshot is stored when `cols` is unknown — the
                 // next call must also take the full-repaint branch.
@@ -800,7 +1159,7 @@ mod tests {
             with_cols(Some(80), || {
                 let mut anchor = DrawAnchor::new();
                 let line = b"\xc3\xa9x"; // "éx" — 2 cols visible
-                let (out, _) = redraw_sequence(&mut anchor, line, 2, b"$ ");
+                let (out, _) = redraw_sequence(&mut anchor, line, 2, b"$ ", b"> ");
                 // End at col 4, cursor at col 3 (after "é"). Suffix:
                 // CR + move right 3.
                 assert!(out.ends_with(b"\r\x1b[3C"));
@@ -822,17 +1181,78 @@ mod tests {
                 let mut anchor = snapshot_at(
                     b"abcabcabcabcabcabcabcabcabc", // 27 chars
                     b"$ ",
+                    b"> ",
                     10,
                     27,
                 );
                 // Now redraw with "hi" under a *different* prompt so
                 // the incremental path is rejected and we go through
                 // full-repaint.
-                let (out, err) = redraw_sequence(&mut anchor, b"hi", 2, b"# ");
+                let (out, err) = redraw_sequence(&mut anchor, b"hi", 2, b"# ", b"> ");
                 // 27 + 2 = 29 cells, ends on row 2 col 9, so we climb
                 // 2 rows and wipe.
                 assert_eq!(out, b"\x1b[2A\r\x1b[Jhi\r\x1b[4C");
                 assert_eq!(err, b"# ");
+            });
+        });
+    }
+
+    // ---------- full-repaint with embedded newlines ----------
+
+    #[test]
+    fn full_repaint_emits_ps2_between_rows() {
+        assert_no_syscalls(|| {
+            set_test_locale_c();
+            with_cols(Some(80), || {
+                let mut anchor = DrawAnchor::new();
+                let (out, err) = redraw_sequence(&mut anchor, b"foo\nbar", 7, b"$ ", b"> ");
+                // stdout: clear, "foo", "\n", "bar", positioning.
+                // stderr: "$ " (PS1) then "> " (PS2 after the \n).
+                // End at row 1 col 5, cursor at row 1 col 5: no
+                // vertical motion, \r + 5C.
+                assert_eq!(out, b"\r\x1b[Jfoo\nbar\r\x1b[5C");
+                assert_eq!(err, b"$ > ");
+                let prev = anchor.prev.as_ref().unwrap();
+                assert_eq!(prev.end_row, 1);
+                assert_eq!(prev.end_col, 5);
+                assert_eq!(prev.cursor_row, 1);
+                assert_eq!(prev.cursor_col, 5);
+            });
+        });
+    }
+
+    #[test]
+    fn full_repaint_multi_line_cursor_at_start_climbs_back() {
+        assert_no_syscalls(|| {
+            set_test_locale_c();
+            with_cols(Some(80), || {
+                let mut anchor = DrawAnchor::new();
+                let (out, err) = redraw_sequence(&mut anchor, b"foo\nbar", 0, b"$ ", b"> ");
+                // Cursor at start: target (0, 2). End at (1, 5).
+                // \r + 1A + 2C.
+                assert_eq!(out, b"\r\x1b[Jfoo\nbar\r\x1b[1A\x1b[2C");
+                assert_eq!(err, b"$ > ");
+            });
+        });
+    }
+
+    #[test]
+    fn full_repaint_three_logical_lines() {
+        assert_no_syscalls(|| {
+            set_test_locale_c();
+            with_cols(Some(80), || {
+                let mut anchor = DrawAnchor::new();
+                let line = b"for i in 1 2 3\n  echo $i\ndone";
+                let cursor = line.len();
+                let (_, err) = redraw_sequence(&mut anchor, line, cursor, b"$ ", b"> ");
+                // PS1 once + PS2 twice.
+                assert_eq!(err, b"$ > > ");
+                let prev = anchor.prev.as_ref().unwrap();
+                // Row 2: "> done" → col 6.
+                assert_eq!(prev.end_row, 2);
+                assert_eq!(prev.end_col, 6);
+                assert_eq!(prev.cursor_row, 2);
+                assert_eq!(prev.cursor_col, 6);
             });
         });
     }
@@ -844,8 +1264,8 @@ mod tests {
         assert_no_syscalls(|| {
             set_test_locale_c();
             with_cols(Some(80), || {
-                let mut anchor = snapshot_at(b"hel", b"$ ", 80, 3);
-                let (out, err) = redraw_sequence(&mut anchor, b"hell", 4, b"$ ");
+                let mut anchor = snapshot_at(b"hel", b"$ ", b"> ", 80, 3);
+                let (out, err) = redraw_sequence(&mut anchor, b"hell", 4, b"$ ", b"> ");
                 // Cursor already at the diff point (col 5), so we
                 // just write the new char and then issue `\r\x1b[6C`
                 // to land on the final cursor position.
@@ -855,7 +1275,8 @@ mod tests {
                 let prev = anchor.prev.as_ref().unwrap();
                 assert_eq!(prev.line, b"hell");
                 assert_eq!(prev.cursor_col, 6);
-                assert_eq!(prev.end_global, 6);
+                assert_eq!(prev.end_row, 0);
+                assert_eq!(prev.end_col, 6);
             });
         });
     }
@@ -865,8 +1286,8 @@ mod tests {
         assert_no_syscalls(|| {
             set_test_locale_c();
             with_cols(Some(80), || {
-                let mut anchor = snapshot_at(b"hellx", b"$ ", 80, 5);
-                let (out, err) = redraw_sequence(&mut anchor, b"hell", 4, b"$ ");
+                let mut anchor = snapshot_at(b"hellx", b"$ ", b"> ", 80, 5);
+                let (out, err) = redraw_sequence(&mut anchor, b"hell", 4, b"$ ", b"> ");
                 // Move cursor from col 7 to diff at col 6 (one left),
                 // tail empty, shrink → \x1b[K, then \r + move right
                 // 6 to land at logical cursor (col 6).
@@ -881,9 +1302,9 @@ mod tests {
         assert_no_syscalls(|| {
             set_test_locale_c();
             with_cols(Some(80), || {
-                let mut anchor = snapshot_at(b"hello", b"$ ", 80, 5);
+                let mut anchor = snapshot_at(b"hello", b"$ ", b"> ", 80, 5);
                 // Insert 'X' at position 2: "heXllo", cursor moves to 3.
-                let (out, _) = redraw_sequence(&mut anchor, b"heXllo", 3, b"$ ");
+                let (out, _) = redraw_sequence(&mut anchor, b"heXllo", 3, b"$ ", b"> ");
                 // From cursor at col 7, move left to col 4 (diff
                 // point), write "Xllo" (4 chars), end at col 8, then
                 // \r + move right 5 to target col 5.
@@ -897,9 +1318,9 @@ mod tests {
         assert_no_syscalls(|| {
             set_test_locale_c();
             with_cols(Some(80), || {
-                let mut anchor = snapshot_at(b"hello", b"$ ", 80, 3);
+                let mut anchor = snapshot_at(b"hello", b"$ ", b"> ", 80, 3);
                 // Backspace at cursor=3: "hllo", cursor moves to 2.
-                let (out, _) = redraw_sequence(&mut anchor, b"hllo", 2, b"$ ");
+                let (out, _) = redraw_sequence(&mut anchor, b"hllo", 2, b"$ ", b"> ");
                 // From cursor at col 5, move left to col 3 (diff),
                 // write "llo" (3 chars), end at col 6, shrink (was 7)
                 // → \x1b[K, then \r + move right 4 to target col 4.
@@ -913,9 +1334,9 @@ mod tests {
         assert_no_syscalls(|| {
             set_test_locale_c();
             with_cols(Some(80), || {
-                let mut anchor = snapshot_at(b"hello", b"$ ", 80, 5);
+                let mut anchor = snapshot_at(b"hello", b"$ ", b"> ", 80, 5);
                 // Same buffer, cursor moves from 5 to 3 (e.g. left x2).
-                let (out, err) = redraw_sequence(&mut anchor, b"hello", 3, b"$ ");
+                let (out, err) = redraw_sequence(&mut anchor, b"hello", 3, b"$ ", b"> ");
                 // No tail to write, no shrink. From cursor (0, 7) to
                 // diff (0, 7) - no move. Then \r + move right 5 to
                 // target col 5.
@@ -932,9 +1353,9 @@ mod tests {
             with_cols(Some(10), || {
                 // Prev: "abcdefghi" (9 chars + prompt 2 = 11 cells)
                 // wraps to row 1, cursor at end = (1, 1).
-                let mut anchor = snapshot_at(b"abcdefghi", b"$ ", 10, 9);
+                let mut anchor = snapshot_at(b"abcdefghi", b"$ ", b"> ", 10, 9);
                 // Type 'j': "abcdefghij" (10 chars + 2 = 12 cells).
-                let (out, _) = redraw_sequence(&mut anchor, b"abcdefghij", 10, b"$ ");
+                let (out, _) = redraw_sequence(&mut anchor, b"abcdefghij", 10, b"$ ", b"> ");
                 // Cursor already at diff point (1, 1). Write 'j'.
                 // End at (1, 2). Target (1, 2). \r + move right 2.
                 assert_eq!(out, b"j\r\x1b[2C");
@@ -951,9 +1372,9 @@ mod tests {
             set_test_locale_c();
             with_cols(Some(10), || {
                 // Prev: 7 chars + prompt 2 = 9 cells, all on row 0.
-                let mut anchor = snapshot_at(b"abcdefg", b"$ ", 10, 7);
+                let mut anchor = snapshot_at(b"abcdefg", b"$ ", b"> ", 10, 7);
                 // Type "hi": "abcdefghi" (9 chars + 2 = 11 cells).
-                let (out, _) = redraw_sequence(&mut anchor, b"abcdefghi", 9, b"$ ");
+                let (out, _) = redraw_sequence(&mut anchor, b"abcdefghi", 9, b"$ ", b"> ");
                 // From (0, 9) write "hi". Auto-wrap puts cursor at
                 // (1, 1). \r + move right 1 to target (1, 1).
                 assert_eq!(out, b"hi\r\x1b[1C");
@@ -976,16 +1397,18 @@ mod tests {
                     prev: Some(Snapshot {
                         line: b"abcdefghijklmnopqr".to_vec(),
                         prompt: b"$ ".to_vec(),
+                        ps2: b"> ".to_vec(),
                         cols: 10,
                         cursor_row: 0,
                         cursor_col: 6,
-                        end_global: 20,
+                        end_row: 1,
+                        end_col: 10,
                     }),
                 };
                 // C-k from cursor 4: "abcd" (4 chars + 2 = 6 cells).
-                let (out, _) = redraw_sequence(&mut anchor, b"abcd", 4, b"$ ");
+                let (out, _) = redraw_sequence(&mut anchor, b"abcd", 4, b"$ ", b"> ");
                 // From (0, 6) diff at byte 4, position (0, 6). No
-                // move. Empty tail. Shrink to row 0 from row 1:
+                // move. Empty tail. Shrink from (2, 0) to (0, 6):
                 // cross-row → \x1b[J. Then \r + move right 6.
                 assert_eq!(out, b"\x1b[J\r\x1b[6C");
             });
@@ -998,9 +1421,9 @@ mod tests {
             set_test_locale_utf8();
             with_cols(Some(80), || {
                 // "éx" — 2 cols visible (snapshot cursor at end, col 4).
-                let mut anchor = snapshot_at(b"\xc3\xa9x", b"$ ", 80, 3);
+                let mut anchor = snapshot_at(b"\xc3\xa9x", b"$ ", b"> ", 80, 3);
                 // Replace "é" with "è" — same byte count, same width.
-                let (out, _) = redraw_sequence(&mut anchor, b"\xc3\xa8x", 3, b"$ ");
+                let (out, _) = redraw_sequence(&mut anchor, b"\xc3\xa8x", 3, b"$ ", b"> ");
                 // Diff at byte 0 (snap-back over multibyte). Move
                 // from (0, 4) to (0, 2): \x1b[2D. Write the new bytes
                 // for "è" + 'x' (3 bytes). End at col 4. \r + 4C.
@@ -1015,12 +1438,120 @@ mod tests {
             set_test_locale_c();
             with_cols(Some(80), || {
                 // C-k clearing everything to end: from "hello" → "".
-                let mut anchor = snapshot_at(b"hello", b"$ ", 80, 0);
+                let mut anchor = snapshot_at(b"hello", b"$ ", b"> ", 80, 0);
                 // anchor.prev.cursor_col is 2 (just after prompt).
-                let (out, _) = redraw_sequence(&mut anchor, b"", 0, b"$ ");
+                let (out, _) = redraw_sequence(&mut anchor, b"", 0, b"$ ", b"> ");
                 // Cursor already at diff (0, 2). Empty tail. Shrink
                 // same-row → \x1b[K. \r + 2C.
                 assert_eq!(out, b"\x1b[K\r\x1b[2C");
+            });
+        });
+    }
+
+    // ---------- incremental path with embedded newlines ----------
+
+    #[test]
+    fn incremental_append_newline_emits_ps2() {
+        assert_no_syscalls(|| {
+            set_test_locale_c();
+            with_cols(Some(80), || {
+                // Start with "foo" rendered, cursor at end.
+                let mut anchor = snapshot_at(b"foo", b"$ ", b"> ", 80, 3);
+                // Append "\n" — cursor still after the \n, on row 1.
+                let (out, err) = redraw_sequence(&mut anchor, b"foo\n", 4, b"$ ", b"> ");
+                // No motion needed (cursor at diff). The diff tail
+                // contains a `\n`, so a `\x1b[J` is emitted up front
+                // to wipe any stale screen tail before we leave the
+                // current row. Then write "\n" to stdout and "> "
+                // to stderr. End at (1, 2). Cursor at (1, 2).
+                // \r + 2C.
+                assert_eq!(out, b"\x1b[J\n\r\x1b[2C");
+                assert_eq!(err, b"> ");
+                let prev = anchor.prev.as_ref().unwrap();
+                assert_eq!(prev.end_row, 1);
+                assert_eq!(prev.end_col, 2);
+                assert_eq!(prev.cursor_row, 1);
+                assert_eq!(prev.cursor_col, 2);
+            });
+        });
+    }
+
+    #[test]
+    fn incremental_append_newline_and_text_emits_ps2_before_tail() {
+        assert_no_syscalls(|| {
+            set_test_locale_c();
+            with_cols(Some(80), || {
+                let mut anchor = snapshot_at(b"foo", b"$ ", b"> ", 80, 3);
+                // Paste "\nbar" at end.
+                let (out, err) = redraw_sequence(&mut anchor, b"foo\nbar", 7, b"$ ", b"> ");
+                // Cursor at diff (0, 5). The diff tail contains a
+                // `\n`, so a pre-tail `\x1b[J` wipes any stale
+                // screen content past the diff. Then write "\nbar":
+                // stdout gets "\n" then "bar"; stderr gets "> "
+                // between them. End at (1, 5). \r + 5C.
+                assert_eq!(out, b"\x1b[J\nbar\r\x1b[5C");
+                assert_eq!(err, b"> ");
+            });
+        });
+    }
+
+    #[test]
+    fn incremental_insert_newline_mid_buffer_wipes_stale_tail_on_old_row() {
+        // Regression: pressing Alt-Enter in the middle of a single
+        // line used to leave the post-cursor bytes of the *old* row
+        // on-screen, because the new tail starts with `\n` which
+        // immediately leaves the row before overwriting those bytes,
+        // and the post-write shrinkage check sees `(new_end_row+1,
+        // _)` > `(old_end_row, _)` and skips the wipe. The fix is
+        // to emit `\x1b[J` up front whenever the new tail contains
+        // a `\n`.
+        assert_no_syscalls(|| {
+            set_test_locale_c();
+            with_cols(Some(80), || {
+                // Old state: "echo foo bar" with cursor parked
+                // between "foo" and " bar" (byte 8).
+                let mut anchor = snapshot_at(b"echo foo bar", b"$ ", b"> ", 80, 8);
+                // Press Alt-Enter at the cursor → buffer becomes
+                // "echo foo\n bar", cursor now at byte 9 (start of
+                // the new continuation row).
+                let (out, err) = redraw_sequence(&mut anchor, b"echo foo\n bar", 9, b"$ ", b"> ");
+                // Diff byte = 8 (space → `\n`). Diff target is
+                // (0, 10). The prev cursor was at (0, 10) as well,
+                // so no motion is emitted before the wipe. `\x1b[J`
+                // wipes " bar" from the old row 0 tail; we then
+                // write "\n" + " bar" with a PS2 in between.
+                // End at (1, 5). Cursor target = byte 9 of new
+                // buffer = column 2 of row 1 (the PS2-padded start
+                // of the second logical row). \r + 2C.
+                assert_eq!(out, b"\x1b[J\n bar\r\x1b[2C");
+                assert_eq!(err, b"> ");
+                let prev = anchor.prev.as_ref().unwrap();
+                assert_eq!(prev.end_row, 1);
+                assert_eq!(prev.end_col, 6);
+                assert_eq!(prev.cursor_row, 1);
+                assert_eq!(prev.cursor_col, 2);
+            });
+        });
+    }
+
+    #[test]
+    fn incremental_cursor_navigates_to_first_line_after_paste() {
+        // The headline bug: after a multi-line paste, Ctrl-a should
+        // land the cursor on the *prompt* row, not on the last row
+        // of the pasted region.
+        assert_no_syscalls(|| {
+            set_test_locale_c();
+            with_cols(Some(80), || {
+                let mut anchor = snapshot_at(b"foo\nbar", b"$ ", b"> ", 80, 7);
+                // Same buffer, cursor → 0 (Ctrl-a from end).
+                let (out, _) = redraw_sequence(&mut anchor, b"foo\nbar", 0, b"$ ", b"> ");
+                // Empty tail. From (1, 5) to diff (1, 5): no move.
+                // No shrink. \r + 1A + 2C: climb one row, walk to
+                // the PS1's column.
+                assert_eq!(out, b"\r\x1b[1A\x1b[2C");
+                let prev = anchor.prev.as_ref().unwrap();
+                assert_eq!(prev.cursor_row, 0);
+                assert_eq!(prev.cursor_col, 2);
             });
         });
     }
@@ -1032,12 +1563,31 @@ mod tests {
         assert_no_syscalls(|| {
             set_test_locale_c();
             with_cols(Some(80), || {
-                let mut anchor = snapshot_at(b"hello", b"$ ", 80, 5);
+                let mut anchor = snapshot_at(b"hello", b"$ ", b"> ", 80, 5);
                 // Change prompt: incremental must be rejected.
-                let (out, err) = redraw_sequence(&mut anchor, b"hello", 5, b"# ");
+                let (out, err) = redraw_sequence(&mut anchor, b"hello", 5, b"# ", b"> ");
                 // Full repaint: prefix + body + position.
                 assert_eq!(out, b"\r\x1b[Jhello\r\x1b[7C");
                 assert_eq!(err, b"# ");
+            });
+        });
+    }
+
+    #[test]
+    fn ps2_change_forces_full_repaint() {
+        assert_no_syscalls(|| {
+            set_test_locale_c();
+            with_cols(Some(80), || {
+                let mut anchor = snapshot_at(b"foo\nbar", b"$ ", b"> ", 80, 7);
+                // Change ps2 from "> " to ".. ": incremental rejected.
+                let (out, err) = redraw_sequence(&mut anchor, b"foo\nbar", 7, b"$ ", b".. ");
+                // Full repaint: PS1 + PS2 (new) re-emitted to stderr.
+                assert_eq!(err, b"$ .. ");
+                // Previous draw left the cursor on row 1; full repaint
+                // climbs back one row before clearing to end-of-screen.
+                // End at row 1 col 6 ("..bar" → col 3+3=6). Cursor
+                // target also (1, 6). \r + 6C.
+                assert_eq!(out, b"\x1b[1A\r\x1b[Jfoo\nbar\r\x1b[6C");
             });
         });
     }
@@ -1047,9 +1597,9 @@ mod tests {
         assert_no_syscalls(|| {
             set_test_locale_c();
             // Pre-seed with cols=10 then redraw under cols=20.
-            let mut anchor = snapshot_at(b"hello", b"$ ", 10, 5);
+            let mut anchor = snapshot_at(b"hello", b"$ ", b"> ", 10, 5);
             with_cols(Some(20), || {
-                let (out, err) = redraw_sequence(&mut anchor, b"hello", 5, b"$ ");
+                let (out, err) = redraw_sequence(&mut anchor, b"hello", 5, b"$ ", b"> ");
                 // Full repaint, no climb-up (cols differ so we don't
                 // trust the previous cursor row).
                 assert_eq!(out, b"\r\x1b[Jhello\r\x1b[7C");
