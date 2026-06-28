@@ -98,9 +98,22 @@ Every area listed below has been audited and fixed. New code touching any of the
 
 - Decimal point in floating-point output uses `locale::decimal_point()` (LC_NUMERIC) instead of a hardcoded `b'.'`.
 
+### Grapheme clusters and combining marks (`interactive/editor/redraw.rs`)
+
+- A *grapheme cluster* is a base character plus any immediately-following zero-width combining marks (e.g. `m̄` = `m` + U+0304 COMBINING MACRON renders as one cell). `grapheme_len_at` / `prev_grapheme_start` step over a whole cluster; the combining-mark predicate is tied to `char_width(wc) == 0` (excluding C0/C1 controls and `\n`) so grapheme grouping and on-screen width stay in lockstep.
+
+### Emacs line editor (`interactive/emacs_editing/`)
+
+- Character cursor movement (`forward-char` / `backward-char`, bound to the Right/Left arrows and `C-f` / `C-b`) steps by grapheme cluster, so one keypress moves across a base character and its combining marks instead of parking on the (zero-width, invisible) position between them.
+- Word motions (`M-f` / `M-b` / `M-d` / `M-DEL` / `C-w`) are grapheme-aware via the shared `editor/words.rs` helpers: a combining mark inherits the word class of its base, so `forward-word` over an accented word does not stop between the base letter and its accent.
+- `delete-char` / `backward-delete-char` (Backspace) remove a whole grapheme cluster, so one keypress deletes one visible glyph (`m̄` is wiped in a single backspace rather than removing the accent first). This is a deliberate deviation from GNU Readline, which deletes a single codepoint; the trade-off is that an accent can no longer be edited off independently, which matches user expectation that one backspace removes one visible character.
+- `transpose-chars` still operates on single codepoints (transposing across a combining mark is an unsupported corner case, as in Readline).
+- Display-width calculations use `char_width(wc)` for correct cursor positioning with wide/zero-width characters.
+
 ### Vi line editor (`interactive/vi_editing.rs`)
 
-- Cursor movement (`h`, `l`) steps by character length using `char_len_at` / `prev_char_start`.
+- Single-character cursor movement (`h`, `l`) steps by codepoint via `char_len_at` / `prev_char_start`. (Grapheme-cluster motion for vi single-char moves is part of the vi multi-line follow-up — see `docs/features/emacs-editing-mode.md` § 5.12.1.)
+- Word motions share `editor/words.rs` with the emacs editor, so they are already grapheme-aware.
 - Backspace / delete (`x`, `X`) removes full multi-byte characters.
 - Case toggle (`~`) decodes, converts, re-encodes, and handles potential byte-length changes.
 - Display-width calculations use `char_width(wc)` for correct cursor positioning with wide/zero-width characters.

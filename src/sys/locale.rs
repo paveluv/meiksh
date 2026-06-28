@@ -464,10 +464,43 @@ pub(crate) fn char_width(wc: u32) -> usize {
     if !super::test_support::test_locale_is_utf8() {
         if wc < 0x20 || wc == 0x7f { 0 } else { 1 }
     } else if let Some(ch) = char::from_u32(wc) {
-        if ch.is_control() { 0 } else { 1 }
+        if ch.is_control() || is_test_zero_width(wc) {
+            0
+        } else {
+            1
+        }
     } else {
         0
     }
+}
+
+/// Test-only approximation of the zero-width portion of `wcwidth(3)`.
+/// The production `char_width` defers to libc, which returns 0 for
+/// combining marks and zero-width format characters; the pure-logic
+/// test harness has no libc, so we recognise the common combining /
+/// zero-width blocks explicitly. Kept deliberately small — it only
+/// needs to cover what the editor's grapheme-clustering and
+/// display-width tests exercise (e.g. U+0304 COMBINING MACRON), not
+/// the full Unicode width tables.
+#[cfg(test)]
+fn is_test_zero_width(wc: u32) -> bool {
+    matches!(wc,
+        0x0300..=0x036F  // Combining Diacritical Marks
+        | 0x0483..=0x0489
+        | 0x0591..=0x05BD
+        | 0x0610..=0x061A
+        | 0x064B..=0x065F
+        | 0x0670
+        | 0x06D6..=0x06DC
+        | 0x1AB0..=0x1AFF  // Combining Diacritical Marks Extended
+        | 0x1DC0..=0x1DFF  // Combining Diacritical Marks Supplement
+        | 0x200B..=0x200F  // zero-width space / joiners / marks
+        | 0x202A..=0x202E
+        | 0x2060..=0x2064
+        | 0x20D0..=0x20FF  // Combining Diacritical Marks for Symbols
+        | 0xFE20..=0xFE2F  // Combining Half Marks
+        | 0xFEFF           // zero-width no-break space (BOM)
+    )
 }
 
 #[cfg(not(test))]

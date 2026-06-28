@@ -12,7 +12,9 @@ use crate::sys;
 
 use super::super::editor::history_search::{Direction, find_prefix};
 use super::super::editor::input::write_bytes;
-use super::super::editor::redraw::{char_len_at, display_width, prev_char_start};
+use super::super::editor::redraw::{
+    char_len_at, display_width, grapheme_len_at, prev_char_start, prev_grapheme_start,
+};
 use super::super::editor::words::{WordClass, next_word_boundary, prev_word_boundary};
 use super::completion_context::{
     CompletionContext, classify_completion_context, find_open_quote_pos,
@@ -81,7 +83,7 @@ pub(crate) fn apply(
             if state.cursor >= state.buf.len() {
                 out.bell = true;
             } else {
-                let n = state.cursor + char_len_at(&state.buf, state.cursor);
+                let n = state.cursor + grapheme_len_at(&state.buf, state.cursor);
                 state.cursor = n.min(state.buf.len());
             }
         }
@@ -89,7 +91,7 @@ pub(crate) fn apply(
             if state.cursor == 0 {
                 out.bell = true;
             } else {
-                state.cursor = prev_char_start(&state.buf, state.cursor);
+                state.cursor = prev_grapheme_start(&state.buf, state.cursor);
             }
         }
         EmacsFn::ForwardWord => {
@@ -409,7 +411,11 @@ fn do_backward_delete_char(state: &mut EmacsState, out: &mut Outcome) {
         out.bell = true;
         return;
     }
-    let start = prev_char_start(&state.buf, state.cursor);
+    // Delete the whole grapheme cluster to the left (base character
+    // plus its trailing zero-width combining marks), so one backspace
+    // removes one visible glyph. `m̄` (m + U+0304) is wiped in a single
+    // press rather than leaving the bare `m` behind.
+    let start = prev_grapheme_start(&state.buf, state.cursor);
     let removed: Vec<u8> = state.buf[start..state.cursor].to_vec();
     state.buf.drain(start..state.cursor);
     state.cursor = start;
@@ -429,7 +435,10 @@ fn do_delete_char(state: &mut EmacsState, out: &mut Outcome) {
         }
         return;
     }
-    let end = state.cursor + char_len_at(&state.buf, state.cursor);
+    // Symmetric with backspace: delete the whole grapheme cluster to
+    // the right (base character plus its trailing combining marks) so
+    // `delete-char` never leaves an orphaned combining mark behind.
+    let end = state.cursor + grapheme_len_at(&state.buf, state.cursor);
     let removed: Vec<u8> = state.buf[state.cursor..end].to_vec();
     state.buf.drain(state.cursor..end);
     state.undo.push(UndoEntry::Killed {
@@ -1468,6 +1477,36 @@ mod tests {
     }
 
     #[test]
+    fn backspace_and_delete_remove_whole_combining_grapheme() {
+        // "am̄b" = a, m, U+0304, b → bytes [a, m, cc, 84, b], len 5.
+        // One backspace from after the macron removes the entire "m̄"
+        // grapheme, leaving "ab"; symmetrically one delete-char from
+        // before "m̄" removes it too, never orphaning the macron.
+        assert_no_syscalls(|| {
+            crate::sys::test_support::set_test_locale_utf8();
+
+            let mut shell = test_shell();
+            let mut state = EmacsState::new(0x7f);
+            state.buf = b"am\xcc\x84b".to_vec();
+            state.cursor = 4; // just after the macron (end of "m̄")
+            let out = apply(&mut shell, &mut state, EmacsFn::BackwardDeleteChar, 0x7f);
+            assert!(!out.bell);
+            assert_eq!(state.buf, b"ab");
+            assert_eq!(state.cursor, 1);
+
+            // Undo restores the full grapheme in one step.
+            apply(&mut shell, &mut state, EmacsFn::Undo, 0);
+            assert_eq!(state.buf, b"am\xcc\x84b");
+
+            // Forward delete-char from before "m̄" wipes the grapheme.
+            state.cursor = 1;
+            apply(&mut shell, &mut state, EmacsFn::DeleteChar, 0x04);
+            assert_eq!(state.buf, b"ab");
+            assert_eq!(state.cursor, 1);
+        });
+    }
+
+    #[test]
     fn kill_line_removes_tail_and_populates_kill_buffer() {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
@@ -2127,6 +2166,36 @@ mod tests {
             let out = apply(&mut shell, &mut state, EmacsFn::BackwardChar, 0x02);
             assert!(out.bell);
             assert_eq!(state.cursor, 0);
+        });
+    }
+
+    #[test]
+    fn forward_and_backward_char_step_over_combining_grapheme() {
+        // Regression: "m̄" (m + U+0304 COMBINING MACRON) renders as a
+        // single visible cell, so one arrow press must move across the
+        // whole grapheme rather than parking the cursor between the
+        // base letter and its accent.
+        assert_no_syscalls(|| {
+            crate::sys::test_support::set_test_locale_utf8();
+            let mut shell = test_shell();
+            let mut state = EmacsState::new(0x7f);
+            // "xm̄y" = x, m, U+0304, y  → bytes [x, m, cc, 84, y].
+            state.buf = b"xm\xcc\x84y".to_vec();
+            state.cursor = 0;
+
+            apply(&mut shell, &mut state, EmacsFn::ForwardChar, 0x06);
+            assert_eq!(state.cursor, 1, "first step lands after 'x'");
+            apply(&mut shell, &mut state, EmacsFn::ForwardChar, 0x06);
+            assert_eq!(state.cursor, 4, "second step clears the whole 'm̄' grapheme");
+            apply(&mut shell, &mut state, EmacsFn::ForwardChar, 0x06);
+            assert_eq!(state.cursor, 5, "third step lands after 'y'");
+
+            apply(&mut shell, &mut state, EmacsFn::BackwardChar, 0x02);
+            assert_eq!(state.cursor, 4, "back over 'y'");
+            apply(&mut shell, &mut state, EmacsFn::BackwardChar, 0x02);
+            assert_eq!(state.cursor, 1, "back over the whole 'm̄' grapheme");
+            apply(&mut shell, &mut state, EmacsFn::BackwardChar, 0x02);
+            assert_eq!(state.cursor, 0, "back over 'x'");
         });
     }
 

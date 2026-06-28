@@ -9,13 +9,20 @@
 //!   part of a word. Used by emacs `C-w` (`unix-word-rubout`, spec
 //!   5.4) and by vi's uppercase word motions.
 //!
-//! All byte offsets returned by this module are multibyte-safe: the
-//! input is treated as a sequence of locale-decoded characters via
-//! [`crate::sys::locale::decode_char`].
+//! All byte offsets returned by this module are multibyte-safe and
+//! grapheme-aware: the input is treated as a sequence of locale-decoded
+//! grapheme clusters (a base character plus any trailing zero-width
+//! combining marks). Advancing by [`grapheme_len_at`] /
+//! [`prev_grapheme_start`] rather than by single codepoints means a
+//! combining mark (e.g. U+0304 in `m̄`) inherits the word class of its
+//! base character instead of being classified independently — without
+//! this, `forward-word` over an accented word would stop between the
+//! base letter and its accent, the word-level analogue of the
+//! single-char bug fixed in `forward-char` / `backward-char`.
 
 use crate::sys;
 
-use super::redraw::{char_len_at, prev_char_start};
+use super::redraw::{grapheme_len_at, prev_grapheme_start};
 
 /// Character-class selector for word motions.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -46,11 +53,11 @@ pub(crate) fn is_ws_at(line: &[u8], pos: usize) -> bool {
 }
 
 pub(crate) fn is_word_char_before(line: &[u8], pos: usize) -> bool {
-    is_word_char_at(line, prev_char_start(line, pos))
+    is_word_char_at(line, prev_grapheme_start(line, pos))
 }
 
 pub(crate) fn is_ws_before(line: &[u8], pos: usize) -> bool {
-    is_ws_at(line, prev_char_start(line, pos))
+    is_ws_at(line, prev_grapheme_start(line, pos))
 }
 
 /// Move forward from `pos` to the *next* word boundary per `class`.
@@ -72,24 +79,24 @@ pub(crate) fn next_word_boundary(line: &[u8], pos: usize, class: WordClass) -> u
             }
             if is_word_char_at(line, p) {
                 while p < len && is_word_char_at(line, p) {
-                    p += char_len_at(line, p);
+                    p += grapheme_len_at(line, p);
                 }
             } else if !is_ws_at(line, p) {
                 while p < len && !is_word_char_at(line, p) && !is_ws_at(line, p) {
-                    p += char_len_at(line, p);
+                    p += grapheme_len_at(line, p);
                 }
             }
             while p < len && is_ws_at(line, p) {
-                p += char_len_at(line, p);
+                p += grapheme_len_at(line, p);
             }
             p
         }
         WordClass::Whitespace => {
             while p < len && !is_ws_at(line, p) {
-                p += char_len_at(line, p);
+                p += grapheme_len_at(line, p);
             }
             while p < len && is_ws_at(line, p) {
-                p += char_len_at(line, p);
+                p += grapheme_len_at(line, p);
             }
             p
         }
@@ -109,28 +116,28 @@ pub(crate) fn prev_word_boundary(line: &[u8], pos: usize, class: WordClass) -> u
     match class {
         WordClass::AlnumUnderscore => {
             while p > 0 && is_ws_before(line, p) {
-                p = prev_char_start(line, p);
+                p = prev_grapheme_start(line, p);
             }
             if p == 0 {
                 return 0;
             }
             if is_word_char_before(line, p) {
                 while p > 0 && is_word_char_before(line, p) {
-                    p = prev_char_start(line, p);
+                    p = prev_grapheme_start(line, p);
                 }
             } else {
                 while p > 0 && !is_word_char_before(line, p) && !is_ws_before(line, p) {
-                    p = prev_char_start(line, p);
+                    p = prev_grapheme_start(line, p);
                 }
             }
             p
         }
         WordClass::Whitespace => {
             while p > 0 && is_ws_before(line, p) {
-                p = prev_char_start(line, p);
+                p = prev_grapheme_start(line, p);
             }
             while p > 0 && !is_ws_before(line, p) {
-                p = prev_char_start(line, p);
+                p = prev_grapheme_start(line, p);
             }
             p
         }
@@ -223,5 +230,27 @@ mod tests {
         assert_eq!(b_c, b_utf8); // both land on 'e' start of "ef"
         // both agree on the trailing word
         assert_eq!(b_c, 7);
+    }
+
+    #[test]
+    fn word_motion_treats_combining_mark_as_part_of_base() {
+        // "m̄ix" = m + U+0304 COMBINING MACRON + i + x → a single
+        // alphanumeric word. Without grapheme-aware iteration the
+        // forward walk would stop between 'm' and the macron (the
+        // mark is not [:alnum:]), and the backward walk would stop
+        // there too. Bytes: [m, cc, 84, i, x] then " y".
+        assert_no_syscalls(|| {
+            set_test_locale_utf8();
+            let line = b"m\xcc\x84ix y"; // "m̄ix y", len 7
+            // forward-word from start clears the whole accented word
+            // and the trailing space, landing on 'y'.
+            assert_eq!(next_word_boundary(line, 0, WordClass::AlnumUnderscore), 6);
+            // backward-word from end of "m̄ix" lands at the very start,
+            // not between 'm' and its macron.
+            assert_eq!(prev_word_boundary(line, 5, WordClass::AlnumUnderscore), 0);
+            // whitespace-class motion behaves the same for this input
+            // (no embedded punctuation): one word then the space.
+            assert_eq!(next_word_boundary(line, 0, WordClass::Whitespace), 6);
+        });
     }
 }

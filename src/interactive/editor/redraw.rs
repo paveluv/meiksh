@@ -165,6 +165,70 @@ pub(crate) fn last_char_start(line: &[u8]) -> usize {
     prev_char_start(line, line.len())
 }
 
+/// True iff `wc` is a zero-width *combining* character that should be
+/// glued to the preceding base character when forming a grapheme
+/// cluster for cursor-movement purposes (e.g. U+0304 COMBINING MACRON
+/// in `m̄`).
+///
+/// The set is exactly the codepoints the renderer draws with zero
+/// columns (`char_width(wc) == 0`) *minus* the C0/C1 control range and
+/// DEL. Those controls are independently-addressable buffer positions
+/// — most importantly `\n`, the editor's logical-line separator —
+/// that must never be absorbed into a neighbouring grapheme. Tying the
+/// predicate to `char_width` (rather than a hand-rolled Unicode table)
+/// keeps grapheme grouping and on-screen width in lockstep: any mark
+/// the renderer collapses to zero columns is one the cursor steps over
+/// as part of its base, and vice versa.
+fn is_zero_width_combining(wc: u32) -> bool {
+    if wc < 0x20 || (0x7f..=0x9f).contains(&wc) {
+        return false;
+    }
+    sys::locale::char_width(wc) == 0
+}
+
+/// Byte length of the *grapheme cluster* starting at `pos`: the base
+/// character plus any immediately-following zero-width combining marks.
+/// Returns 0 past end-of-input.
+///
+/// Cursor motion (`forward-char` and the vi `l`-family) uses this in
+/// place of [`char_len_at`] so a single keypress steps over a whole
+/// visible glyph (`m̄` = `m` + U+0304) instead of parking the cursor
+/// between a base letter and its accent — a position that occupies the
+/// same screen column and is therefore invisible to the user.
+pub(crate) fn grapheme_len_at(line: &[u8], pos: usize) -> usize {
+    if pos >= line.len() {
+        return 0;
+    }
+    let mut end = pos + char_len_at(line, pos);
+    while end < line.len() {
+        let (wc, len) = sys::locale::decode_char(&line[end..]);
+        if !is_zero_width_combining(wc) {
+            break;
+        }
+        end += if len == 0 { 1 } else { len };
+    }
+    end - pos
+}
+
+/// Byte offset of the start of the grapheme cluster that ends just
+/// before `pos`: walk back over any trailing zero-width combining
+/// marks and then over the single base character they attach to.
+/// Mirror of [`grapheme_len_at`] for `backward-char` / vi `h`.
+pub(crate) fn prev_grapheme_start(line: &[u8], pos: usize) -> usize {
+    if pos == 0 {
+        return 0;
+    }
+    let mut p = prev_char_start(line, pos);
+    while p > 0 {
+        let (wc, _) = sys::locale::decode_char(&line[p..]);
+        if !is_zero_width_combining(wc) {
+            break;
+        }
+        p = prev_char_start(line, p);
+    }
+    p
+}
+
 /// Visible column width of a rendered prompt. Strips ANSI escape
 /// sequences (CSI `\x1b[...<final-byte>`, OSC `\x1b]...BEL/ST`, and
 /// single-character ESC sequences) so that color/title escapes
@@ -916,6 +980,48 @@ mod tests {
             assert_eq!(display_width(line), 1);
             assert_eq!(char_len_at(line, 0), 2);
             assert_eq!(prev_char_start(line, 2), 0);
+        });
+    }
+
+    #[test]
+    fn grapheme_motion_groups_combining_marks() {
+        assert_no_syscalls(|| {
+            set_test_locale_utf8();
+            // "m̄" = 'm' (1 byte) + U+0304 COMBINING MACRON (2 bytes,
+            // zero width). The whole grapheme is one visible cell and
+            // must move under the cursor as a unit.
+            let line = b"m\xcc\x84"; // [0x6d, 0xcc, 0x84]
+            assert_eq!(display_width(line), 1);
+            // Plain char motion would stop between 'm' and the mark…
+            assert_eq!(char_len_at(line, 0), 1);
+            // …grapheme motion steps over both at once.
+            assert_eq!(grapheme_len_at(line, 0), 3);
+            assert_eq!(prev_grapheme_start(line, 3), 0);
+
+            // A base char followed by *two* stacked marks groups all
+            // three codepoints: 'e' + U+0301 + U+0304.
+            let stacked = b"e\xcc\x81\xcc\x84";
+            assert_eq!(grapheme_len_at(stacked, 0), 5);
+            assert_eq!(prev_grapheme_start(stacked, 5), 0);
+        });
+    }
+
+    #[test]
+    fn grapheme_motion_does_not_cross_newline() {
+        assert_no_syscalls(|| {
+            set_test_locale_utf8();
+            // `\n` is zero-width to `wcwidth` but is the editor's
+            // logical-line separator; it must remain an independently
+            // addressable position rather than being absorbed into the
+            // preceding grapheme.
+            let line = b"a\nb";
+            assert_eq!(grapheme_len_at(line, 0), 1);
+            assert_eq!(prev_grapheme_start(line, 2), 1); // back from 'b' lands on '\n'
+            // And a grapheme that ends right before the newline stops
+            // at the newline boundary going forward.
+            let accented = b"m\xcc\x84\nx"; // "m̄\nx"
+            assert_eq!(grapheme_len_at(accented, 0), 3);
+            assert_eq!(prev_grapheme_start(accented, 4), 3); // '\n' at index 3
         });
     }
 
