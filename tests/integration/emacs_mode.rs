@@ -1165,9 +1165,11 @@ fn ctrl_r_reverse_search_finds_and_reexecutes() {
 
 /// § 7: while the reverse-i-search mini-buffer is active, the matched
 /// history line shall be displayed *inline* after the
-/// `(reverse-i-search`pat'): ` prompt so the user can see which entry
-/// the search selected. Regression for a bug where only the typed
-/// pattern was shown and the match was invisible until acceptance.
+/// `(reverse-i-search`pat'): ` prompt, with the matched span shown in
+/// reverse video (`\e[7m`…`\e[27m`) the way bash/readline highlights
+/// it, so the user can see which entry the search selected and where
+/// it matched. Regression for a bug where only the typed pattern was
+/// shown and the match was invisible until acceptance.
 #[test]
 fn ctrl_r_shows_matched_line_inline_during_search() {
     let Some(mut pty) = spawn_or_skip() else {
@@ -1180,16 +1182,22 @@ fn ctrl_r_shows_matched_line_inline_during_search() {
     let _ = drain_until_contains(&mut pty, b"INLINE_WITNESS\r\n");
     // C-r then a substring that occurs *inside* the command (not at
     // its start), without accepting. The mini-buffer must render the
-    // whole matched line, not just the pattern.
+    // whole matched line with the matched span reverse-video wrapped.
     pty.send(b"\x12WITNESS");
-    let out = drain_until_contains(&mut pty, b"WITNESS'): printf 'INLINE_WITNESS");
+    let out = drain_until_contains(&mut pty, b"\x1b[7mWITNESS\x1b[27m");
     // Abort the search so the shell can exit cleanly.
     pty.send(b"\x07");
     let _ = pty.exit_and_wait();
     let text = String::from_utf8_lossy(&out);
+    // The matched line is rendered inline (prompt + leading text) and
+    // the matched substring is wrapped in the reverse-video pair.
     assert!(
-        text.contains("(reverse-i-search`WITNESS'): printf 'INLINE_WITNESS"),
+        text.contains("(reverse-i-search`WITNESS'): printf 'INLINE_"),
         "expected matched line rendered inline in the i-search mini-buffer: {text:?}"
+    );
+    assert!(
+        text.contains("\u{1b}[7mWITNESS\u{1b}[27m"),
+        "expected matched span highlighted in reverse video: {text:?}"
     );
 }
 

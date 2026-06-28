@@ -500,15 +500,33 @@ fn draw_search_prompt(search: &IncrementalSearch<'_>, line: &[u8]) {
     buf.push(b'`');
     buf.extend_from_slice(search.pattern());
     buf.extend_from_slice(b"'): ");
-    buf.extend_from_slice(line);
-    // Park the cursor at the start of the matched substring within the
-    // displayed line. The next redraw begins with `\r`, which resets
-    // the column, so this move never desyncs subsequent updates.
+    // Render the matched line, reverse-video-highlighting the exact
+    // span the pattern matched (bash/readline § 7 behaviour) and
+    // parking the cursor at the start of that span. The next redraw
+    // begins with `\r`, which resets the column, so the cursor move
+    // never desyncs subsequent updates. When the search is failing or
+    // the pattern is empty there is nothing to highlight, so the line
+    // is shown verbatim with the cursor just after the prompt.
     let pattern = search.pattern();
-    let match_off = if pattern.is_empty() {
-        0
+    let hit = if pattern.is_empty() || search.failing() {
+        None
     } else {
-        leftmost_offset(line, pattern).unwrap_or(0)
+        leftmost_offset(line, pattern)
+    };
+    let match_off = match hit {
+        Some(off) => {
+            let end = off + pattern.len();
+            buf.extend_from_slice(&line[..off]);
+            buf.extend_from_slice(b"\x1b[7m");
+            buf.extend_from_slice(&line[off..end]);
+            buf.extend_from_slice(b"\x1b[27m");
+            buf.extend_from_slice(&line[end..]);
+            off
+        }
+        None => {
+            buf.extend_from_slice(line);
+            0
+        }
     };
     let back = display_width(line).saturating_sub(display_width(&line[..match_off]));
     if back > 0 {
@@ -851,7 +869,7 @@ mod tests {
                         read(fd(STDIN_FILENO), _) -> bytes([0x12]),
                         write(fd(STDERR_FILENO), bytes(b"\r\x1b[K(reverse-i-search`'): ")) -> auto,
                         read(fd(STDIN_FILENO), _) -> bytes([b'h']),
-                        write(fd(STDERR_FILENO), bytes(b"\r\x1b[K(reverse-i-search`h'): hi\x1b[2D")) -> auto,
+                        write(fd(STDERR_FILENO), bytes(b"\r\x1b[K(reverse-i-search`h'): \x1b[7mh\x1b[27mi\x1b[2D")) -> auto,
                         read(fd(STDIN_FILENO), _) -> bytes([0x1b]),
                         write(fd(STDOUT_FILENO), bytes(CLEAR_LINE)) -> auto,
                         write(fd(STDOUT_FILENO), bytes(b"hi")) -> auto,
@@ -891,7 +909,7 @@ mod tests {
                         read(fd(STDIN_FILENO), _) -> bytes([0x12]),
                         write(fd(STDERR_FILENO), bytes(b"\r\x1b[K(reverse-i-search`'): ")) -> auto,
                         read(fd(STDIN_FILENO), _) -> bytes([b'h']),
-                        write(fd(STDERR_FILENO), bytes(b"\r\x1b[K(reverse-i-search`h'): hi\x1b[2D")) -> auto,
+                        write(fd(STDERR_FILENO), bytes(b"\r\x1b[K(reverse-i-search`h'): \x1b[7mh\x1b[27mi\x1b[2D")) -> auto,
                         read(fd(STDIN_FILENO), _) -> bytes([0x1b]),
                         write(fd(STDOUT_FILENO), bytes(CLEAR_LINE)) -> auto,
                         write(fd(STDOUT_FILENO), bytes(b"hi")) -> auto,
