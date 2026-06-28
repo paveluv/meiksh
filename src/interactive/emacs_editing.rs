@@ -35,7 +35,7 @@ use super::editor::bracketed_paste::{
 use super::editor::history_search::Direction;
 use super::editor::input::{bell, read_byte_with_signal_handler, write_bytes};
 use super::editor::raw_mode::RawMode;
-use super::editor::redraw::redraw;
+use super::editor::redraw::{display_width, redraw};
 
 /// Outer entry point: acquire raw mode (falling back to canonical
 /// reads if the terminal isn't available), run the dispatch loop,
@@ -361,7 +361,7 @@ fn run_incremental_search(
     let saved_cursor = state.cursor;
     let history: Vec<Box<[u8]>> = shell.history().clone();
     let mut search = IncrementalSearch::new(&history, direction);
-    draw_search_prompt(&search);
+    draw_search_prompt(&search, &state.buf);
     loop {
         // Same `EINTR` policy as the outer dispatch loop: drain
         // notifications, redraw the search mini-buffer if a
@@ -375,9 +375,10 @@ fn run_incremental_search(
         // mini-buffer below it; with `set +b` it stays stashed and
         // appears at the next regular prompt after the search
         // terminates.
+        let display = state.buf.clone();
         let (maybe_byte, _intr) = read_byte_with_signal_handler(shell, || {
             write_bytes(b"\r\n");
-            draw_search_prompt(&search);
+            draw_search_prompt(&search, &display);
         })?;
         let byte = match maybe_byte {
             Some(b) => b,
@@ -393,7 +394,7 @@ fn run_incremental_search(
                     state.buf = history[idx].to_vec();
                     state.cursor = state.buf.len();
                 }
-                draw_search_prompt(&search);
+                draw_search_prompt(&search, &state.buf);
             }
             SearchOutcome::Accept => {
                 if let Some(idx) = search.matched() {
@@ -475,7 +476,13 @@ fn run_incremental_search(
     }
 }
 
-fn draw_search_prompt(search: &IncrementalSearch<'_>) {
+/// Render the incremental-search mini-buffer: the
+/// `(reverse-i-search`pat'): ` prompt followed by the current matched
+/// history line, with the terminal cursor parked at the start of the
+/// matched substring (readline § 7 behaviour). Without the inline
+/// `line`, the user only sees their typed pattern and has no way to
+/// tell which history entry the search selected.
+fn draw_search_prompt(search: &IncrementalSearch<'_>, line: &[u8]) {
     let failing = if search.failing() {
         b"failing "
     } else {
@@ -493,7 +500,33 @@ fn draw_search_prompt(search: &IncrementalSearch<'_>) {
     buf.push(b'`');
     buf.extend_from_slice(search.pattern());
     buf.extend_from_slice(b"'): ");
+    buf.extend_from_slice(line);
+    // Park the cursor at the start of the matched substring within the
+    // displayed line. The next redraw begins with `\r`, which resets
+    // the column, so this move never desyncs subsequent updates.
+    let pattern = search.pattern();
+    let match_off = if pattern.is_empty() {
+        0
+    } else {
+        leftmost_offset(line, pattern).unwrap_or(0)
+    };
+    let back = display_width(line).saturating_sub(display_width(&line[..match_off]));
+    if back > 0 {
+        buf.extend_from_slice(b"\x1b[");
+        crate::bstr::push_u64(&mut buf, back as u64);
+        buf.push(b'D');
+    }
     let _ = sys::fd_io::write_all_fd(sys::constants::STDERR_FILENO, &buf);
+}
+
+/// Byte offset of the leftmost occurrence of `needle` in `hay`, or
+/// `None` if absent. Used to position the i-search cursor on the
+/// matched text.
+fn leftmost_offset(hay: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() || needle.len() > hay.len() {
+        return None;
+    }
+    (0..=hay.len() - needle.len()).find(|&i| &hay[i..i + needle.len()] == needle)
 }
 
 fn run_external_editor(
@@ -818,7 +851,7 @@ mod tests {
                         read(fd(STDIN_FILENO), _) -> bytes([0x12]),
                         write(fd(STDERR_FILENO), bytes(b"\r\x1b[K(reverse-i-search`'): ")) -> auto,
                         read(fd(STDIN_FILENO), _) -> bytes([b'h']),
-                        write(fd(STDERR_FILENO), bytes(b"\r\x1b[K(reverse-i-search`h'): ")) -> auto,
+                        write(fd(STDERR_FILENO), bytes(b"\r\x1b[K(reverse-i-search`h'): hi\x1b[2D")) -> auto,
                         read(fd(STDIN_FILENO), _) -> bytes([0x1b]),
                         write(fd(STDOUT_FILENO), bytes(CLEAR_LINE)) -> auto,
                         write(fd(STDOUT_FILENO), bytes(b"hi")) -> auto,
@@ -858,7 +891,7 @@ mod tests {
                         read(fd(STDIN_FILENO), _) -> bytes([0x12]),
                         write(fd(STDERR_FILENO), bytes(b"\r\x1b[K(reverse-i-search`'): ")) -> auto,
                         read(fd(STDIN_FILENO), _) -> bytes([b'h']),
-                        write(fd(STDERR_FILENO), bytes(b"\r\x1b[K(reverse-i-search`h'): ")) -> auto,
+                        write(fd(STDERR_FILENO), bytes(b"\r\x1b[K(reverse-i-search`h'): hi\x1b[2D")) -> auto,
                         read(fd(STDIN_FILENO), _) -> bytes([0x1b]),
                         write(fd(STDOUT_FILENO), bytes(CLEAR_LINE)) -> auto,
                         write(fd(STDOUT_FILENO), bytes(b"hi")) -> auto,

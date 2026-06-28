@@ -495,6 +495,54 @@ fn up_arrow_recalls_previous_history() {
     );
 }
 
+/// History persists across interactive sessions: a command run in one
+/// `meiksh -i` process is recalled (Up-arrow) in a *fresh* process that
+/// shares the same `$HISTFILE`. Regression for "history doesn't load
+/// between runs" — the editor appended accepted lines to the file but
+/// never seeded the in-memory ring from it at startup.
+#[test]
+fn history_persists_across_interactive_sessions() {
+    let histfile = format!("/tmp/meiksh-hist-persist-{}", std::process::id());
+    let _ = std::fs::remove_file(&histfile);
+
+    // Session 1: run the octal-encoded END sentinel. Its *source*
+    // bytes contain no literal "END", so seeing "END" in a later
+    // session proves the recalled command actually executed (not just
+    // an echo of the recalled command text). `append_history` writes
+    // and closes the file synchronously when the line is accepted, so
+    // by the time "END" appears the entry is already on disk.
+    {
+        let Some(mut pty) = spawn_meiksh_pty(&[("HISTFILE", histfile.as_str())]) else {
+            return;
+        };
+        let _ = drain_until_contains(&mut pty, b"$ ");
+        pty.send(END_SENTINEL_INPUT);
+        let _ = drain_until_contains(&mut pty, b"END\r\n");
+        // Drop (kill) rather than `exit` so only the sentinel lands in
+        // the history file, keeping it the most-recent entry for the
+        // next session. Dropping also releases the global PTY lock so
+        // session 2 can spawn.
+        drop(pty);
+    }
+
+    // Session 2: a brand-new process must seed its ring from $HISTFILE
+    // so a single Up-arrow + RET re-runs the sentinel from session 1.
+    let Some(mut pty) = spawn_meiksh_pty(&[("HISTFILE", histfile.as_str())]) else {
+        let _ = std::fs::remove_file(&histfile);
+        return;
+    };
+    let _ = drain_until_contains(&mut pty, b"$ ");
+    pty.send(b"\x1b[A\n");
+    let out = drain_until_contains(&mut pty, b"END\r\n");
+    let _ = pty.exit_and_wait();
+    let _ = std::fs::remove_file(&histfile);
+    let text = String::from_utf8_lossy(&out);
+    assert!(
+        text.contains("END\r\n"),
+        "expected sentinel recalled from prior session's history: {text:?}"
+    );
+}
+
 /// Home (`\e[H`) is `beginning-of-line`; End (`\e[F`) is
 /// `end-of-line`. Exercise both by typing, using Home to jump to
 /// start, inserting, and using End to return.
@@ -1112,6 +1160,36 @@ fn ctrl_r_reverse_search_finds_and_reexecutes() {
     assert!(
         text.matches("UNIQTOKEN").count() >= 2,
         "expected UNIQTOKEN to be re-executed by accepting the search: {text:?}"
+    );
+}
+
+/// § 7: while the reverse-i-search mini-buffer is active, the matched
+/// history line shall be displayed *inline* after the
+/// `(reverse-i-search`pat'): ` prompt so the user can see which entry
+/// the search selected. Regression for a bug where only the typed
+/// pattern was shown and the match was invisible until acceptance.
+#[test]
+fn ctrl_r_shows_matched_line_inline_during_search() {
+    let Some(mut pty) = spawn_or_skip() else {
+        return;
+    };
+    enable_emacs(&mut pty);
+    // Seed a distinctive multi-word command so the match offset is
+    // non-trivial, then drain its execution output.
+    pty.send(b"printf 'INLINE_WITNESS\\n'\n");
+    let _ = drain_until_contains(&mut pty, b"INLINE_WITNESS\r\n");
+    // C-r then a substring that occurs *inside* the command (not at
+    // its start), without accepting. The mini-buffer must render the
+    // whole matched line, not just the pattern.
+    pty.send(b"\x12WITNESS");
+    let out = drain_until_contains(&mut pty, b"WITNESS'): printf 'INLINE_WITNESS");
+    // Abort the search so the shell can exit cleanly.
+    pty.send(b"\x07");
+    let _ = pty.exit_and_wait();
+    let text = String::from_utf8_lossy(&out);
+    assert!(
+        text.contains("(reverse-i-search`WITNESS'): printf 'INLINE_WITNESS"),
+        "expected matched line rendered inline in the i-search mini-buffer: {text:?}"
     );
 }
 
@@ -3118,18 +3196,27 @@ fn smart_accept_line_keeps_editor_open_until_for_loop_is_complete() {
     };
     enable_emacs(&mut pty);
     pty.send(b"for i in 1 2 3\ndo printf '%s\\012' \"$i\"\ndone\n");
-    let out = drain_until_contains(&mut pty, b"3\r\n");
+    // The loop prints 1, 2, 3 on separate lines, which reaches the
+    // terminal as the contiguous block `1\r\n2\r\n3\r\n`. We drain on
+    // that whole block rather than a bare `3\r\n`: the editor echoes
+    // the multi-line buffer with its first logical line rendered as
+    // `for i in 1 2 3\r\n`, so a `3\r\n` sentinel matches the *echo*
+    // and lets the drain return before the loop's real output is
+    // produced — a race that made this test flaky. The block
+    // `1\r\n2\r\n3\r\n` never appears in the echo (the source line is
+    // `1 2 3`, not `1`/`2`/`3` on their own rows), so it is an
+    // unambiguous marker that all three iterations actually ran.
+    let out = drain_until_contains(&mut pty, b"1\r\n2\r\n3\r\n");
     let _ = pty.exit_and_wait();
     let text = String::from_utf8_lossy(&out);
-    // All three iterations must have printed; the loop body would be
-    // a syntax error if the parser had accepted any of the
-    // intermediate `RET`s as a stand-alone command.
-    for needle in ["1\r\n", "2\r\n", "3\r\n"] {
-        assert!(
-            text.contains(needle),
-            "expected `{needle}` after for-loop body completes: {text:?}"
-        );
-    }
+    // The loop body would have been a syntax error if the parser had
+    // accepted any of the intermediate `RET`s as a stand-alone
+    // command, so the presence of all three outputs in order proves
+    // smart-accept-line kept the editor open until `done`.
+    assert!(
+        text.contains("1\r\n2\r\n3\r\n"),
+        "expected loop to print 1, 2, 3 on separate lines after `done`: {text:?}"
+    );
 }
 
 /// § 5.11: Alt-Enter (`\e\r`) shall insert a literal `\n` at the
