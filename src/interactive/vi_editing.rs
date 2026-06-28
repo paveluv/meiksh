@@ -26,11 +26,20 @@ use crate::sys;
 use super::editor::input::{bell, read_byte_with_signal_handler, write_bytes};
 use super::editor::raw_mode::RawMode;
 use super::editor::redraw::{
-    DrawAnchor, char_len_at, display_width_range, last_char_start, prev_char_start, redraw,
+    DrawAnchor, char_len_at, display_width_range, grapheme_len_at, last_char_start,
+    prev_char_start, prev_grapheme_start, redraw,
 };
 use super::editor::words::{
     WordClass, is_word_char_at, is_ws_at, is_ws_before, next_word_boundary, prev_word_boundary,
 };
+
+/// Byte offset of the start of the last grapheme cluster in `line`
+/// (or 0 when empty). Grapheme-aware analogue of [`last_char_start`]
+/// used by the cursor clamps so the cursor never parks between a base
+/// character and a trailing combining mark.
+fn last_grapheme_start(line: &[u8]) -> usize {
+    prev_grapheme_start(line, line.len())
+}
 
 fn expected_utf8_len(first_byte: u8) -> usize {
     if first_byte < 0x80 {
@@ -58,10 +67,10 @@ fn bigword_forward(line: &[u8], pos: usize) -> usize {
     let mut p = pos;
     let len = line.len();
     while p < len && !is_ws_at(line, p) {
-        p += char_len_at(line, p);
+        p += grapheme_len_at(line, p);
     }
     while p < len && is_ws_at(line, p) {
-        p += char_len_at(line, p);
+        p += grapheme_len_at(line, p);
     }
     p
 }
@@ -72,30 +81,30 @@ fn bigword_backward(line: &[u8], pos: usize) -> usize {
     }
     let mut p = pos;
     while p > 0 && is_ws_before(line, p) {
-        p = prev_char_start(line, p);
+        p = prev_grapheme_start(line, p);
     }
     while p > 0 && !is_ws_before(line, p) {
-        p = prev_char_start(line, p);
+        p = prev_grapheme_start(line, p);
     }
     p
 }
 
 fn word_end(line: &[u8], pos: usize) -> usize {
     let len = line.len();
-    let next = pos + char_len_at(line, pos);
+    let next = pos + grapheme_len_at(line, pos);
     if next >= len {
         return pos;
     }
     let mut p = next;
     while p < len && is_ws_at(line, p) {
-        p += char_len_at(line, p);
+        p += grapheme_len_at(line, p);
     }
     if p >= len {
-        return last_char_start(line);
+        return last_grapheme_start(line);
     }
     if is_word_char_at(line, p) {
         loop {
-            let n = p + char_len_at(line, p);
+            let n = p + grapheme_len_at(line, p);
             if n >= len || !is_word_char_at(line, n) {
                 break;
             }
@@ -103,7 +112,7 @@ fn word_end(line: &[u8], pos: usize) -> usize {
         }
     } else {
         loop {
-            let n = p + char_len_at(line, p);
+            let n = p + grapheme_len_at(line, p);
             if n >= len || is_word_char_at(line, n) || is_ws_at(line, n) {
                 break;
             }
@@ -115,19 +124,19 @@ fn word_end(line: &[u8], pos: usize) -> usize {
 
 fn bigword_end(line: &[u8], pos: usize) -> usize {
     let len = line.len();
-    let next = pos + char_len_at(line, pos);
+    let next = pos + grapheme_len_at(line, pos);
     if next >= len {
         return pos;
     }
     let mut p = next;
     while p < len && is_ws_at(line, p) {
-        p += char_len_at(line, p);
+        p += grapheme_len_at(line, p);
     }
     if p >= len {
-        return last_char_start(line);
+        return last_grapheme_start(line);
     }
     loop {
-        let n = p + char_len_at(line, p);
+        let n = p + grapheme_len_at(line, p);
         if n >= len || is_ws_at(line, n) {
             break;
         }
@@ -177,6 +186,15 @@ struct ViState {
     pub search_buf: Vec<u8>,
     pub count_buf: Option<(usize, u8)>,
     pub pending: PendingInput,
+    /// Bytes of a multi-byte UTF-8 character being typed in insert or
+    /// replace mode, buffered until the whole sequence has arrived so a
+    /// truncated glyph is never inserted or painted (the vi analogue of
+    /// the emacs self-insert deferral).
+    mb_pending: Vec<u8>,
+    /// Full byte sequence of the most recent `r` replacement, so `.`
+    /// can repeat a multi-byte replacement instead of just its first
+    /// byte (which would splice an invalid partial sequence).
+    last_replace: Vec<u8>,
     erase_char: u8,
     hist_len: usize,
     /// Cursor row offset from the prompt's first row left by the
@@ -199,6 +217,8 @@ impl ViState {
             search_buf: Vec::new(),
             count_buf: None,
             pending: PendingInput::None,
+            mb_pending: Vec::new(),
+            last_replace: Vec::new(),
             erase_char,
             hist_len,
             draw_anchor: DrawAnchor::new(),
@@ -259,6 +279,7 @@ impl ViState {
                     vec![buf[0]]
                 };
                 self.pending = PendingInput::None;
+                self.last_replace = replacement.clone();
                 self.last_cmd = Some((b'r', count, Some(replacement[0])));
                 for _ in 0..count {
                     if self.cursor < self.line.len() {
@@ -283,7 +304,7 @@ impl ViState {
                 0x1b => {
                     self.pending = PendingInput::None;
                     if self.cursor > 0 && self.cursor >= self.line.len() {
-                        self.cursor = last_char_start(&self.line);
+                        self.cursor = last_grapheme_start(&self.line);
                     }
                     actions.push(ViAction::Redraw);
                     return actions;
@@ -298,14 +319,21 @@ impl ViState {
                     ];
                 }
                 b => {
+                    // Buffer a multi-byte character before overwriting,
+                    // so `R` never splices a partial sequence.
+                    self.mb_pending.push(b);
+                    if self.mb_pending.len() < expected_utf8_len(self.mb_pending[0]) {
+                        return vec![ViAction::ReadByte];
+                    }
+                    let bytes = std::mem::take(&mut self.mb_pending);
                     if self.cursor < self.line.len() {
                         let clen = char_len_at(&self.line, self.cursor);
-                        self.line.drain(self.cursor..self.cursor + clen);
-                        self.line.insert(self.cursor, b);
+                        self.line
+                            .splice(self.cursor..self.cursor + clen, bytes.iter().copied());
                     } else {
-                        self.line.push(b);
+                        self.line.extend_from_slice(&bytes);
                     }
-                    self.cursor += 1;
+                    self.cursor += bytes.len();
                     actions.push(ViAction::Redraw);
                     return actions;
                 }
@@ -357,7 +385,7 @@ impl ViState {
                 0x1b => {
                     self.insert_mode = false;
                     if self.cursor > 0 && self.cursor >= self.line.len() {
-                        self.cursor = last_char_start(&self.line);
+                        self.cursor = last_grapheme_start(&self.line);
                         actions.push(ViAction::WriteBytes(b"\x1b[D".to_vec()));
                     }
                 }
@@ -398,10 +426,20 @@ impl ViState {
                     }
                 }
                 _ => {
-                    self.line.insert(self.cursor, byte);
-                    self.cursor += 1;
+                    // Accumulate the bytes of a multi-byte character
+                    // and only splice/paint once the whole sequence has
+                    // arrived, so the terminal never sees a truncated
+                    // glyph and the cursor never lands mid-sequence.
+                    self.mb_pending.push(byte);
+                    if self.mb_pending.len() < expected_utf8_len(self.mb_pending[0]) {
+                        return vec![ViAction::ReadByte];
+                    }
+                    let bytes = std::mem::take(&mut self.mb_pending);
+                    let at = self.cursor;
+                    self.line.splice(at..at, bytes.iter().copied());
+                    self.cursor += bytes.len();
                     if self.cursor == self.line.len() {
-                        actions.push(ViAction::WriteBytes(vec![byte]));
+                        actions.push(ViAction::WriteBytes(bytes));
                     } else {
                         actions.push(ViAction::Redraw);
                     }
@@ -461,7 +499,7 @@ impl ViState {
                     if self.cursor == 0 {
                         break;
                     }
-                    self.cursor = prev_char_start(&self.line, self.cursor);
+                    self.cursor = prev_grapheme_start(&self.line, self.cursor);
                 }
                 if self.cursor != old {
                     let cols = display_width_range(&self.line, self.cursor, old);
@@ -478,7 +516,7 @@ impl ViState {
             b'l' | b' ' => {
                 let old = self.cursor;
                 for _ in 0..count {
-                    let clen = char_len_at(&self.line, self.cursor);
+                    let clen = grapheme_len_at(&self.line, self.cursor);
                     if self.cursor + clen >= self.line.len() {
                         break;
                     }
@@ -502,7 +540,7 @@ impl ViState {
             }
             b'$' => {
                 if !self.line.is_empty() {
-                    self.cursor = last_char_start(&self.line);
+                    self.cursor = last_grapheme_start(&self.line);
                 }
                 actions.push(ViAction::Redraw);
             }
@@ -521,7 +559,7 @@ impl ViState {
                         actions.push(ViAction::Bell);
                         break;
                     }
-                    self.cursor = next.min(last_char_start(&self.line));
+                    self.cursor = next.min(last_grapheme_start(&self.line));
                 }
                 actions.push(ViAction::Redraw);
             }
@@ -532,7 +570,7 @@ impl ViState {
                         actions.push(ViAction::Bell);
                         break;
                     }
-                    self.cursor = next.min(last_char_start(&self.line));
+                    self.cursor = next.min(last_grapheme_start(&self.line));
                 }
                 actions.push(ViAction::Redraw);
             }
@@ -630,14 +668,14 @@ impl ViState {
                 self.last_cmd = Some((b'x', count, None));
                 for _ in 0..count {
                     if self.cursor < self.line.len() {
-                        let clen = char_len_at(&self.line, self.cursor);
+                        let clen = grapheme_len_at(&self.line, self.cursor);
                         self.yank_buf = self.line[self.cursor..self.cursor + clen].to_vec();
                         self.line.drain(self.cursor..self.cursor + clen);
                     } else {
                         break;
                     }
                     if self.cursor >= self.line.len() && self.cursor > 0 {
-                        self.cursor = prev_char_start(&self.line, self.cursor);
+                        self.cursor = prev_grapheme_start(&self.line, self.cursor);
                     }
                 }
                 actions.push(ViAction::Redraw);
@@ -646,7 +684,7 @@ impl ViState {
                 self.last_cmd = Some((b'X', count, None));
                 for _ in 0..count {
                     if self.cursor > 0 {
-                        let prev = prev_char_start(&self.line, self.cursor);
+                        let prev = prev_grapheme_start(&self.line, self.cursor);
                         self.yank_buf = self.line[prev..self.cursor].to_vec();
                         self.line.drain(prev..self.cursor);
                         self.cursor = prev;
@@ -670,33 +708,34 @@ impl ViState {
             }
             b'~' => {
                 for _ in 0..count {
-                    if self.cursor < self.line.len() {
-                        let clen = char_len_at(&self.line, self.cursor);
-                        let (wc, _) = sys::locale::decode_char(&self.line[self.cursor..]);
-                        let toggled = if sys::locale::classify_char(b"lower", wc) {
-                            sys::locale::to_upper(wc)
-                        } else if sys::locale::classify_char(b"upper", wc) {
-                            sys::locale::to_lower(wc)
-                        } else {
-                            wc
-                        };
-                        if toggled != wc {
-                            let encoded = sys::locale::encode_char(toggled);
+                    if self.cursor >= self.line.len() {
+                        break;
+                    }
+                    // Case-toggle the base codepoint only; trailing
+                    // combining marks keep their place.
+                    let clen = char_len_at(&self.line, self.cursor);
+                    let (wc, _) = sys::locale::decode_char(&self.line[self.cursor..]);
+                    let toggled = if sys::locale::classify_char(b"lower", wc) {
+                        sys::locale::to_upper(wc)
+                    } else if sys::locale::classify_char(b"upper", wc) {
+                        sys::locale::to_lower(wc)
+                    } else {
+                        wc
+                    };
+                    if toggled != wc {
+                        let encoded = sys::locale::encode_char(toggled);
+                        if !encoded.is_empty() {
                             self.line
                                 .splice(self.cursor..self.cursor + clen, encoded.iter().copied());
-                            let new_clen = char_len_at(&self.line, self.cursor);
-                            if self.cursor + new_clen < self.line.len() {
-                                self.cursor += new_clen;
-                            } else {
-                                break;
-                            }
-                        } else {
-                            if self.cursor + clen < self.line.len() {
-                                self.cursor += clen;
-                            } else {
-                                break;
-                            }
                         }
+                    }
+                    // Step over the whole grapheme so the cursor never
+                    // parks between a base letter and its combining mark.
+                    let glen = grapheme_len_at(&self.line, self.cursor);
+                    if self.cursor + glen < self.line.len() {
+                        self.cursor += glen;
+                    } else {
+                        break;
                     }
                 }
                 actions.push(ViAction::Redraw);
@@ -807,14 +846,21 @@ impl ViState {
                     } else {
                         prev_count
                     };
-                    replay_cmd(
-                        &mut self.line,
-                        &mut self.cursor,
-                        &mut self.yank_buf,
-                        cmd,
-                        c,
-                        arg,
-                    );
+                    if cmd == b'r' {
+                        // Repeat with the full (possibly multi-byte)
+                        // replacement rather than `arg`'s single byte.
+                        let replacement = self.last_replace.clone();
+                        replay_r(&mut self.line, &mut self.cursor, c, &replacement);
+                    } else {
+                        replay_cmd(
+                            &mut self.line,
+                            &mut self.cursor,
+                            &mut self.yank_buf,
+                            cmd,
+                            c,
+                            arg,
+                        );
+                    }
                     actions.push(ViAction::Redraw);
                 }
             }
@@ -1436,6 +1482,29 @@ fn resolve_motion(line: &[u8], cursor: usize, motion: u8, count: usize) -> (usiz
     }
 }
 
+/// Replay the `r` (replace-char) command with a full replacement byte
+/// sequence. Shared by `replay_cmd` (single-byte arg) and the `.`
+/// repeat path (full multi-byte replacement), so repeating `r∀` splices
+/// the whole `∀` rather than just its lead byte.
+fn replay_r(line: &mut Vec<u8>, cursor: &mut usize, count: usize, replacement: &[u8]) {
+    if replacement.is_empty() {
+        return;
+    }
+    for _ in 0..count {
+        if *cursor < line.len() {
+            let clen = char_len_at(line, *cursor);
+            line.splice(*cursor..*cursor + clen, replacement.iter().copied());
+            let next = *cursor + replacement.len();
+            if next < line.len() {
+                *cursor = next;
+            }
+        }
+    }
+    if count > 1 && *cursor > 0 {
+        *cursor = prev_char_start(line, *cursor);
+    }
+}
+
 fn replay_cmd(
     line: &mut Vec<u8>,
     cursor: &mut usize,
@@ -1448,19 +1517,19 @@ fn replay_cmd(
         b'x' => {
             for _ in 0..count {
                 if *cursor < line.len() {
-                    let clen = char_len_at(line, *cursor);
+                    let clen = grapheme_len_at(line, *cursor);
                     *yank_buf = line[*cursor..*cursor + clen].to_vec();
                     line.drain(*cursor..*cursor + clen);
                 }
                 if *cursor >= line.len() && *cursor > 0 {
-                    *cursor = last_char_start(line);
+                    *cursor = last_grapheme_start(line);
                 }
             }
         }
         b'X' => {
             for _ in 0..count {
                 if *cursor > 0 {
-                    let prev = prev_char_start(line, *cursor);
+                    let prev = prev_grapheme_start(line, *cursor);
                     *yank_buf = line[prev..*cursor].to_vec();
                     line.drain(prev..*cursor);
                     *cursor = prev;
@@ -1469,20 +1538,7 @@ fn replay_cmd(
         }
         b'r' => {
             if let Some(replacement) = arg {
-                for _ in 0..count {
-                    if *cursor < line.len() {
-                        let clen = char_len_at(line, *cursor);
-                        line.drain(*cursor..*cursor + clen);
-                        line.insert(*cursor, replacement);
-                        let next = *cursor + 1;
-                        if next < line.len() {
-                            *cursor = next;
-                        }
-                    }
-                }
-                if count > 1 && *cursor > 0 {
-                    *cursor = prev_char_start(line, *cursor);
-                }
+                replay_r(line, cursor, count, &[replacement]);
             }
         }
         b'd' => {
@@ -4184,6 +4240,82 @@ mod tests {
                 let mut yank = vec![];
                 replay_cmd(&mut line, &mut cursor, &mut yank, b'r', 1, Some(b'X'));
                 assert_eq!(line, b"aXb");
+            });
+        }
+
+        #[test]
+        fn vi_insert_multibyte_defers_until_glyph_complete() {
+            run_trace(trace_entries![], || {
+                set_test_locale_utf8();
+                let mut state = ViState::new(0x7f, 0);
+                let history: Vec<Box<[u8]>> = vec![];
+                feed_bytes(&mut state, b"a", &history);
+                // The lead byte of "é" must not paint anything yet.
+                let a1 = state.process_byte(0xc3, &history);
+                assert_eq!(a1, vec![ViAction::ReadByte]);
+                // The closing byte splices and echoes the whole glyph.
+                let a2 = state.process_byte(0xa9, &history);
+                assert_eq!(state.line, "aé".as_bytes());
+                assert!(
+                    a2.iter()
+                        .any(|x| matches!(x, ViAction::WriteBytes(b) if b == "é".as_bytes()))
+                );
+            });
+        }
+
+        #[test]
+        fn vi_replace_mode_overwrites_with_multibyte() {
+            run_trace(trace_entries![], || {
+                set_test_locale_utf8();
+                let mut state = ViState::new(0x7f, 0);
+                let history: Vec<Box<[u8]>> = vec![];
+                feed_bytes(&mut state, b"abc", &history);
+                state.process_byte(0x1b, &history);
+                state.process_byte(b'0', &history);
+                state.process_byte(b'R', &history);
+                // Overwrite 'a' with a 2-byte "é"; the lead byte defers.
+                assert_eq!(state.process_byte(0xc3, &history), vec![ViAction::ReadByte]);
+                state.process_byte(0xa9, &history);
+                assert_eq!(state.line, "ébc".as_bytes());
+            });
+        }
+
+        #[test]
+        fn vi_repeat_r_replays_full_multibyte() {
+            run_trace(trace_entries![], || {
+                set_test_locale_utf8();
+                let mut state = ViState::new(0x7f, 0);
+                let history: Vec<Box<[u8]>> = vec![];
+                feed_bytes(&mut state, b"abc", &history);
+                state.process_byte(0x1b, &history);
+                state.process_byte(b'0', &history);
+                // r é : replace 'a' with "é"; cursor advances onto 'b'.
+                state.process_byte(b'r', &history);
+                state.process_byte(0xc3, &history);
+                state.process_byte(0xa9, &history);
+                assert_eq!(state.line, "ébc".as_bytes());
+                // `.` must replay the *whole* "é", not just its lead byte.
+                state.process_byte(b'.', &history);
+                assert_eq!(state.line, "ééc".as_bytes());
+            });
+        }
+
+        #[test]
+        fn vi_x_deletes_whole_combining_grapheme() {
+            run_trace(trace_entries![], || {
+                set_test_locale_utf8();
+                let mut state = ViState::new(0x7f, 0);
+                let history: Vec<Box<[u8]>> = vec![];
+                // "am̄b" = a, m, U+0304 (combining macron), b.
+                feed_bytes(&mut state, b"am\xcc\x84b", &history);
+                state.process_byte(0x1b, &history);
+                state.process_byte(b'0', &history);
+                // `l` steps over the whole "m̄" grapheme in one move.
+                state.process_byte(b'l', &history);
+                assert_eq!(state.cursor, 1);
+                // `x` deletes the entire grapheme, never orphaning the mark.
+                state.process_byte(b'x', &history);
+                assert_eq!(state.line, b"ab");
             });
         }
 

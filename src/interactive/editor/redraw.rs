@@ -165,6 +165,20 @@ pub(crate) fn last_char_start(line: &[u8]) -> usize {
     prev_char_start(line, line.len())
 }
 
+/// Round `pos` down to the nearest UTF-8 character boundary: if `pos`
+/// lands on a continuation byte (`10xxxxxx`), step back to the lead
+/// byte of that sequence. Identity on positions that are already
+/// boundaries (lead/ASCII bytes, and `line.len()`). Used to keep
+/// byte-column navigation (e.g. the vertical goal column) from parking
+/// the cursor in the middle of a multi-byte character.
+pub(crate) fn round_down_to_char_boundary(line: &[u8], pos: usize) -> usize {
+    let mut p = pos.min(line.len());
+    while p > 0 && p < line.len() && (line[p] & 0xC0) == 0x80 {
+        p -= 1;
+    }
+    p
+}
+
 /// Expected total byte length of the UTF-8 sequence introduced by the
 /// lead byte `lead`. ASCII (`< 0x80`) and bare continuation bytes
 /// (`0x80..=0xBF`) report 1 — they are not multi-byte leads — so only
@@ -224,47 +238,129 @@ fn is_zero_width_combining(wc: u32) -> bool {
     sys::locale::char_width(wc) == 0
 }
 
+/// ZERO WIDTH JOINER (U+200D). Glues two emoji into one cluster
+/// (`👨` + ZWJ + `👩` → a single couple glyph).
+const ZWJ: u32 = 0x200D;
+
+/// Regional Indicator Symbols (U+1F1E6..U+1F1FF). A pair of these
+/// renders as one flag (`🇺` + `🇸` → 🇺🇸), so they cluster two at a time.
+fn is_regional_indicator(wc: u32) -> bool {
+    (0x1F1E6..=0x1F1FF).contains(&wc)
+}
+
+/// Emoji modifiers — the Fitzpatrick skin-tone selectors
+/// (U+1F3FB..U+1F3FF). They follow a base emoji and recolour it; the
+/// renderer draws no separate cell for them, so they belong to the
+/// preceding cluster even though `wcwidth` reports a non-zero width.
+fn is_emoji_modifier(wc: u32) -> bool {
+    (0x1F3FB..=0x1F3FF).contains(&wc)
+}
+
+/// `Extend`-class codepoints for grapheme clustering (UAX #29): any
+/// zero-width combining mark or variation selector (captured by
+/// [`is_zero_width_combining`]) plus the emoji skin-tone modifiers,
+/// which are visually attached but not zero width.
+fn is_grapheme_extend(wc: u32) -> bool {
+    is_zero_width_combining(wc) || is_emoji_modifier(wc)
+}
+
 /// Byte length of the *grapheme cluster* starting at `pos`: the base
-/// character plus any immediately-following zero-width combining marks.
-/// Returns 0 past end-of-input.
+/// character plus the codepoints that attach to it under a pragmatic
+/// subset of Unicode UAX #29. Returns 0 past end-of-input.
 ///
-/// Cursor motion (`forward-char` and the vi `l`-family) uses this in
-/// place of [`char_len_at`] so a single keypress steps over a whole
-/// visible glyph (`m̄` = `m` + U+0304) instead of parking the cursor
-/// between a base letter and its accent — a position that occupies the
-/// same screen column and is therefore invisible to the user.
+/// Clustering rules applied (in addition to a lone base char):
+/// * trailing zero-width combining marks and variation selectors
+///   (`m̄` = `m` + U+0304, emoji presentation selectors);
+/// * emoji skin-tone modifiers (`✋` + U+1F3FD);
+/// * ZWJ sequences (`👨` + ZWJ + `👩` + ZWJ + `👧`), where each joiner
+///   pulls in the glyph that follows it;
+/// * regional-indicator pairs, which form one flag.
+///
+/// Cursor motion (`forward-char`, the vi `l`-family, deletion, word
+/// motion) uses this so a single keypress steps over a whole visible
+/// glyph instead of parking the cursor on an invisible interior
+/// boundary (between a base letter and its accent, or inside a
+/// multi-codepoint emoji).
 pub(crate) fn grapheme_len_at(line: &[u8], pos: usize) -> usize {
     if pos >= line.len() {
         return 0;
     }
-    let mut end = pos + char_len_at(line, pos);
+    let (base, base_len) = sys::locale::decode_char(&line[pos..]);
+    let base_len = if base_len == 0 { 1 } else { base_len };
+    let mut end = pos + base_len;
+
+    // A flag is exactly two regional indicators; absorb at most one
+    // more and stop (a third RI starts a new flag).
+    if is_regional_indicator(base) && end < line.len() {
+        let (wc, len) = sys::locale::decode_char(&line[end..]);
+        if is_regional_indicator(wc) {
+            end += if len == 0 { 1 } else { len };
+        }
+        return end - pos;
+    }
+
     while end < line.len() {
         let (wc, len) = sys::locale::decode_char(&line[end..]);
-        if !is_zero_width_combining(wc) {
-            break;
+        let step = if len == 0 { 1 } else { len };
+        if wc == ZWJ {
+            // The joiner and the glyph it joins both belong to this
+            // cluster. A trailing ZWJ with nothing after it is still
+            // absorbed so the cursor never parks on a dangling joiner.
+            end += step;
+            if end < line.len() {
+                let (_next, nlen) = sys::locale::decode_char(&line[end..]);
+                end += if nlen == 0 { 1 } else { nlen };
+            }
+            continue;
         }
-        end += if len == 0 { 1 } else { len };
+        if is_grapheme_extend(wc) {
+            end += step;
+            continue;
+        }
+        break;
     }
     end - pos
 }
 
 /// Byte offset of the start of the grapheme cluster that ends just
-/// before `pos`: walk back over any trailing zero-width combining
-/// marks and then over the single base character they attach to.
-/// Mirror of [`grapheme_len_at`] for `backward-char` / vi `h`.
+/// before `pos` (or the start of the cluster *containing* `pos` if
+/// `pos` is not on a cluster boundary). Mirror of [`grapheme_len_at`]
+/// for `backward-char` / vi `h`.
+///
+/// Implemented by walking [`grapheme_len_at`] forward from a known
+/// boundary — the start of the current logical line (the byte after
+/// the previous `\n`, which can never be absorbed into a cluster) —
+/// so it stays exactly consistent with the forward clustering rules
+/// (ZWJ sequences, regional-indicator pairs, …) without re-deriving
+/// them in reverse. Logical lines in the editor are short, so the
+/// scan is cheap.
 pub(crate) fn prev_grapheme_start(line: &[u8], pos: usize) -> usize {
+    let pos = pos.min(line.len());
     if pos == 0 {
         return 0;
     }
-    let mut p = prev_char_start(line, pos);
-    while p > 0 {
-        let (wc, _) = sys::locale::decode_char(&line[p..]);
-        if !is_zero_width_combining(wc) {
-            break;
-        }
-        p = prev_char_start(line, p);
+    // Walk back (byte-wise; `\n` is ASCII and never appears inside a
+    // multi-byte sequence) to the start of the current logical line.
+    let mut seg = pos;
+    while seg > 0 && line[seg - 1] != b'\n' {
+        seg -= 1;
     }
-    p
+    // `pos` sits at the very start of a logical line: the grapheme
+    // just before it is the separating `\n`, which is its own cluster.
+    if seg == pos {
+        return prev_char_start(line, pos);
+    }
+    // Advance whole clusters from the segment start; the last cluster
+    // start strictly before `pos` is the answer.
+    let mut g = seg;
+    loop {
+        let len = grapheme_len_at(line, g);
+        let next = if len == 0 { g + 1 } else { g + len };
+        if next >= pos {
+            return g;
+        }
+        g = next;
+    }
 }
 
 /// Visible column width of a rendered prompt. Strips ANSI escape
@@ -1064,6 +1160,36 @@ mod tests {
     }
 
     #[test]
+    fn grapheme_clusters_emoji_zwj_flags_and_modifiers() {
+        assert_no_syscalls(|| {
+            set_test_locale_utf8();
+
+            // ZWJ family sequence (man ZWJ woman ZWJ girl) is one glyph.
+            let family = "👨‍👩‍👧".as_bytes();
+            assert_eq!(grapheme_len_at(family, 0), family.len());
+            assert_eq!(prev_grapheme_start(family, family.len()), 0);
+
+            // Skin-tone modifier attaches to its base emoji.
+            let wave = "✋🏽".as_bytes();
+            assert_eq!(grapheme_len_at(wave, 0), wave.len());
+            assert_eq!(prev_grapheme_start(wave, wave.len()), 0);
+
+            // Emoji-presentation variation selector (U+FE0F) attaches.
+            let heart = "❤️".as_bytes();
+            assert_eq!(grapheme_len_at(heart, 0), heart.len());
+            assert_eq!(prev_grapheme_start(heart, heart.len()), 0);
+
+            // Each flag is one cluster of exactly two regional indicators.
+            let flags = "🇺🇸🇬🇧".as_bytes();
+            let us_len = "🇺🇸".as_bytes().len();
+            assert_eq!(grapheme_len_at(flags, 0), us_len);
+            assert_eq!(grapheme_len_at(flags, us_len), flags.len() - us_len);
+            assert_eq!(prev_grapheme_start(flags, flags.len()), us_len);
+            assert_eq!(prev_grapheme_start(flags, us_len), 0);
+        });
+    }
+
+    #[test]
     fn prompt_visible_width_strips_csi_and_osc() {
         assert_no_syscalls(|| {
             set_test_locale_c();
@@ -1213,6 +1339,23 @@ mod tests {
             // Completeness is judged at `end`, not buffer length: the
             // cursor mid-buffer past a finished glyph is complete.
             assert!(!ends_with_partial_utf8(b"\xe2\x88\x80x", 3));
+        });
+    }
+
+    #[test]
+    fn round_down_to_char_boundary_snaps_off_continuation_bytes() {
+        assert_no_syscalls(|| {
+            // "é" = c3 a9: byte 1 is a continuation byte and must round
+            // down to the lead byte 0; lead/ASCII positions and len are
+            // already boundaries.
+            assert_eq!(round_down_to_char_boundary(b"\xc3\xa9", 1), 0);
+            assert_eq!(round_down_to_char_boundary(b"\xc3\xa9", 0), 0);
+            assert_eq!(round_down_to_char_boundary(b"\xc3\xa9", 2), 2);
+            // "a∀b" = 61 e2 88 80 62: bytes 2 and 3 are continuations of
+            // the 3-byte glyph that starts at 1.
+            assert_eq!(round_down_to_char_boundary(b"a\xe2\x88\x80b", 2), 1);
+            assert_eq!(round_down_to_char_boundary(b"a\xe2\x88\x80b", 3), 1);
+            assert_eq!(round_down_to_char_boundary(b"a\xe2\x88\x80b", 4), 4);
         });
     }
 

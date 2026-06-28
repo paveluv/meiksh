@@ -13,7 +13,8 @@ use crate::sys;
 use super::super::editor::history_search::{Direction, find_prefix};
 use super::super::editor::input::write_bytes;
 use super::super::editor::redraw::{
-    char_len_at, display_width, grapheme_len_at, prev_char_start, prev_grapheme_start,
+    display_width, grapheme_len_at, prev_char_start, prev_grapheme_start,
+    round_down_to_char_boundary,
 };
 use super::super::editor::words::{WordClass, next_word_boundary, prev_word_boundary};
 use super::completion_context::{
@@ -213,7 +214,10 @@ pub(crate) fn run_bind_x(shell: &mut Shell, state: &mut EmacsState, command: &[u
         && let Ok(s) = std::str::from_utf8(&new_point)
         && let Ok(n) = s.trim().parse::<usize>()
     {
-        state.cursor = n.min(state.buf.len());
+        // A user `bind -x` command can set READLINE_POINT to any byte
+        // index; snap it down to a character boundary so the cursor is
+        // never left in the middle of a multi-byte sequence.
+        state.cursor = round_down_to_char_boundary(&state.buf, n.min(state.buf.len()));
     }
 
     // Restore previous values (or remove if unset before).
@@ -327,7 +331,10 @@ fn do_vertical_step(state: &mut EmacsState, delta: i32, out: &mut Outcome) {
         let prev_start = logical_line_start(&state.buf, prev_nl);
         let row_end = prev_nl;
         let row_len = row_end - prev_start;
-        state.cursor = prev_start + goal.min(row_len);
+        // Snap to a character boundary: the goal is a *byte* column
+        // captured on a row that may have different multi-byte content,
+        // so `prev_start + goal` can land inside a UTF-8 sequence.
+        state.cursor = round_down_to_char_boundary(&state.buf, prev_start + goal.min(row_len));
     } else {
         let row_end = logical_line_end(&state.buf, state.cursor);
         if row_end == state.buf.len() {
@@ -337,7 +344,7 @@ fn do_vertical_step(state: &mut EmacsState, delta: i32, out: &mut Outcome) {
         let next_start = row_end + 1;
         let next_end = logical_line_end(&state.buf, next_start);
         let row_len = next_end - next_start;
-        state.cursor = next_start + goal.min(row_len);
+        state.cursor = round_down_to_char_boundary(&state.buf, next_start + goal.min(row_len));
     }
 }
 
@@ -577,10 +584,13 @@ fn do_transpose_chars(state: &mut EmacsState, out: &mut Outcome) {
         out.bell = true;
         return;
     }
-    // C-t at end-of-line transposes the last two chars.
+    // C-t at end-of-line transposes the last two glyphs. We step by
+    // *grapheme* (base char plus trailing combining marks) so `m̄`
+    // moves as one unit instead of tearing the macron off its `m`,
+    // matching the grapheme-aware `forward-char` / `delete-char`.
     let (a_start, a_len, b_start, b_len) = if state.cursor >= len {
-        let b_start = prev_char_start(&state.buf, len);
-        let a_start = prev_char_start(&state.buf, b_start);
+        let b_start = prev_grapheme_start(&state.buf, len);
+        let a_start = prev_grapheme_start(&state.buf, b_start);
         let a_len = b_start - a_start;
         let b_len = len - b_start;
         (a_start, a_len, b_start, b_len)
@@ -588,10 +598,10 @@ fn do_transpose_chars(state: &mut EmacsState, out: &mut Outcome) {
         out.bell = true;
         return;
     } else {
-        let a_start = prev_char_start(&state.buf, state.cursor);
+        let a_start = prev_grapheme_start(&state.buf, state.cursor);
         let a_len = state.cursor - a_start;
         let b_start = state.cursor;
-        let b_len = char_len_at(&state.buf, b_start);
+        let b_len = grapheme_len_at(&state.buf, b_start);
         (a_start, a_len, b_start, b_len)
     };
     let a: Vec<u8> = state.buf[a_start..a_start + a_len].to_vec();
@@ -610,9 +620,18 @@ fn do_transpose_chars(state: &mut EmacsState, out: &mut Outcome) {
 }
 
 fn do_transpose_words(state: &mut EmacsState, out: &mut Outcome) {
-    use super::super::editor::words::is_word_char_at;
+    use super::super::editor::words::{is_word_char_at, is_word_char_before};
 
     let buf = state.buf.clone();
+
+    // All forward scans step by *grapheme* and all backward scans by
+    // `prev_grapheme_start` + `is_word_char_before`. The previous
+    // implementation walked backward one raw byte at a time and tested
+    // `is_word_char_at(buf, p - 1)`, which decodes whatever byte sits
+    // at `p - 1` — a UTF-8 continuation byte for any multi-byte word
+    // character — and therefore misclassified accented words (e.g.
+    // `café`) as ending mid-glyph. Grapheme stepping keeps every probe
+    // on a character boundary.
 
     // Identify the *right* word (the one that ends up to the left of
     // the cursor after the swap, per spec § 5.6):
@@ -623,26 +642,26 @@ fn do_transpose_words(state: &mut EmacsState, out: &mut Outcome) {
     let right_end = if state.cursor < buf.len() && is_word_char_at(&buf, state.cursor) {
         let mut p = state.cursor;
         while p < buf.len() && is_word_char_at(&buf, p) {
-            p += char_len_at(&buf, p);
+            p += grapheme_len_at(&buf, p);
         }
         p
     } else {
         let mut p = state.cursor.min(buf.len());
-        while p > 0 && !is_word_char_at(&buf, p - 1) {
-            p -= 1;
+        while p > 0 && !is_word_char_before(&buf, p) {
+            p = prev_grapheme_start(&buf, p);
         }
         if p == 0 {
             // No word behind the cursor; try to use the next word.
             let mut q = state.cursor.min(buf.len());
             while q < buf.len() && !is_word_char_at(&buf, q) {
-                q += 1;
+                q += grapheme_len_at(&buf, q);
             }
             if q == buf.len() {
                 out.bell = true;
                 return;
             }
             while q < buf.len() && is_word_char_at(&buf, q) {
-                q += char_len_at(&buf, q);
+                q += grapheme_len_at(&buf, q);
             }
             q
         } else {
@@ -651,13 +670,13 @@ fn do_transpose_words(state: &mut EmacsState, out: &mut Outcome) {
     };
 
     let mut right_start = right_end;
-    while right_start > 0 && is_word_char_at(&buf, right_start - 1) {
-        right_start -= 1;
+    while right_start > 0 && is_word_char_before(&buf, right_start) {
+        right_start = prev_grapheme_start(&buf, right_start);
     }
 
     let mut left_end = right_start;
-    while left_end > 0 && !is_word_char_at(&buf, left_end - 1) {
-        left_end -= 1;
+    while left_end > 0 && !is_word_char_before(&buf, left_end) {
+        left_end = prev_grapheme_start(&buf, left_end);
     }
     if left_end == 0 {
         out.bell = true;
@@ -665,8 +684,8 @@ fn do_transpose_words(state: &mut EmacsState, out: &mut Outcome) {
     }
 
     let mut left_start = left_end;
-    while left_start > 0 && is_word_char_at(&buf, left_start - 1) {
-        left_start -= 1;
+    while left_start > 0 && is_word_char_before(&buf, left_start) {
+        left_start = prev_grapheme_start(&buf, left_start);
     }
 
     let left_len = left_end - left_start;
@@ -702,42 +721,66 @@ fn do_case_word(state: &mut EmacsState, op: CaseOp) {
     if end == state.cursor {
         return;
     }
-    let before: Vec<u8> = state.buf[state.cursor..end].to_vec();
-    let mut after = before.clone();
-    apply_case(&mut after, op);
-    state.buf.splice(state.cursor..end, after.iter().copied());
-    state.undo.push(UndoEntry::CaseChange {
-        at: state.cursor,
-        before,
-    });
-    state.cursor = end;
+    let at = state.cursor;
+    let before: Vec<u8> = state.buf[at..end].to_vec();
+    let after = apply_case(&before, op);
+    if after != before {
+        state.buf.splice(at..end, after.iter().copied());
+        state.undo.push(UndoEntry::CaseChange {
+            at,
+            before,
+            after_len: after.len(),
+        });
+    }
+    // Cursor lands at the end of the (possibly re-encoded) word, the
+    // same place readline leaves it.
+    state.cursor = at + after.len();
 }
 
-fn apply_case(bytes: &mut [u8], op: CaseOp) {
+/// Locale-aware case folding of a word region. Steps codepoint by
+/// codepoint, classifies with the locale (`classify_char`), and maps
+/// with `to_upper` / `to_lower`, re-encoding each changed character.
+/// Unlike a byte-wise ASCII fold this also cases accented and
+/// non-Latin letters (`é`→`É`, Greek, Cyrillic, …); the byte length
+/// may change, so the result is returned rather than mutated in place.
+fn apply_case(bytes: &[u8], op: CaseOp) -> Vec<u8> {
+    let mut out = Vec::with_capacity(bytes.len());
     let mut first_letter_seen = false;
-    for b in bytes.iter_mut() {
-        let ch = *b;
-        match op {
-            CaseOp::Upper => {
-                if ch.is_ascii_lowercase() {
-                    *b = ch.to_ascii_uppercase();
-                }
-            }
-            CaseOp::Lower => {
-                if ch.is_ascii_uppercase() {
-                    *b = ch.to_ascii_lowercase();
-                }
-            }
+    let mut i = 0;
+    while i < bytes.len() {
+        let (wc, len) = sys::locale::decode_char(&bytes[i..]);
+        let step = if len == 0 { 1 } else { len };
+        let is_alpha = sys::locale::classify_char(b"alpha", wc);
+        let mapped = match op {
+            CaseOp::Upper => sys::locale::to_upper(wc),
+            CaseOp::Lower => sys::locale::to_lower(wc),
             CaseOp::Capitalize => {
-                if !first_letter_seen && ch.is_ascii_alphabetic() {
-                    *b = ch.to_ascii_uppercase();
+                if is_alpha && !first_letter_seen {
                     first_letter_seen = true;
-                } else if ch.is_ascii_alphabetic() {
-                    *b = ch.to_ascii_lowercase();
+                    sys::locale::to_upper(wc)
+                } else if is_alpha {
+                    sys::locale::to_lower(wc)
+                } else {
+                    wc
                 }
             }
+        };
+        // Re-encode only when the mapping actually changed the
+        // codepoint; otherwise copy the original bytes verbatim so an
+        // un-encodable or unchanged character is never dropped.
+        let encoded = if mapped != wc {
+            let enc = sys::locale::encode_char(mapped);
+            if enc.is_empty() { None } else { Some(enc) }
+        } else {
+            None
+        };
+        match encoded {
+            Some(enc) => out.extend_from_slice(&enc),
+            None => out.extend_from_slice(&bytes[i..i + step]),
         }
+        i += step;
     }
+    out
 }
 
 fn do_history_step(shell: &Shell, state: &mut EmacsState, delta: i32, out: &mut Outcome) {
@@ -1573,6 +1616,61 @@ mod tests {
     }
 
     #[test]
+    fn transpose_chars_moves_combining_grapheme_as_a_unit() {
+        // "am̄" = a, m, U+0304 → bytes [a, m, cc, 84]. C-t at EOL must
+        // swap the whole "m̄" grapheme with the preceding "a", yielding
+        // "m̄a" — never tearing the macron off its base.
+        assert_no_syscalls(|| {
+            crate::sys::test_support::set_test_locale_utf8();
+            let mut shell = test_shell();
+            let mut state = EmacsState::new(0x7f);
+            state.buf = b"am\xcc\x84".to_vec();
+            state.cursor = state.buf.len();
+            apply(&mut shell, &mut state, EmacsFn::TransposeChars, 0x14);
+            assert_eq!(state.buf, b"m\xcc\x84a");
+            apply(&mut shell, &mut state, EmacsFn::Undo, 0);
+            assert_eq!(state.buf, b"am\xcc\x84");
+        });
+    }
+
+    #[test]
+    fn transpose_words_handles_multibyte_words() {
+        // "café déjà" — both words contain a 2-byte UTF-8 letter. The
+        // backward boundary walks must stay on character boundaries so
+        // the whole words swap to "déjà café".
+        assert_no_syscalls(|| {
+            crate::sys::test_support::set_test_locale_utf8();
+            let mut shell = test_shell();
+            let mut state = EmacsState::new(0x7f);
+            state.buf = "café déjà".as_bytes().to_vec();
+            state.cursor = state.buf.len();
+            apply(&mut shell, &mut state, EmacsFn::TransposeWords, 0);
+            assert_eq!(state.buf, "déjà café".as_bytes());
+        });
+    }
+
+    #[test]
+    fn vertical_step_never_lands_mid_codepoint() {
+        // Two rows; the first holds a 2-byte "é" so the byte goal
+        // column from the longer second row would otherwise fall inside
+        // the "é". The cursor must snap to a character boundary.
+        assert_no_syscalls(|| {
+            crate::sys::test_support::set_test_locale_utf8();
+            let mut shell = test_shell();
+            let mut state = EmacsState::new(0x7f);
+            // Row 0: "é" (bytes c3 a9)   Row 1: "abcd"
+            state.buf = "é\nabcd".as_bytes().to_vec();
+            // Park on row 1 at byte column 1 (the 'b'); the goal column
+            // 1 maps onto byte 1 of row 0, which is the a9 continuation
+            // byte of "é". The snap must round it down to byte 0.
+            state.cursor = 4; // 'b' in "abcd"
+            apply(&mut shell, &mut state, EmacsFn::PreviousLine, 0);
+            assert_eq!(state.cursor, 0);
+            assert_ne!(state.buf[state.cursor] & 0xC0, 0x80);
+        });
+    }
+
+    #[test]
     fn upcase_word_uppercases_alnum_run() {
         assert_no_syscalls(|| {
             let mut shell = test_shell();
@@ -1593,6 +1691,35 @@ mod tests {
             state.cursor = 0;
             apply(&mut shell, &mut state, EmacsFn::DowncaseWord, 0);
             assert_eq!(state.buf, b"foo BAR");
+        });
+    }
+
+    #[test]
+    fn case_word_folds_non_ascii_letters() {
+        // "café" / "ÄÖÜ" exercise locale-aware folding: a byte-wise
+        // ASCII fold would leave the accented letters untouched.
+        assert_no_syscalls(|| {
+            crate::sys::test_support::set_test_locale_utf8();
+            let mut shell = test_shell();
+            let mut state = EmacsState::new(0x7f);
+
+            state.buf = "café".as_bytes().to_vec();
+            state.cursor = 0;
+            apply(&mut shell, &mut state, EmacsFn::UpcaseWord, 0);
+            assert_eq!(state.buf, "CAFÉ".as_bytes());
+            assert_eq!(state.cursor, state.buf.len());
+            apply(&mut shell, &mut state, EmacsFn::Undo, 0);
+            assert_eq!(state.buf, "café".as_bytes());
+
+            state.buf = "ÄÖÜ".as_bytes().to_vec();
+            state.cursor = 0;
+            apply(&mut shell, &mut state, EmacsFn::DowncaseWord, 0);
+            assert_eq!(state.buf, "äöü".as_bytes());
+
+            state.buf = "éÉ".as_bytes().to_vec();
+            state.cursor = 0;
+            apply(&mut shell, &mut state, EmacsFn::CapitalizeWord, 0);
+            assert_eq!(state.buf, "Éé".as_bytes());
         });
     }
 

@@ -498,6 +498,7 @@ fn is_test_zero_width(wc: u32) -> bool {
         | 0x202A..=0x202E
         | 0x2060..=0x2064
         | 0x20D0..=0x20FF  // Combining Diacritical Marks for Symbols
+        | 0xFE00..=0xFE0F  // Variation Selectors
         | 0xFE20..=0xFE2F  // Combining Half Marks
         | 0xFEFF           // zero-width no-break space (BOM)
     )

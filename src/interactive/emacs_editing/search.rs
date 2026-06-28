@@ -147,7 +147,12 @@ impl<'h> IncrementalSearch<'h> {
                 self.backspace();
                 SearchOutcome::Continue
             }
-            b if (b' '..0x7f).contains(&b) => {
+            // Any printable byte, including the bytes of a multi-byte
+            // UTF-8 character (≥ 0x80), is appended to the pattern.
+            // DEL (0x7f) is consumed by the backspace arm above; the
+            // remaining control bytes (< 0x20) fall through to Exit and
+            // are re-dispatched against the main keymap.
+            b if b >= b' ' => {
                 self.push_byte(b);
                 SearchOutcome::Continue
             }
@@ -309,6 +314,21 @@ mod tests {
             assert_eq!(s.matched(), Some(0));
             s.repeat(Direction::Forward);
             assert_eq!(s.matched(), Some(2));
+        });
+    }
+
+    #[test]
+    fn feed_accepts_multibyte_pattern_bytes() {
+        // "café" contains é = c3 a9; both bytes must be appended to the
+        // pattern (not exit the search) so non-ASCII history is
+        // searchable.
+        assert_no_syscalls(|| {
+            let h = hist(&["café".as_bytes(), b"echo"]);
+            let mut s = IncrementalSearch::new(&h, Direction::Backward);
+            assert_eq!(s.feed(0xc3), SearchOutcome::Continue);
+            assert_eq!(s.feed(0xa9), SearchOutcome::Continue);
+            assert_eq!(s.pattern(), "é".as_bytes());
+            assert_eq!(s.matched(), Some(0));
         });
     }
 

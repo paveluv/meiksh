@@ -100,22 +100,32 @@ Every area listed below has been audited and fixed. New code touching any of the
 
 ### Grapheme clusters and combining marks (`interactive/editor/redraw.rs`)
 
-- A *grapheme cluster* is a base character plus any immediately-following zero-width combining marks (e.g. `m̄` = `m` + U+0304 COMBINING MACRON renders as one cell). `grapheme_len_at` / `prev_grapheme_start` step over a whole cluster; the combining-mark predicate is tied to `char_width(wc) == 0` (excluding C0/C1 controls and `\n`) so grapheme grouping and on-screen width stay in lockstep.
+- A *grapheme cluster* is a base character plus the codepoints that visually attach to it, handled via a pragmatic subset of Unicode UAX #29. `grapheme_len_at` / `prev_grapheme_start` step over a whole cluster, which includes:
+  - trailing zero-width combining marks and variation selectors (`m̄` = `m` + U+0304; emoji presentation selector U+FE0F) — the combining-mark predicate is tied to `char_width(wc) == 0`, excluding C0/C1 controls and `\n`, so grouping and on-screen width stay in lockstep;
+  - emoji skin-tone modifiers (Fitzpatrick U+1F3FB..U+1F3FF), which are visually attached even though `wcwidth` reports a non-zero width;
+  - ZERO WIDTH JOINER sequences (U+200D), so `👨‍👩‍👧` is one cluster;
+  - regional-indicator pairs (U+1F1E6..U+1F1FF), so a flag such as `🇺🇸` is one cluster.
+- `prev_grapheme_start` is derived by walking `grapheme_len_at` forward from the start of the current logical line, so backward motion stays exactly consistent with the forward clustering rules. `round_down_to_char_boundary` snaps any byte index to the nearest UTF-8 character boundary; it backstops every byte-column computation (e.g. the vertical-navigation goal column and an externally-supplied `bind -x` `READLINE_POINT`) so the cursor is never left in the middle of a multi-byte sequence.
 
 ### Emacs line editor (`interactive/emacs_editing/`)
 
 - Character cursor movement (`forward-char` / `backward-char`, bound to the Right/Left arrows and `C-f` / `C-b`) steps by grapheme cluster, so one keypress moves across a base character and its combining marks instead of parking on the (zero-width, invisible) position between them.
 - Word motions (`M-f` / `M-b` / `M-d` / `M-DEL` / `C-w`) are grapheme-aware via the shared `editor/words.rs` helpers: a combining mark inherits the word class of its base, so `forward-word` over an accented word does not stop between the base letter and its accent.
 - `delete-char` / `backward-delete-char` (Backspace) remove a whole grapheme cluster, so one keypress deletes one visible glyph (`m̄` is wiped in a single backspace rather than removing the accent first). This is a deliberate deviation from GNU Readline, which deletes a single codepoint; the trade-off is that an accent can no longer be edited off independently, which matches user expectation that one backspace removes one visible character.
-- `transpose-chars` still operates on single codepoints (transposing across a combining mark is an unsupported corner case, as in Readline).
+- `transpose-chars` (`C-t`) and `transpose-words` (`M-t`) are grapheme-aware: `C-t` moves a combining cluster as a unit instead of tearing the mark off its base, and `M-t`'s word-boundary walks stay on character boundaries so accented words (e.g. `café déjà`) transpose correctly.
+- `upcase-word` / `downcase-word` / `capitalize-word` (`M-u` / `M-l` / `M-c`) fold case locale-aware: they decode each codepoint, classify and map it with `classify_char` / `to_upper` / `to_lower`, and re-encode, so accented and non-Latin letters are cased (`café` → `CAFÉ`). The folded text may differ in byte length from the original, which the undo record tracks.
+- `reverse-i-search` / `i-search` (`C-r` / `C-s`) accept the bytes of a multi-byte UTF-8 character into the search pattern, so non-ASCII history is searchable. The mini-buffer repaint is deferred until the typed pattern ends on a complete UTF-8 boundary, and the match highlight is suppressed for a partial pattern, so a truncated glyph is never shipped to the terminal.
+- `quoted-insert` (`C-q` / `C-v`) inserts a single raw byte by design (readline parity) — the one deliberate way to place a raw/partial byte in the buffer.
 - Display-width calculations use `char_width(wc)` for correct cursor positioning with wide/zero-width characters.
 
 ### Vi line editor (`interactive/vi_editing.rs`)
 
-- Single-character cursor movement (`h`, `l`) steps by codepoint via `char_len_at` / `prev_char_start`. (Grapheme-cluster motion for vi single-char moves is part of the vi multi-line follow-up — see `docs/features/emacs-editing-mode.md` § 5.12.1.)
-- Word motions share `editor/words.rs` with the emacs editor, so they are already grapheme-aware.
-- Backspace / delete (`x`, `X`) removes full multi-byte characters.
-- Case toggle (`~`) decodes, converts, re-encodes, and handles potential byte-length changes.
+- Single-character cursor movement (`h`, `l`), the `$` / `w` / `W` clamps, and the `e` / `W` / `B` / `E` word motions step by grapheme cluster via `grapheme_len_at` / `prev_grapheme_start`, so the cursor never parks between a base character and its combining mark.
+- Word motions also share `editor/words.rs` with the emacs editor, so `w` / `b` are grapheme-aware.
+- Delete (`x`, `X`) removes a whole grapheme cluster; the `.`-repeat of `x` / `X` matches.
+- Insert mode, replace mode (`R`), and the `r` replace-char command buffer the bytes of a multi-byte character until the whole sequence has arrived, so a truncated glyph is never spliced into the buffer or painted. `.`-repeating an `r` replays the full (possibly multi-byte) replacement rather than just its lead byte.
+- Literal insert (`^V`) inserts a single raw byte by design (vi parity), mirroring the emacs `quoted-insert` escape hatch.
+- Case toggle (`~`) decodes, converts, re-encodes the base codepoint and then steps over the whole grapheme, handling potential byte-length changes.
 - Display-width calculations use `char_width(wc)` for correct cursor positioning with wide/zero-width characters.
 - Word classification (`is_word_char`) uses `classify_char(b"alnum", wc)`.
 

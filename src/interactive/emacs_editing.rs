@@ -404,7 +404,15 @@ fn run_incremental_search(
                     state.buf = history[idx].to_vec();
                     state.cursor = state.buf.len();
                 }
-                draw_search_prompt(&search, &state.buf);
+                // Defer the repaint until the typed pattern ends on a
+                // complete UTF-8 boundary, so a multi-byte search
+                // character is never shipped to the terminal — in the
+                // prompt echo or the highlight span — as a truncated
+                // sequence (the i-search analogue of the self-insert
+                // deferral in the main dispatch loop).
+                if !ends_with_partial_utf8(search.pattern(), search.pattern().len()) {
+                    draw_search_prompt(&search, &state.buf);
+                }
             }
             SearchOutcome::Accept => {
                 if let Some(idx) = search.matched() {
@@ -518,11 +526,16 @@ fn draw_search_prompt(search: &IncrementalSearch<'_>, line: &[u8]) {
     // the pattern is empty there is nothing to highlight, so the line
     // is shown verbatim with the cursor just after the prompt.
     let pattern = search.pattern();
-    let hit = if pattern.is_empty() || search.failing() {
-        None
-    } else {
-        leftmost_offset(line, pattern)
-    };
+    let hit =
+        if pattern.is_empty() || search.failing() || ends_with_partial_utf8(pattern, pattern.len())
+        {
+            // No highlight for an empty/failing pattern, or one that ends
+            // mid-character: highlighting a partial UTF-8 needle could slice
+            // the matched line on a non-boundary and emit a stray glyph.
+            None
+        } else {
+            leftmost_offset(line, pattern)
+        };
     let match_off = match hit {
         Some(off) => {
             let end = off + pattern.len();

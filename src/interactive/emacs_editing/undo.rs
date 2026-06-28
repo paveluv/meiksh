@@ -34,6 +34,11 @@ pub(crate) enum UndoEntry {
     CaseChange {
         at: usize,
         before: Vec<u8>,
+        /// Byte length of the *cased* text that replaced `before`.
+        /// Locale-aware case folding can change the byte length (e.g.
+        /// `ß` → `SS`), so undo must know how many bytes to remove
+        /// rather than assuming `before.len()`.
+        after_len: usize,
     },
     Paste {
         at: usize,
@@ -99,10 +104,13 @@ impl UndoStack {
                 buf.drain(at..at + bytes.len());
                 *cursor = at;
             }
-            UndoEntry::CaseChange { at, before } => {
-                let len = before.len();
-                buf.splice(at..at + len, before.iter().copied());
-                *cursor = at + len;
+            UndoEntry::CaseChange {
+                at,
+                before,
+                after_len,
+            } => {
+                buf.splice(at..at + after_len, before.iter().copied());
+                *cursor = at + before.len();
             }
             UndoEntry::TransposeChars { at, a_len, b_len } => {
                 // [a][b] was swapped to [b][a]; reverse by copying
@@ -241,9 +249,29 @@ mod tests {
             s.push(UndoEntry::CaseChange {
                 at: 0,
                 before: b"hello".to_vec(),
+                after_len: 5,
             });
             assert!(s.undo(&mut buf, &mut c));
             assert_eq!(buf, b"hello");
+        });
+    }
+
+    #[test]
+    fn undo_case_change_restores_prior_bytes_with_length_change() {
+        // Locale folding can grow the byte length (e.g. ß → SS). Undo
+        // must remove `after_len` bytes and reinstate the original.
+        assert_no_syscalls(|| {
+            let mut s = UndoStack::new();
+            let mut buf = b"SS".to_vec();
+            let mut c = 2usize;
+            s.push(UndoEntry::CaseChange {
+                at: 0,
+                before: "ß".as_bytes().to_vec(),
+                after_len: 2,
+            });
+            assert!(s.undo(&mut buf, &mut c));
+            assert_eq!(buf, "ß".as_bytes());
+            assert_eq!(c, "ß".as_bytes().len());
         });
     }
 
