@@ -21,6 +21,33 @@ pub(super) fn append_history(shell: &Shell, line: &[u8]) -> Result<(), ShellErro
     Ok(())
 }
 
+/// Populate the in-memory history ring from the on-disk history file.
+///
+/// Called once at interactive startup, *after* the startup files have
+/// been sourced so that a profile-set `HISTFILE` / `HISTSIZE` is
+/// honoured. Each newline-separated entry is replayed through
+/// [`Shell::add_history`], which trims trailing whitespace, drops
+/// blank lines, and enforces `HISTSIZE` — so a history file longer
+/// than `HISTSIZE` keeps only its most recent entries, matching the
+/// in-session pruning behaviour. Entries are stored oldest-first, the
+/// same order `append_history` writes them, so `previous-history`
+/// (Up / `C-p`) walks from the most recent backward.
+///
+/// A missing or unreadable history file (the common first-run case)
+/// is not an error: the shell simply starts with an empty history.
+pub(super) fn load_history(shell: &mut Shell) {
+    let path = history_path(shell);
+    let contents = match sys::fs::read_file_bytes(&path) {
+        Ok(bytes) => bytes,
+        Err(_) => return,
+    };
+    for line in contents.split(|&b| b == b'\n') {
+        // `add_history` already skips empty lines, so the trailing
+        // empty slice after the final newline is harmlessly ignored.
+        shell.add_history(line);
+    }
+}
+
 pub(super) fn history_path(shell: &Shell) -> Vec<u8> {
     shell
         .get_var(b"HISTFILE")
@@ -73,6 +100,46 @@ mod tests {
                     .env_mut()
                     .insert(b"HISTFILE".to_vec(), b"/tmp/history-dir".to_vec());
                 append_history(&shell, b"echo hi\n").expect("should silently succeed");
+            },
+        );
+    }
+
+    #[test]
+    fn load_history_populates_ring_from_histfile() {
+        run_trace(
+            trace_entries![
+                open(str("/tmp/history.txt"), _, _) -> fd(10),
+                read(fd(10), _) -> bytes(b"echo one\necho two\necho three\n"),
+                read(fd(10), _) -> 0,
+                close(fd(10)) -> 0,
+            ],
+            || {
+                let mut shell = test_shell();
+                shell
+                    .env_mut()
+                    .insert(b"HISTFILE".to_vec(), b"/tmp/history.txt".to_vec());
+                load_history(&mut shell);
+                let hist = shell.history();
+                assert_eq!(hist.len(), 3);
+                assert_eq!(&*hist[0], b"echo one");
+                assert_eq!(&*hist[2], b"echo three");
+            },
+        );
+    }
+
+    #[test]
+    fn load_history_missing_file_is_silent() {
+        run_trace(
+            trace_entries![
+                open(str("/tmp/no-such-history"), _, _) -> err(sys::constants::ENOENT),
+            ],
+            || {
+                let mut shell = test_shell();
+                shell
+                    .env_mut()
+                    .insert(b"HISTFILE".to_vec(), b"/tmp/no-such-history".to_vec());
+                load_history(&mut shell);
+                assert!(shell.history().is_empty());
             },
         );
     }

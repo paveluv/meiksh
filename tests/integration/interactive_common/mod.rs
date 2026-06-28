@@ -142,6 +142,16 @@ pub fn spawn_meiksh_pty(extra_env: &[(&str, &str)]) -> Option<PtyChild> {
         // Tests that specifically exercise startup sourcing must
         // spawn a meiksh subprocess directly, not via this harness.
         .env("MEIKSH_SKIP_STARTUP_FILES", "1")
+        // Interactive meiksh now loads `$HISTFILE` (or the default
+        // `$HOME/.sh_history`) into its in-memory ring at startup.
+        // The harness inherits the developer's `HOME`, so without an
+        // override every PTY test would seed from the real personal
+        // history file and pollute up-arrow / `C-p` recall assertions.
+        // `/dev/null` reads as empty (no entries loaded) and discards
+        // appended entries, giving a hermetic baseline. Tests that
+        // exercise cross-session persistence point `HISTFILE` at a
+        // temp file via `extra_env`.
+        .env("HISTFILE", "/dev/null")
         .stdin(unsafe { Stdio::from_raw_fd(secondary_fd) })
         .stdout(unsafe { Stdio::from_raw_fd(stdout_fd) })
         .stderr(unsafe { Stdio::from_raw_fd(stderr_fd) });

@@ -21,6 +21,11 @@ fn remove_file_bytes(path: &[u8]) {
 pub(crate) fn run(shell: &mut Shell) -> Result<i32, ShellError> {
     sys::fd_io::ensure_blocking_read_fd(sys::constants::STDIN_FILENO)
         .map_err(|e| shell.diagnostic_syserr(1, &e))?;
+    // Seed the in-memory ring from `$HISTFILE` (or `$HOME/.sh_history`)
+    // so history survives across interactive sessions. Runs here —
+    // after `load_startup_files` — so a profile-set `HISTFILE` /
+    // `HISTSIZE` is already in effect.
+    history::load_history(shell);
     repl::run_loop(shell)
 }
 
