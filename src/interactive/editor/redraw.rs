@@ -165,6 +165,44 @@ pub(crate) fn last_char_start(line: &[u8]) -> usize {
     prev_char_start(line, line.len())
 }
 
+/// Expected total byte length of the UTF-8 sequence introduced by the
+/// lead byte `lead`. ASCII (`< 0x80`) and bare continuation bytes
+/// (`0x80..=0xBF`) report 1 — they are not multi-byte leads — so only
+/// genuine 2/3/4-byte lead bytes report a length above 1.
+pub(crate) fn utf8_seq_len(lead: u8) -> usize {
+    if lead < 0xC0 {
+        1
+    } else if lead < 0xE0 {
+        2
+    } else if lead < 0xF0 {
+        3
+    } else {
+        4
+    }
+}
+
+/// True iff `line[..end]` ends in the middle of a multi-byte UTF-8
+/// sequence: the trailing lead byte announces more continuation bytes
+/// than are actually present.
+///
+/// The interactive editor uses this to defer its on-screen repaint
+/// until a self-inserted character is whole. Self-insert feeds bytes
+/// one at a time, so a 3-byte glyph like `∀` (`E2 88 80`) momentarily
+/// leaves the buffer holding `E2` then `E2 88`; painting those
+/// truncated prefixes would ship an incomplete sequence to the
+/// terminal, whose UTF-8 decoder renders the dangling bytes as a stray
+/// U+FFFD (`�`). Waiting for the closing byte keeps every byte written
+/// to the terminal a complete character.
+pub(crate) fn ends_with_partial_utf8(line: &[u8], end: usize) -> bool {
+    let end = end.min(line.len());
+    if end == 0 {
+        return false;
+    }
+    let start = prev_char_start(line, end);
+    let expected = utf8_seq_len(line[start]);
+    expected > 1 && (end - start) < expected
+}
+
 /// True iff `wc` is a zero-width *combining* character that should be
 /// glued to the preceding base character when forming a grapheme
 /// cluster for cursor-movement purposes (e.g. U+0304 COMBINING MACRON
@@ -1143,6 +1181,38 @@ mod tests {
             assert_eq!(first_diff_byte(b"hello", b"hi"), 1);
             assert_eq!(first_diff_byte(b"", b"abc"), 0);
             assert_eq!(first_diff_byte(b"abc", b""), 0);
+        });
+    }
+
+    #[test]
+    fn utf8_seq_len_classifies_lead_bytes() {
+        assert_no_syscalls(|| {
+            assert_eq!(utf8_seq_len(b'a'), 1);
+            assert_eq!(utf8_seq_len(0x7f), 1);
+            assert_eq!(utf8_seq_len(0x80), 1); // bare continuation byte
+            assert_eq!(utf8_seq_len(0xbf), 1);
+            assert_eq!(utf8_seq_len(0xc3), 2); // "é" lead
+            assert_eq!(utf8_seq_len(0xe2), 3); // "∀" lead
+            assert_eq!(utf8_seq_len(0xf0), 4); // astral lead
+        });
+    }
+
+    #[test]
+    fn ends_with_partial_utf8_detects_truncated_glyph() {
+        assert_no_syscalls(|| {
+            // "∀" = E2 88 80: incomplete until the closing byte lands.
+            assert!(ends_with_partial_utf8(b"\xe2", 1));
+            assert!(ends_with_partial_utf8(b"\xe2\x88", 2));
+            assert!(!ends_with_partial_utf8(b"\xe2\x88\x80", 3));
+            // ASCII and the empty prefix are always complete.
+            assert!(!ends_with_partial_utf8(b"", 0));
+            assert!(!ends_with_partial_utf8(b"abc", 3));
+            // A bare continuation byte (no lead) is treated as complete
+            // so the editor never hangs waiting on invalid input.
+            assert!(!ends_with_partial_utf8(b"\x88", 1));
+            // Completeness is judged at `end`, not buffer length: the
+            // cursor mid-buffer past a finished glyph is complete.
+            assert!(!ends_with_partial_utf8(b"\xe2\x88\x80x", 3));
         });
     }
 

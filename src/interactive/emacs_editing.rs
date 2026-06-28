@@ -35,7 +35,7 @@ use super::editor::bracketed_paste::{
 use super::editor::history_search::Direction;
 use super::editor::input::{bell, read_byte_with_signal_handler, write_bytes};
 use super::editor::raw_mode::RawMode;
-use super::editor::redraw::{display_width, redraw};
+use super::editor::redraw::{display_width, ends_with_partial_utf8, redraw};
 
 /// Outer entry point: acquire raw mode (falling back to canonical
 /// reads if the terminal isn't available), run the dispatch loop,
@@ -184,13 +184,23 @@ fn dispatch_loop(
                         return Ok(res);
                     }
                 }
-                redraw(
-                    &mut state.draw_anchor,
-                    &state.buf,
-                    state.cursor,
-                    prompt,
-                    ps2,
-                );
+                // Defer the repaint while the cursor sits in the middle
+                // of a still-incomplete multi-byte UTF-8 character.
+                // Self-insert feeds one byte at a time, so e.g. `∀`
+                // (`E2 88 80`) arrives across three reads; painting the
+                // truncated `E2` / `E2 88` prefixes would emit a partial
+                // sequence that the terminal renders as a stray `�`. The
+                // closing byte completes the character and triggers the
+                // redraw.
+                if !ends_with_partial_utf8(&state.buf, state.cursor) {
+                    redraw(
+                        &mut state.draw_anchor,
+                        &state.buf,
+                        state.cursor,
+                        prompt,
+                        ps2,
+                    );
+                }
             }
         }
     }

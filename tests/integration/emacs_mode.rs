@@ -3251,6 +3251,50 @@ fn alt_enter_inserts_literal_newline_even_when_buffer_parses_cleanly() {
     );
 }
 
+/// Self-inserting a multi-byte UTF-8 character must never paint a
+/// truncated prefix to the terminal. Self-insert reads one byte at a
+/// time, so `∀` (`E2 88 80`) arrives across three reads; the editor
+/// has to defer its redraw until the closing byte lands, otherwise a
+/// real terminal's UTF-8 decoder renders the dangling `E2` / `E2 88`
+/// as a stray `�`. We assert the transcript only ever shows the
+/// complete sequence and never a lead/continuation byte immediately
+/// followed by the redraw's `\r`.
+#[test]
+fn self_insert_multibyte_utf8_never_emits_truncated_sequence() {
+    let Some(mut pty) = spawn_or_skip() else {
+        return;
+    };
+    enable_emacs(&mut pty);
+    // Type `echo `, then U+2200 FOR ALL = E2 88 80 sent byte-by-byte
+    // to mimic an XCompose-style multi-byte delivery, then ` OK` and
+    // RET so the whole line is submitted and the buffer left clean.
+    pty.send(b"echo ");
+    pty.send(b"\xe2");
+    pty.send(b"\x88");
+    pty.send(b"\x80");
+    pty.send(b" OK\n");
+    let out = drain_until_contains(&mut pty, b" OK\r\n");
+    let _ = pty.exit_and_wait();
+    // The complete glyph must round-trip (echoed in the edit line and
+    // printed by `echo`).
+    assert!(
+        out.windows(3).any(|w| w == b"\xe2\x88\x80"),
+        "expected the complete UTF-8 sequence to be rendered: {out:?}"
+    );
+    // No truncated prefix may precede a redraw `\r`: neither the lone
+    // lead byte (`E2 \r`) nor the two-byte prefix (`E2 88 \r`). The
+    // pre-fix bug redrew after every byte, so `E2 \r` and `E2 88 \r`
+    // both appeared in the transcript.
+    assert!(
+        !out.windows(2).any(|w| w == b"\xe2\r"),
+        "editor emitted a truncated 1-byte UTF-8 prefix before redraw: {out:?}"
+    );
+    assert!(
+        !out.windows(3).any(|w| w == b"\xe2\x88\r"),
+        "editor emitted a truncated 2-byte UTF-8 prefix before redraw: {out:?}"
+    );
+}
+
 /// § 5.10 + § 5.12: After Alt-Enter splits a buffer into two logical
 /// rows, `C-a` shall walk to the start of the *current* logical row,
 /// not the start of the buffer. We then prepend a `printf` and submit
