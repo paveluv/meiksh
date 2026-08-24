@@ -1,7 +1,9 @@
 use super::common::{TempDir, meiksh, run_meiksh_with_nonblocking_stdin};
+use super::sys;
 use std::fs;
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
+use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
 
 // ── Syntax checking ──
@@ -486,6 +488,157 @@ fn non_interactive_shell_skips_startup_files() {
         stdout.trim(),
         "ok",
         "non-interactive shell should source no startup files, got stdout: {stdout}"
+    );
+}
+
+#[test]
+fn dash_c_shell_on_tty_skips_startup_files() {
+    // Spec § 2: a shell given a `-c` string is non-interactive even
+    // when stdin and stderr are attached to a terminal, and therefore
+    // sources no startup file. Regression test for the interactivity
+    // check in `Shell::from_env` ignoring `-c`: with loud HOME/ENV
+    // files in place, an implicitly-"interactive" shell would echo
+    // the marker lines (or abort outright on a developer machine
+    // whose real ~/.profile chains into bash-only scripts).
+    use std::os::unix::io::FromRawFd;
+    let Some((primary, secondary)) = sys::open_pty_pair() else {
+        return;
+    };
+    let home = TempDir::new("meiksh-tty-dash-c");
+    let profile = home.join(".profile");
+    fs::write(&profile, "echo FROM_HOME_PROFILE_RAN\n").expect("write ~/.profile");
+    let env_file = home.join("env.sh");
+    fs::write(&env_file, "echo FROM_ENV_RAN\n").expect("write env file");
+
+    let output = unsafe {
+        let mut cmd = Command::new(meiksh());
+        cmd.args(["-c", "echo ok"])
+            .env("HOME", home.path())
+            .env("ENV", &env_file)
+            .stdin(Stdio::from_raw_fd(secondary))
+            .stdout(Stdio::piped());
+        cmd.pre_exec(move || sys::make_controlling_tty_in_child(secondary, true));
+        cmd.output().expect("run meiksh -c on pty")
+    };
+
+    sys::close_fd(primary);
+    sys::close_fd(secondary);
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(
+        stdout.trim(),
+        "ok",
+        "-c shell on a tty should source no startup files, got stdout: {stdout}"
+    );
+}
+
+#[test]
+fn script_shell_on_tty_skips_startup_files() {
+    // Spec § 2: a shell given a script operand is non-interactive even
+    // when stdin and stderr are attached to a terminal, and therefore
+    // sources no startup file.
+    use std::os::unix::io::FromRawFd;
+    let Some((primary, secondary)) = sys::open_pty_pair() else {
+        return;
+    };
+    let home = TempDir::new("meiksh-tty-script");
+    let profile = home.join(".profile");
+    fs::write(&profile, "echo FROM_HOME_PROFILE_RAN\n").expect("write ~/.profile");
+    let env_file = home.join("env.sh");
+    fs::write(&env_file, "echo FROM_ENV_RAN\n").expect("write env file");
+    let script = home.join("script.sh");
+    fs::write(&script, "echo ok\n").expect("write script");
+
+    let output = unsafe {
+        let mut cmd = Command::new(meiksh());
+        cmd.arg(&script)
+            .env("HOME", home.path())
+            .env("ENV", &env_file)
+            .stdin(Stdio::from_raw_fd(secondary))
+            .stdout(Stdio::piped());
+        cmd.pre_exec(move || sys::make_controlling_tty_in_child(secondary, true));
+        cmd.output().expect("run meiksh script on pty")
+    };
+
+    sys::close_fd(primary);
+    sys::close_fd(secondary);
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(
+        stdout.trim(),
+        "ok",
+        "script shell on a tty should source no startup files, got stdout: {stdout}"
+    );
+}
+
+#[test]
+fn tty_stdin_with_pipe_stderr_is_not_interactive() {
+    // Spec § 2 (docs/features/startup-files.md): implicit
+    // interactivity requires *both* stdin and stderr to be terminals.
+    // A shell whose stdin is a tty but whose stderr is a pipe reads
+    // its commands non-interactively, so `$-` carries no `i`.
+    use std::os::unix::io::FromRawFd;
+    let Some((primary, secondary)) = sys::open_pty_pair() else {
+        return;
+    };
+    let mut primary_file = unsafe { std::fs::File::from_raw_fd(primary) };
+    primary_file
+        .write_all(b"echo $-\nexit\n")
+        .expect("write commands to pty");
+
+    let output = unsafe {
+        Command::new(meiksh())
+            .env("MEIKSH_SKIP_STARTUP_FILES", "1")
+            .stdin(Stdio::from_raw_fd(secondary))
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .expect("run meiksh with tty stdin, pipe stderr")
+    };
+
+    sys::close_fd(secondary);
+    drop(primary_file);
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.trim().contains('i'),
+        "shell with non-tty stderr must not be interactive, $- was: {stdout}"
+    );
+}
+
+#[test]
+fn tty_stdin_and_stderr_without_flags_is_implicitly_interactive() {
+    // Spec § 2: with no `-c` string, no script operand, and no `-i`,
+    // a shell whose stdin and stderr are both terminals is
+    // interactive — `$-` contains `i`.
+    use std::os::unix::io::FromRawFd;
+    let Some((primary, secondary)) = sys::open_pty_pair() else {
+        return;
+    };
+    let mut primary_file = unsafe { std::fs::File::from_raw_fd(primary) };
+    primary_file
+        .write_all(b"echo $-\nexit\n")
+        .expect("write commands to pty");
+
+    let secondary_fd = secondary;
+    let output = unsafe {
+        let mut cmd = Command::new(meiksh());
+        cmd.env("MEIKSH_SKIP_STARTUP_FILES", "1")
+            .env("TERM", "dumb")
+            .env("INPUTRC", "/dev/null")
+            .stdin(Stdio::from_raw_fd(secondary_fd))
+            .stdout(Stdio::piped());
+        cmd.pre_exec(move || sys::make_controlling_tty_in_child(secondary_fd, true));
+        cmd.output().expect("run meiksh on pty without flags")
+    };
+
+    sys::close_fd(secondary);
+    drop(primary_file);
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains('i'),
+        "shell with tty stdin and stderr should be implicitly interactive, $- was: {stdout}"
     );
 }
 

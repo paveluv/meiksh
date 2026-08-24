@@ -96,8 +96,14 @@ impl Shell {
                 });
             }
         }
+        // POSIX XCU `sh` (and docs/features/startup-files.md § 2): a
+        // shell given a `-c` string or a script operand is never
+        // implicitly interactive, no matter what stdin/stderr are
+        // attached to; only `-i` can force it.
         let interactive = options.force_interactive
-            || (sys::tty::is_interactive_fd(sys::constants::STDIN_FILENO)
+            || (options.command_string.is_none()
+                && options.script_path.is_none()
+                && sys::tty::is_interactive_fd(sys::constants::STDIN_FILENO)
                 && sys::tty::is_interactive_fd(sys::constants::STDERR_FILENO));
         let _ = sys::process::default_signal_action(sys::constants::SIGPIPE);
         let ignored_on_entry = Self::probe_ignored_signals();
