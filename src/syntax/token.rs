@@ -398,6 +398,12 @@ impl<'a> Parser<'a> {
         loop {
             match self.peek_byte() {
                 Some(b' ' | b'\t') => self.advance_byte(),
+                // Remove continuations before classifying the next token;
+                // its first byte may introduce an IO number or an operator.
+                Some(b'\\') if self.peek_byte_after() == Some(b'\n') => {
+                    self.advance_byte();
+                    self.advance_byte();
+                }
                 _ => break,
             }
         }

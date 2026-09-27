@@ -20,6 +20,26 @@ fn handles_redirections() {
 }
 
 #[test]
+fn continued_fd_redirection_preserves_arguments_and_order() {
+    let root = TempDir::new("meiksh-continued-redir");
+    let script = "report() { printf '<%s>\\n' \"$@\"; printf 'diagnostic\\n' >&2; }\n\
+        report --first alpha \\\n  --second 'two words' --third beta \\\n  2>&1 >out.log\n";
+    let output = Command::new(meiksh())
+        .args(["-c", script])
+        .current_dir(root.path())
+        .output()
+        .expect("run meiksh");
+
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(output.stdout, b"diagnostic\n");
+    assert!(output.stderr.is_empty(), "{output:?}");
+    assert_eq!(
+        fs::read(root.join("out.log")).expect("read redirected output"),
+        b"<--first>\n<alpha>\n<--second>\n<two words>\n<--third>\n<beta>\n"
+    );
+}
+
+#[test]
 fn redirects_current_shell_builtins_and_compound_commands() {
     let root = TempDir::new("meiksh-builtin-redir");
     let builtin_path = root.join("builtin.txt");

@@ -2589,6 +2589,47 @@ mod tests {
     }
 
     #[test]
+    fn continuation_before_io_number() {
+        for continuation in ["\\\n", "\\\n  ", "\\\n\t", "\\\n  \\\n  "] {
+            let source = format!("echo ok {continuation}2>&1 >/dev/null\n");
+            let program = parse_test(&source).expect("continued redirections");
+            let Command::Simple(cmd) = &program.items[0].and_or.first.commands[0] else {
+                panic!("expected simple command");
+            };
+            assert_eq!(cmd.words.len(), 2, "IO number must not become an argument");
+            assert_eq!(cmd.redirections.len(), 2);
+            assert_eq!(cmd.redirections[0].fd, Some(2));
+            assert_eq!(cmd.redirections[0].kind, RedirectionKind::DupOutput);
+            assert_eq!(&*cmd.redirections[0].target.raw, b"1");
+            assert_eq!(cmd.redirections[1].kind, RedirectionKind::Write);
+        }
+    }
+
+    #[test]
+    fn continuation_before_io_number_on_heredoc_line() {
+        let program = parse_test("cat <<EOF \\\n  2>&1\nbody\nEOF\n")
+            .expect("continued redirection after heredoc delimiter");
+        let Command::Simple(cmd) = &program.items[0].and_or.first.commands[0] else {
+            panic!("expected simple command");
+        };
+        assert_eq!(cmd.words.len(), 1, "IO number must not become an argument");
+        assert_eq!(cmd.redirections.len(), 2);
+        assert_eq!(cmd.redirections[1].fd, Some(2));
+        assert_eq!(cmd.redirections[1].kind, RedirectionKind::DupOutput);
+        assert_eq!(
+            &*cmd.redirections[0].here_doc.as_ref().unwrap().body,
+            b"body\n"
+        );
+    }
+
+    #[test]
+    fn continuation_before_pipe() {
+        let program = parse_test("echo ok \\\n  | cat\n").expect("continued pipe");
+        assert_eq!(program.items.len(), 1);
+        assert_eq!(program.items[0].and_or.first.commands.len(), 2);
+    }
+
+    #[test]
     fn continuation_inside_double_quotes() {
         let program =
             parse_test("echo \"he\\\nllo\"\n").expect("continuation inside double quotes");
